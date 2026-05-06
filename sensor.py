@@ -18,7 +18,7 @@ USED_CELLS      = [
     12, 25, 38, 51,
     24, 37, 50,
 ]
-SENSITIVITY     = 8.0
+SENSITIVITY     = 30.0
 GAMMA           = 0.5
 READ_TIMEOUT    = 2.0
 RECONNECT_FAST  = 0.3

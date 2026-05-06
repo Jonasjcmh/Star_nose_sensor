@@ -23,7 +23,7 @@ GAMMA           = 0.5
 READ_TIMEOUT    = 2.0
 RECONNECT_FAST  = 0.3
 RECONNECT_SLOW  = 3.0
-SHARED_FILE     = '/tmp/kywo_sensor.json'
+SHARED_FILE     = '/tmp/star_nose_sensor.json'
 
 _values         = [0.0] * 19
 _raw_values     = [0]   * 19

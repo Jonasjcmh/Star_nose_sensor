@@ -31,7 +31,7 @@ Star-Nose Sensor couples a 19-point capacitive tactile sensor with a UR5 collabo
 │  │   Sensor   │  /dev/ttyACM0 │  (19 cells) │                  │
 │  │ 252 cells  │   115200 baud └──────┬──────┘                  │
 │  └────────────┘                      │  shared JSON             │
-│                                      │  /tmp/kywo_sensor.json  │
+│                                      │  /tmp/star_nose_sensor.json  │
 │  ┌────────────┐   RTDE/TCP    ┌──────▼──────┐                  │
 │  │    UR5     │◀─────────────▶│ur5_control  │                  │
 │  │   Robot    │  177.22.22.2  │  (21 wpts)  │                  │
@@ -61,7 +61,7 @@ t=0                                                            t=end
 │                                                                 │
 │  sensor.py ────────────────────────────────────────────────▶  │  20 Hz serial read
 │      │                                                          │
-│      └── /tmp/kywo_sensor.json (shared memory) ──────────▶    │  30 Hz update
+│      └── /tmp/star_nose_sensor.json (shared memory) ──────────▶    │  30 Hz update
 │                ▲                    ▲                           │
 │                │                   │                           │
 │      visualizer_2d.py          sofa_scene.py                  │  read shared JSON
@@ -172,7 +172,7 @@ Handles all serial communication with the sensor hardware and makes readings ava
 - Normalises: `value = clip((raw / baseline - 1) × SENSITIVITY, 0, 1) ^ GAMMA`
   - `SENSITIVITY = 30.0` — amplification factor
   - `GAMMA = 0.5` — power-law tone-mapping (boosts low signals)
-- Writes normalised values to `/tmp/kywo_sensor.json` at ~30 Hz
+- Writes normalised values to `/tmp/star_nose_sensor.json` at ~30 Hz
 - Auto-reconnects on serial error (fast retry 0.3 s, slow retry 3.0 s)
 
 Key constants:
@@ -295,7 +295,7 @@ Renders a live 3D view of the sensor using the SOFA Framework (v25.12.00).
 - 19 coloured spheres positioned at the physical sensor layout coordinates
 - Sphere **height** and **radius** scale with normalised pressure
 - **Colour ramp**: teal (0) → green → yellow → orange → red (1.0)
-- Reads from `/tmp/kywo_sensor.json` (no serial access, subprocess-safe)
+- Reads from `/tmp/star_nose_sensor.json` (no serial access, subprocess-safe)
 - Keyboard shortcuts inside the SOFA window:
 
 | Key | Camera view |
@@ -445,7 +445,7 @@ python3.10 main.py --no-sofa --no-viz
 ### Isolated Launch Modes
 
 ```bash
-# 2D visualizer only (reads /tmp/kywo_sensor.json)
+# 2D visualizer only (reads /tmp/star_nose_sensor.json)
 python3.10 main.py --viz-only
 
 # 3D SOFA scene only
@@ -542,7 +542,7 @@ fx, fy, fz, tx, ty, tz,
 cell_1, cell_2, ..., cell_19
 ```
 
-### Shared Sensor State (`/tmp/kywo_sensor.json`)
+### Shared Sensor State (`/tmp/star_nose_sensor.json`)
 
 Written by `sensor.py`, read by visualisers and logger:
 

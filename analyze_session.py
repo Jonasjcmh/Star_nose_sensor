@@ -45,7 +45,7 @@ RAW_CELLS  = [2,15,28,1,14,27,40,0,13,26,39,52,12,25,38,51,24,37,50]
 N          = 19
 UR5_TO_IDX = {i+1: i for i in range(N)}
 
-CMAP = LinearSegmentedColormap.from_list('kywo', [
+CMAP = LinearSegmentedColormap.from_list('star_nose', [
     '#2ab5a0', '#33e666', '#ffe619', '#ff7300', '#dc0000'
 ])
 

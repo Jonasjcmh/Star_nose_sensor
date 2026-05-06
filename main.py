@@ -1,0 +1,364 @@
+"""
+main.py
+KYWO Integration — sensor + UR5 + SOFA + 2D viz + logging + analysis.
+
+Usage:
+  python3.10 main.py                     # everything
+  python3.10 main.py --no-sofa           # no SOFA 3D
+  python3.10 main.py --no-viz            # no 2D visualizer
+  python3.10 main.py --no-sofa --no-viz  # sensor + robot + logging only
+  python3.10 main.py --no-robot          # no robot
+  python3.10 main.py --demo              # simulated sensor, no robot
+  python3.10 main.py --sofa-only         # SOFA only
+  python3.10 main.py --viz-only          # 2D visualizer only
+  python3.10 main.py --log-only          # logging only
+  python3.10 main.py --analyze           # analyze after session ends
+"""
+
+import os
+import sys
+import time
+import argparse
+import threading
+import subprocess
+from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import sensor
+import ur5_control
+import data_logger
+
+SOFA_BIN    = os.path.expanduser(
+    "~/sofa/SOFA_v25.12.00_Linux/bin/runSofa-25.12.00")
+SOFA_PLUGIN = os.path.expanduser(
+    "~/sofa/SOFA_v25.12.00_Linux/plugins/SofaPython3/lib/libSofaPython3.so")
+SOFA_SCENE  = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "sofa_scene.py")
+VIZ_SCRIPT  = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "visualizer_2d.py")
+ANALYZE_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "analyze_session.py")
+LOG_DIR     = os.path.expanduser("~/sofa-projects/logs")
+
+def parse_args():
+    p = argparse.ArgumentParser(description='KYWO sensor integration')
+    p.add_argument('--no-sofa',   action='store_true',
+                   help='Skip SOFA 3D visualization')
+    p.add_argument('--no-viz',    action='store_true',
+                   help='Skip 2D pygame visualizer')
+    p.add_argument('--no-robot',  action='store_true',
+                   help='Skip UR5 robot movement')
+    p.add_argument('--demo',      action='store_true',
+                   help='Demo mode — simulated sensor, no robot')
+    p.add_argument('--log-only',  action='store_true',
+                   help='Sensor + logging only')
+    p.add_argument('--sofa-only', action='store_true',
+                   help='SOFA only')
+    p.add_argument('--viz-only',  action='store_true',
+                   help='2D visualizer only')
+    p.add_argument('--analyze',   action='store_true',
+                   help='Run analysis after session ends')
+    return p.parse_args()
+
+def print_banner(args):
+    print("="*60)
+    print("  KYWO — Sensor + UR5 + Visualization + Logging")
+    print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("="*60)
+    print(f"  SOFA 3D    : {'OFF' if args.no_sofa  else 'ON'}")
+    print(f"  2D viz     : {'OFF' if args.no_viz   else 'ON'}")
+    print(f"  UR5 robot  : {'OFF' if args.no_robot or args.demo else 'ON'}")
+    print(f"  Demo mode  : {'ON'  if args.demo     else 'OFF'}")
+    print(f"  Logging    : ON")
+    print(f"  Auto-analyze: {'ON' if args.analyze  else 'OFF'}")
+    print("="*60)
+
+def launch_sofa():
+    print("[main] Launching SOFA 3D...")
+    proc = subprocess.Popen(
+        [SOFA_BIN, "--load", SOFA_PLUGIN, SOFA_SCENE])
+    print("[main] Waiting 8s for SOFA to initialize...")
+    time.sleep(8)
+    print("[main] SOFA ready!")
+    return proc
+
+def launch_viz2d():
+    print("[main] Launching 2D visualizer...")
+    proc = subprocess.Popen([sys.executable, VIZ_SCRIPT])
+    time.sleep(2)
+    print("[main] 2D visualizer ready!")
+    return proc
+
+def run_ur5_safe(on_press=None, on_release=None):
+    """Run UR5 trajectory with retry logic"""
+    for attempt in range(3):
+        try:
+            print(f"[ur5] Connection attempt {attempt+1}/3...")
+            ur5_control.run_trajectory(
+                on_press=on_press,
+                on_release=on_release,
+                interactive=False,
+            )
+            return
+        except Exception as e:
+            print(f"[ur5] Attempt {attempt+1} failed: {e}")
+            if attempt < 2:
+                print("[ur5] Retrying in 3s...")
+                time.sleep(3)
+
+    print("[ur5] All attempts failed — skipping trajectory")
+    with ur5_control._lock:
+        ur5_control.is_done = True
+
+def start_demo_sensor():
+    """Simulated sensor for demo/testing"""
+    import math
+
+    def demo_loop():
+        frame = 0
+        sensor._is_ready = True
+        print("[sensor] Demo mode — simulating pressure data")
+        while True:
+            t = frame * 0.05
+            vals = [
+                max(0.0, min(1.0,
+                    0.5 * math.sin(t + i * 0.4) *
+                    math.sin(t * 0.7 + i * 0.2) + 0.3))
+                for i in range(19)
+            ]
+            with sensor._lock:
+                sensor._values = vals
+            frame += 1
+            time.sleep(0.02)
+
+    threading.Thread(target=demo_loop, daemon=True).start()
+    sensor._start_shared_writer()
+    print("[sensor] Demo sensor running")
+
+def run_analysis(log_file):
+    """Run post-processing analysis after session"""
+    print(f"\n[main] Running analysis on: {os.path.basename(log_file)}")
+    try:
+        subprocess.run([
+            sys.executable, ANALYZE_SCRIPT,
+            os.path.basename(log_file),
+            '--save'
+        ])
+    except Exception as e:
+        print(f"[main] Analysis failed: {e}")
+
+def main():
+    args = parse_args()
+
+    # Handle shortcuts
+    if args.sofa_only:
+        args.no_viz   = True
+    if args.viz_only:
+        args.no_sofa  = True
+    if args.log_only:
+        args.no_sofa  = True
+        args.no_viz   = True
+    if args.demo:
+        args.no_robot = True
+
+    print_banner(args)
+
+    # ── Load calibration ──────────────────────────────────────
+    try:
+        import load_calibration
+        load_calibration.apply()
+    except Exception as e:
+        print(f"[main] No calibration file: {e}")
+
+    # ── Start sensor ──────────────────────────────────────────
+    if args.demo:
+        print("\n[main] Demo mode — using simulated sensor")
+        start_demo_sensor()
+    else:
+        print("\n[main] Starting sensor...")
+        sensor.start()
+        print("[main] Waiting for sensor calibration...")
+        if not sensor.wait_until_ready(timeout=60):
+            print("[main] ERROR: Sensor not ready!")
+            print("[main] Check USB connection to /dev/ttyACM0")
+            print("[main] Or use --demo for simulated data")
+            sys.exit(1)
+        print("[main] Sensor ready!\n")
+
+    # ── Start data logger ─────────────────────────────────────
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file  = os.path.join(LOG_DIR, f"session_{timestamp}.csv")
+    os.makedirs(LOG_DIR, exist_ok=True)
+    data_logger.start(log_file)
+    print(f"[main] Logging → {log_file}")
+
+    # ── Logging thread at 20Hz ────────────────────────────────
+    _stop_log = threading.Event()
+
+    def log_loop():
+        while not _stop_log.is_set():
+            try:
+                data_logger.log(
+                    sensor.get_values(),
+                    ur5_control.get_state()
+                )
+            except Exception as e:
+                print(f"[logger] Error: {e}")
+            time.sleep(0.05)
+
+    log_thread = threading.Thread(target=log_loop, daemon=True)
+    log_thread.start()
+    print("[main] Logger running at 20Hz")
+
+    # ── Launch visualizers ────────────────────────────────────
+    procs = []
+
+    if not args.no_sofa:
+        try:
+            procs.append(('SOFA', launch_sofa()))
+        except Exception as e:
+            print(f"[main] SOFA failed to launch: {e}")
+
+    if not args.no_viz:
+        try:
+            # Small delay so shared file exists before viz reads it
+            time.sleep(1)
+            procs.append(('2D viz', launch_viz2d()))
+        except Exception as e:
+            print(f"[main] 2D visualizer failed: {e}")
+
+    # ── Start UR5 trajectory ──────────────────────────────────
+    ur5_thread = None
+    if not args.no_robot and not args.demo:
+
+        USED_CELLS = sensor.USED_CELLS
+
+        def on_press(pt):
+            raw = ur5_control.UR5_TO_SENSOR.get(pt, -1)
+            idx = USED_CELLS.index(raw) \
+                  if raw in USED_CELLS else -1
+            vals = sensor.get_values()
+            v    = vals[idx] if 0 <= idx < len(vals) else 0.0
+            ft   = ur5_control.get_force()
+            print(f"[main] ▼ P{pt:02d} → S{raw} | "
+                  f"sensor={v:.3f} | "
+                  f"Fz={ft[2]:.2f}N")
+
+        def on_release(pt):
+            raw = ur5_control.UR5_TO_SENSOR.get(pt, -1)
+            idx = USED_CELLS.index(raw) \
+                  if raw in USED_CELLS else -1
+            vals = sensor.get_values()
+            v    = vals[idx] if 0 <= idx < len(vals) else 0.0
+            ft   = ur5_control.get_force()
+            print(f"[main] ▲ P{pt:02d} released | "
+                  f"peak={v:.3f} | "
+                  f"Fz={ft[2]:.2f}N")
+
+        print("\n[main] Starting UR5 trajectory...")
+        ur5_thread = threading.Thread(
+            target=run_ur5_safe,
+            kwargs=dict(
+                on_press=on_press,
+                on_release=on_release
+            ),
+            daemon=True
+        )
+        ur5_thread.start()
+        print("[main] UR5 trajectory started!\n")
+
+    # ── Monitor loop ──────────────────────────────────────────
+    print("[main] Running — press Ctrl+C to stop early\n")
+    start_time = time.time()
+
+    try:
+        while True:
+            state  = ur5_control.get_state()
+            vals   = sensor.get_values()
+            ft     = ur5_control.get_force()
+            active = sum(1 for v in vals if v > 0.05)
+            maxv   = max(vals) if vals else 0
+            rows   = data_logger.get_row_count()
+            pt     = state.get('point', '-')
+            press  = 'PRESSING' if state.get('pressing') else 'moving  '
+            fz     = ft[2] if ft else 0.0
+            elapsed = time.time() - start_time
+
+            # Check visualizers still alive
+            dead = [n for n, p in procs if p.poll() is not None]
+            for n in dead:
+                procs[:] = [(name, p) for name, p in procs
+                            if name != n]
+                print(f"\n[main] {n} closed")
+
+            print(f"[main] "
+                  f"t={elapsed:6.1f}s | "
+                  f"active={active:2d}/19 | "
+                  f"max={maxv:.3f} | "
+                  f"Fz={fz:+6.2f}N | "
+                  f"UR5=P{pt} {press} | "
+                  f"rows={rows:5d} | "
+                  f"viz={'|'.join(n for n, _ in procs) or 'none'}")
+
+            # ── Exit conditions ───────────────────────────────
+            # Robot finished trajectory
+            if not args.no_robot and not args.demo:
+                if state.get('done'):
+                    print("\n[main] ✓ UR5 trajectory complete!")
+                    time.sleep(2)  # collect last frames
+                    break
+
+            # All visualizers closed
+            if procs and len(procs) == 0:
+                print("\n[main] All visualizers closed")
+                break
+
+            # No exit condition — keep running until Ctrl+C
+            if args.no_robot or args.demo:
+                if procs and len(procs) == 0:
+                    break
+
+            time.sleep(2)
+
+    except KeyboardInterrupt:
+        print("\n[main] Stopped by user")
+
+    # ── Cleanup ───────────────────────────────────────────────
+    print("\n[main] Shutting down...")
+
+    # Stop logger
+    _stop_log.set()
+    time.sleep(0.3)
+    data_logger.stop()
+
+    total_time = time.time() - start_time
+    rows       = data_logger.get_row_count()
+    rate       = rows / total_time if total_time > 0 else 0
+
+    print(f"\n[main] Session complete!")
+    print(f"  Duration : {total_time:.1f}s")
+    print(f"  Rows     : {rows:,}")
+    print(f"  Rate     : {rate:.1f} Hz")
+    print(f"  File     : {log_file}")
+
+    # Close visualizers
+    for name, proc in procs:
+        try:
+            proc.terminate()
+            print(f"[main] {name} closed")
+        except Exception:
+            pass
+
+    print("="*60)
+
+    # ── Auto-analyze ──────────────────────────────────────────
+    if args.analyze and rows > 100:
+        print("\n[main] Starting post-processing analysis...")
+        time.sleep(1)
+        run_analysis(log_file)
+
+    print("\n[main] Done!")
+
+if __name__ == "__main__":
+    main()

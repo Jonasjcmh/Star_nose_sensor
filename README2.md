@@ -1,4 +1,4 @@
-# KYWO — Star-Nose Tactile Sensor System
+# Star-Nose Sensor System
 
 A UR5 robot-integrated capacitive tactile sensor platform for texture and material characterization, inspired by the star-nosed mole's somatosensory layout.
 
@@ -20,11 +20,11 @@ A UR5 robot-integrated capacitive tactile sensor platform for texture and materi
 
 ## System Overview
 
-KYWO couples a 19-point capacitive tactile sensor with a UR5 collaborative robot arm. The robot positions the sensor over a hexagonal grid of contact points, presses down a fixed depth, and records multi-cell pressure together with TCP force/torque. Sessions are logged to CSV, and a post-processing pipeline produces standardised plots for every session.
+Star-Nose Sensor couples a 19-point capacitive tactile sensor with a UR5 collaborative robot arm. The robot positions the sensor over a hexagonal grid of contact points, presses down a fixed depth, and records multi-cell pressure together with TCP force/torque. Sessions are logged to CSV, and a post-processing pipeline produces standardised plots for every session.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        KYWO SYSTEM                              │
+│                   STAR-NOSE SENSOR SYSTEM                       │
 │                                                                 │
 │  ┌────────────┐    serial     ┌─────────────┐                  │
 │  │ Capacitive │──────────────▶│  sensor.py  │                  │
@@ -609,4 +609,4 @@ The **overview** figure layout:
 
 ---
 
-*Generated for the Star-Nose Sensor / KYWO project — UR5 + capacitive tactile sensor integration.*
+*Generated for the Star-Nose Sensor project — UR5 + capacitive tactile sensor integration.*

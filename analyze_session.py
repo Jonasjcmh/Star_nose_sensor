@@ -521,16 +521,16 @@ def plot_force(df, events, csv_path, save=False):
 
     # Force timeline
     ax1 = fig.add_subplot(gs[0, :])
-    ax1.plot(df['t'], df['fz'], color='#dc0000',
+    ax1.plot(df['t'].to_numpy(), df['fz'].to_numpy(), color='#dc0000',
             linewidth=0.8, label='Fz (contact)')
-    ax1.plot(df['t'], df['fx'], color='#2ab5a0',
+    ax1.plot(df['t'].to_numpy(), df['fx'].to_numpy(), color='#2ab5a0',
             linewidth=0.6, alpha=0.7, label='Fx')
-    ax1.plot(df['t'], df['fy'], color='#EF9F27',
+    ax1.plot(df['t'].to_numpy(), df['fy'].to_numpy(), color='#EF9F27',
             linewidth=0.6, alpha=0.7, label='Fy')
-    pressing = df['ur5_pressing'] == 1
+    pressing = (df['ur5_pressing'] == 1).to_numpy()
     fmin = df[['fx','fy','fz']].min().min()
     fmax = df[['fx','fy','fz']].max().max()
-    ax1.fill_between(df['t'], fmin, fmax,
+    ax1.fill_between(df['t'].to_numpy(), fmin, fmax,
                     where=pressing, alpha=0.12,
                     color='red', label='Pressing')
     for ev in valid:
@@ -607,10 +607,10 @@ def plot_force(df, events, csv_path, save=False):
     # TCP Z trajectory
     ax4 = fig.add_subplot(gs[1, 2])
     if 'tcp_z' in df.columns:
-        ax4.plot(df['t'], df['tcp_z']*1000,
+        ax4.plot(df['t'].to_numpy(), df['tcp_z'].to_numpy()*1000,
                 color='#2ab5a0', linewidth=0.8)
         ax4.fill_between(
-            df['t'],
+            df['t'].to_numpy(),
             df['tcp_z'].min()*1000,
             df['tcp_z'].max()*1000,
             where=pressing, alpha=0.2,

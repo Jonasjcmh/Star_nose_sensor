@@ -77,6 +77,11 @@ current_ft    = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # Fx Fy Fz Tx Ty Tz
 current_tcp   = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # x y z rx ry rz
 _lock         = threading.Lock()
 _rtde_r_ref   = [None]  # shared reference to rtde_receive
+_stop_flag    = threading.Event()  # set to request early stop + home return
+
+def request_stop():
+    """Signal the trajectory to stop after the current point and return home."""
+    _stop_flag.set()
 
 def get_state():
     with _lock:
@@ -240,14 +245,19 @@ def run_trajectory(on_press=None, on_release=None, interactive=True):
 
     # ── Execute sequence ──────────────────────────────────────
     total = len(SEQUENCE)
+    _stop_flag.clear()
     try:
         for step, pt in enumerate(SEQUENCE, 1):
+            if _stop_flag.is_set():
+                print("[ur5] Stop requested — aborting trajectory")
+                break
             try:
                 _visit_point(rtde_c, step, total, pt, on_press, on_release)
             except Exception as e:
                 print(f"[ur5] Error at P{pt}: {e}")
                 break
-        print("\n[ur5] Trajectory complete!")
+        else:
+            print("\n[ur5] Trajectory complete!")
     except KeyboardInterrupt:
         print("\n[ur5] Interrupted by user")
     finally:

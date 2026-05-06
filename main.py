@@ -296,7 +296,7 @@ def main():
                 on_press=on_press,
                 on_release=on_release
             ),
-            daemon=True
+            daemon=False
         )
         ur5_thread.start()
         print("[main] UR5 trajectory started!\n")
@@ -363,6 +363,14 @@ def main():
 
     # ── Cleanup ───────────────────────────────────────────────
     print("\n[main] Shutting down...")
+
+    # Signal UR5 to stop after current point and return home
+    if ur5_thread is not None and ur5_thread.is_alive():
+        print("[main] Waiting for UR5 to return to home position...")
+        ur5_control.request_stop()
+        ur5_thread.join(timeout=20)
+        if ur5_thread.is_alive():
+            print("[main] WARNING: UR5 thread did not finish in time")
 
     # Stop logger
     _stop_log.set()

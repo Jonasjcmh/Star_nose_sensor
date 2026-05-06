@@ -17,6 +17,8 @@ DEFAULT_INDENT_MM = 6.00
 DEFAULT_DWELL_S   = 1.5
 POINT_OVERRIDES   = {}
 
+SAFE_HOME_Z_MM    = 30.0   # clearance above surface at home position
+
 # ── Calibration offset ───────────────────────────────────────
 # Adjust these to correct TCP misalignment.
 # Run calibrate_ur5.py to find the correct values.
@@ -120,6 +122,19 @@ def set_calibration(x_mm=0.0, y_mm=0.0, z_mm=0.0):
     CALIB_Z_MM = z_mm
     print(f"[ur5] Calibration set: X={x_mm:+.3f} Y={y_mm:+.3f} Z={z_mm:+.3f} mm")
 
+def _home_pose():
+    """Safe park position: P10 center lifted SAFE_HOME_Z_MM above the mat."""
+    return _build_pose(10, SAFE_HOME_Z_MM)
+
+def _return_home(rtde_c):
+    """Move to safe home position. Called on every exit path."""
+    try:
+        print("[ur5] Returning to home position...")
+        rtde_c.moveL(_home_pose(), VELOCITY_TRAVEL, ACCELERATION)
+        print("[ur5] At home position")
+    except Exception as e:
+        print(f"[ur5] Could not return to home: {e}")
+
 def _get_indent_dwell(pt):
     return POINT_OVERRIDES.get(pt, (DEFAULT_INDENT_MM, DEFAULT_DWELL_S))
 
@@ -207,35 +222,42 @@ def run_trajectory(on_press=None, on_release=None, interactive=True):
     except Exception as e:
         print(f"[ur5] Could not read TCP: {e}")
 
-    # ── Move to start ─────────────────────────────────────────
-    print("[ur5] Moving to P10 (center)...")
+    # ── Move to home, then descend to start ──────────────────
+    print("[ur5] Moving to home position...")
     try:
+        rtde_c.moveL(_home_pose(), VELOCITY_TRAVEL, ACCELERATION)
         rtde_c.moveL(_build_pose(10, 0.0), VELOCITY_TRAVEL, ACCELERATION)
         print("[ur5] At P10 — starting trajectory")
     except Exception as e:
         print(f"[ur5] Failed to move to P10: {e}")
-        rtde_c.stopScript()
+        try:
+            rtde_c.stopScript()
+        except:
+            pass
         with _lock:
             is_done = True
         return
 
     # ── Execute sequence ──────────────────────────────────────
     total = len(SEQUENCE)
-    for step, pt in enumerate(SEQUENCE, 1):
-        try:
-            _visit_point(rtde_c, step, total, pt, on_press, on_release)
-        except Exception as e:
-            print(f"[ur5] Error at P{pt}: {e}")
-            break
-
     try:
-        rtde_c.stopScript()
-    except:
-        pass
-
-    with _lock:
-        is_done = True
-    print("\n[ur5] Trajectory complete!")
+        for step, pt in enumerate(SEQUENCE, 1):
+            try:
+                _visit_point(rtde_c, step, total, pt, on_press, on_release)
+            except Exception as e:
+                print(f"[ur5] Error at P{pt}: {e}")
+                break
+        print("\n[ur5] Trajectory complete!")
+    except KeyboardInterrupt:
+        print("\n[ur5] Interrupted by user")
+    finally:
+        _return_home(rtde_c)
+        try:
+            rtde_c.stopScript()
+        except:
+            pass
+        with _lock:
+            is_done = True
 
 if __name__ == "__main__":
     run_trajectory(interactive=True)

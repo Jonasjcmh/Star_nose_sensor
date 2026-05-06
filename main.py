@@ -25,10 +25,6 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import sensor
-import ur5_control
-import data_logger
-
 SOFA_BIN    = os.path.expanduser(
     "~/sofa/SOFA_v25.12.00_Linux/bin/runSofa-25.12.00")
 SOFA_PLUGIN = os.path.expanduser(
@@ -39,7 +35,37 @@ VIZ_SCRIPT  = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "visualizer_2d.py")
 ANALYZE_SCRIPT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "analyze_session.py")
-LOG_DIR     = os.path.expanduser("~/sofa-projects/logs")
+INTEGRATION_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR     = os.path.join(INTEGRATION_DIR, "logs")
+
+class NoRobotState:
+    UR5_TO_SENSOR = {}
+    _lock = threading.Lock()
+    is_done = True
+
+    @staticmethod
+    def get_state():
+        return {
+            'point': '',
+            'pressing': False,
+            'done': True,
+            'ft': [0.0] * 6,
+            'tcp': [0.0] * 6,
+        }
+
+    @staticmethod
+    def get_force():
+        return [0.0] * 6
+
+def load_runtime_modules(robot_enabled=True):
+    """Import hardware modules after CLI parsing."""
+    global sensor, ur5_control, data_logger
+    import sensor
+    import data_logger
+    if robot_enabled:
+        import ur5_control
+    else:
+        ur5_control = NoRobotState()
 
 def parse_args():
     p = argparse.ArgumentParser(description='KYWO sensor integration')
@@ -59,6 +85,10 @@ def parse_args():
                    help='2D visualizer only')
     p.add_argument('--analyze',   action='store_true',
                    help='Run analysis after session ends')
+    p.add_argument('--log-prefix',
+                   help='Beginning of the log filename')
+    p.add_argument('--duration', type=float,
+                   help='Stop automatically after this many seconds')
     return p.parse_args()
 
 def print_banner(args):
@@ -162,6 +192,8 @@ def main():
     if args.demo:
         args.no_robot = True
 
+    load_runtime_modules(robot_enabled=not args.no_robot)
+
     print_banner(args)
 
     # ── Load calibration ──────────────────────────────────────
@@ -187,9 +219,10 @@ def main():
         print("[main] Sensor ready!\n")
 
     # ── Start data logger ─────────────────────────────────────
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file  = os.path.join(LOG_DIR, f"session_{timestamp}.csv")
-    os.makedirs(LOG_DIR, exist_ok=True)
+    log_prefix = (data_logger.sanitize_name(args.log_prefix)
+                  if args.log_prefix
+                  else data_logger.ask_file_prefix())
+    log_file = data_logger.build_filename(log_prefix, LOG_DIR)
     data_logger.start(log_file)
     print(f"[main] Logging → {log_file}")
 
@@ -302,6 +335,10 @@ def main():
                   f"viz={'|'.join(n for n, _ in procs) or 'none'}")
 
             # ── Exit conditions ───────────────────────────────
+            if args.duration and elapsed >= args.duration:
+                print(f"\n[main] Duration reached ({args.duration:.1f}s)")
+                break
+
             # Robot finished trajectory
             if not args.no_robot and not args.demo:
                 if state.get('done'):

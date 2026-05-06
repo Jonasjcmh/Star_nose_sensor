@@ -28,7 +28,9 @@ from matplotlib.cm import ScalarMappable
 
 # ── Paths ─────────────────────────────────────────────────────
 INTEGRATION_DIR = os.path.dirname(os.path.abspath(__file__))
-DATASETS_DIR    = os.path.join(INTEGRATION_DIR, "datasets")
+LOGS_DIR        = os.path.join(INTEGRATION_DIR, "logs")
+PLOTS_DIR       = os.path.join(INTEGRATION_DIR, "plots")
+LEGACY_DATASETS_DIR = os.path.join(INTEGRATION_DIR, "datasets")
 LEGACY_LOG_DIR  = os.path.expanduser("~/sofa-projects/logs")
 
 # ── Sensor layout ─────────────────────────────────────────────
@@ -55,28 +57,31 @@ def parse_args():
     p.add_argument('--all',   action='store_true',
                    help='Compare all sessions')
     p.add_argument('--save',  action='store_true',
-                   help='Save figures to dataset folder')
+                   help='Save figures to plots folder')
     p.add_argument('--force', action='store_true',
                    help='Show force analysis only')
     return p.parse_args()
 
 # ── File helpers ──────────────────────────────────────────────
 def find_all_csvs():
-    """Find all CSVs in datasets folder + legacy logs folder."""
+    """Find all CSVs in logs folder + legacy locations."""
     files = sorted(glob.glob(
-        os.path.join(DATASETS_DIR, '*.csv')))
+        os.path.join(LOGS_DIR, '*.csv')))
+    legacy_datasets = sorted(glob.glob(
+        os.path.join(LEGACY_DATASETS_DIR, '*.csv')))
     legacy = sorted(glob.glob(
         os.path.join(LEGACY_LOG_DIR, '*.csv')))
     seen = set(os.path.basename(f) for f in files)
-    for f in legacy:
+    for f in legacy_datasets + legacy:
         if os.path.basename(f) not in seen:
             files.append(f)
+            seen.add(os.path.basename(f))
     return sorted(files)
 
 def find_csv(arg=None):
     files = find_all_csvs()
     if not files:
-        print(f"[analyze] No CSV files found in {DATASETS_DIR}")
+        print(f"[analyze] No CSV files found in {LOGS_DIR}")
         sys.exit(1)
     if arg is None:
         return files[-1]
@@ -88,17 +93,19 @@ def find_csv(arg=None):
 def get_save_dir(csv_path):
     """
     Save figures in:
-      datasets/<session_name>/
+      plots/<session_name>/
     Creates folder if needed.
     """
     name     = os.path.basename(csv_path).replace('.csv', '')
-    save_dir = os.path.join(DATASETS_DIR, name)
+    save_dir = os.path.join(PLOTS_DIR, name)
     os.makedirs(save_dir, exist_ok=True)
     return save_dir
 
 def get_dataset_label(csv_path):
     """Extract human label from filename."""
     base = os.path.basename(csv_path).replace('.csv', '')
+    if '_session_' in base:
+        return base.split('_session_', 1)[0]
     # Format: session_YYYYMMDD_HHMMSS_label
     parts = base.split('_', 3)
     if len(parts) >= 4:
@@ -851,7 +858,7 @@ def plot_comparison(save=False):
     plt.tight_layout()
 
     if save:
-        save_dir = os.path.join(DATASETS_DIR,
+        save_dir = os.path.join(PLOTS_DIR,
                                 'comparison')
         os.makedirs(save_dir, exist_ok=True)
         path = os.path.join(save_dir,

@@ -1,7 +1,7 @@
 """
 data_logger.py
 Logs sensor + UR5 force/pose/state to CSV.
-Filename includes user-defined label for dataset identification.
+Filename includes user-defined prefix for dataset identification.
 """
 import csv
 import os
@@ -14,32 +14,36 @@ _lock     = threading.Lock()
 _running  = False
 _filename = None
 
-def ask_dataset_label():
-    """Ask user for a dataset label before starting the session."""
+def sanitize_name(value, default="unlabelled"):
+    """Return a filesystem-friendly name fragment."""
+    value = value.strip()
+    if not value:
+        value = default
+    return ''.join(c if c.isalnum() or c in '-_' else '_'
+                   for c in value)
+
+def ask_file_prefix():
+    """Ask user for the beginning of the log filename."""
     print("\n" + "="*55)
-    print("  Dataset label")
+    print("  Log file prefix")
     print("="*55)
-    print("  Describe this recording session.")
+    print("  Choose the beginning of this logging filename.")
     print("  Examples:")
     print("    ecoflex_flat_layer")
     print("    dragonskin_solid_domes")
     print("    ecoflex_empty_domes_v2")
     print("    calibration_test")
     print("-"*55)
-    label = input("  Label: ").strip()
-    if not label:
-        label = "unlabelled"
-    # Sanitize — replace spaces and special chars with underscore
-    label = ''.join(c if c.isalnum() or c in '-_' else '_'
-                    for c in label)
-    print(f"  Label set: '{label}'")
+    prefix = sanitize_name(input("  Prefix: "), default="unlabelled")
+    print(f"  Prefix set: '{prefix}'")
     print("="*55 + "\n")
-    return label
+    return prefix
 
-def build_filename(label, base_dir):
-    """Build session filename with timestamp + label."""
+def build_filename(prefix, base_dir):
+    """Build log filename with user prefix + session + timestamp."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename  = f"session_{timestamp}_{label}.csv"
+    prefix    = sanitize_name(prefix, default="unlabelled")
+    filename  = f"{prefix}_session_{timestamp}.csv"
     os.makedirs(base_dir, exist_ok=True)
     return os.path.join(base_dir, filename)
 

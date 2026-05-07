@@ -43,7 +43,16 @@ POINTS_MM = [
 ]
 RAW_CELLS  = [2,15,28,1,14,27,40,0,13,26,39,52,12,25,38,51,24,37,50]
 N          = 19
-UR5_TO_IDX = {i+1: i for i in range(N)}
+# Corrected: sensor mounted 120° CCW → UR5 point i fires cell at rotated position
+UR5_TO_IDX = {
+    1:16,  2:12,  3:7,
+    4:17,  5:13,  6:8,   7:3,
+    8:18,  9:14,  10:9,  11:4,  12:0,
+    13:15, 14:10, 15:5,  16:1,
+    17:11, 18:6,  19:2,
+}
+# Unique visit order from robot SEQUENCE [10,1,2,3,7,6,5,4,8,9,10,11,12,16,15,14,13,17,18,19,10]
+VISIT_ORDER = [10,1,2,3,7,6,5,4,8,9,11,12,16,15,14,13,17,18,19]
 
 CMAP = LinearSegmentedColormap.from_list('star_nose', [
     '#2ab5a0', '#33e666', '#ffe619', '#ff7300', '#dc0000'
@@ -423,8 +432,9 @@ def plot_per_point(df, events, csv_path, save=False):
     if not valid:
         print("[analyze] No press events"); return
 
-    label = get_dataset_label(csv_path)
-    pts   = sorted(set(e['point'] for e in valid))
+    label    = get_dataset_label(csv_path)
+    seen     = set(e['point'] for e in valid)
+    pts      = [p for p in VISIT_ORDER if p in seen]
     cols  = 4
     rows  = math.ceil(len(pts) / cols)
     fig, axes = plt.subplots(rows, cols,
@@ -478,8 +488,9 @@ def plot_hex_detail(df, events, csv_path, save=False):
     if not valid:
         print("[analyze] No press events"); return
 
-    label = get_dataset_label(csv_path)
-    pts   = sorted(set(e['point'] for e in valid))
+    label    = get_dataset_label(csv_path)
+    seen     = set(e['point'] for e in valid)
+    pts      = [p for p in VISIT_ORDER if p in seen]
     cols  = 5
     rows  = math.ceil(len(pts) / cols)
     fig, axes = plt.subplots(rows, cols,
@@ -549,7 +560,8 @@ def plot_force(df, events, csv_path, save=False):
     # Mean |Fz| per point
     ax2 = fig.add_subplot(gs[1, 0])
     if valid:
-        pts   = sorted(set(e['point'] for e in valid))
+        seen  = set(e['point'] for e in valid)
+        pts   = [p for p in VISIT_ORDER if p in seen]
         fz_pt = {p: [] for p in pts}
         for _, row in df[df['ur5_pressing']==1].iterrows():
             pt = row.get('ur5_point')

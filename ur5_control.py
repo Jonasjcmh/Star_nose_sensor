@@ -58,13 +58,14 @@ POINTS = {
     19: ( +8.0, -14.0),
 }
 
-# Verified mapping: UR5 point → raw sensor cell index
+# Corrected mapping: UR5 point → raw sensor cell index
+# Sensor is physically mounted 120° CCW relative to robot frame.
 UR5_TO_SENSOR = {
-    1:2,   2:15,  3:28,
-    4:1,   5:14,  6:27,  7:40,
-    8:0,   9:13,  10:26, 11:39, 12:52,
-    13:12, 14:25, 15:38, 16:51,
-    17:24, 18:37, 19:50,
+    1:24,  2:12,  3:0,
+    4:37,  5:25,  6:13,  7:1,
+    8:50,  9:38,  10:26, 11:14, 12:2,
+    13:51, 14:39, 15:27, 16:15,
+    17:52, 18:40, 19:28,
 }
 
 SEQUENCE = [10,1,2,3,7,6,5,4,8,9,10,11,12,16,15,14,13,17,18,19,10]

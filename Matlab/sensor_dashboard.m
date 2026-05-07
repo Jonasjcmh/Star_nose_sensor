@@ -1,0 +1,203 @@
+function sensor_dashboard()
+
+clc;
+
+% ── Paths ─────────────────────────────────────────────
+script_dir = fileparts(mfilename('fullpath'));
+project_root = fileparts(script_dir);
+logs_dir = fullfile(project_root, 'logs');
+
+addpath(script_dir);
+
+files = dir(fullfile(logs_dir, '*.csv'));
+if isempty(files)
+    error('No CSV files found in logs/');
+end
+
+[~, idx] = sort([files.datenum],'descend');
+files = files(idx);
+names = {files.name};
+
+% ── UI ────────────────────────────────────────────────
+fig = uifigure('Name','Sensor Dashboard',...
+               'Position',[100 100 1400 900]);
+
+dd = uidropdown(fig,'Items',names,...
+    'Position',[20 860 300 30]);
+
+btn = uibutton(fig,'Text','Analyze',...
+    'Position',[340 860 100 30]);
+
+btn_play = uibutton(fig,'Text','Play',...
+    'Position',[460 860 80 30]);
+
+chk_force = uicheckbox(fig,'Text','Force',...
+    'Position',[560 860 80 30],'Value',true);
+
+slider = uislider(fig,...
+    'Position',[20 820 900 3],...
+    'Limits',[0 1],'Value',0);
+
+lbl_time = uilabel(fig,...
+    'Position',[940 810 200 22],...
+    'Text','t = 0.00 s');
+
+% ── Tabs ──────────────────────────────────────────────
+tg = uitabgroup(fig,'Position',[10 10 1380 780]);
+
+tab_overview = uitab(tg,'Title','Overview');
+tab_perpoint = uitab(tg,'Title','Per Point');
+tab_hex      = uitab(tg,'Title','Hex Maps');
+tab_force    = uitab(tg,'Title','Force');
+tab_corr     = uitab(tg,'Title','Correlation');
+
+% ── Axes ──────────────────────────────────────────────
+ax_heat = uiaxes(tab_overview,'Position',[20 350 900 350]);
+ax_hex  = uiaxes(tab_overview,'Position',[950 350 380 350]);
+
+ax_per = uiaxes(tab_perpoint,'Position',[50 50 1200 650]);
+
+panel_hex = uipanel(tab_hex,'Position',[10 10 1360 740]);
+
+ax_force = uiaxes(tab_force,'Position',[50 50 1200 650]);
+ax_corr  = uiaxes(tab_corr,'Position',[50 50 600 600]);
+cursor_line = [];
+
+% ── Shared data ───────────────────────────────────────
+current_df = [];
+current_cells = [];
+
+% ── Callbacks ─────────────────────────────────────────
+btn.ButtonPushedFcn = @(~,~) analyze();
+btn_play.ButtonPushedFcn = @(~,~) play_anim();
+slider.ValueChangingFcn = @(src,event) update_time(event.Value);
+
+% ── ANALYZE ───────────────────────────────────────────
+function analyze()
+
+    file = fullfile(logs_dir, dd.Value);
+    df = readtable(file);
+    df.t = df.timestamp - df.timestamp(1);
+
+    cell_cols = strcat("cell_", string(1:19));
+    events = get_press_events(df, cell_cols);
+
+    current_df = df;
+    current_cells = table2array(df(:, cell_cols));
+
+    slider.Limits = [0 df.t(end)];
+    slider.MajorTicks = linspace(0, df.t(end), 6);
+    slider.MinorTicks = [];
+
+    % ── Heatmap ──
+    imagesc(ax_heat, df.t, 1:19, current_cells');
+    axis(ax_heat,'xy');
+    colorbar(ax_heat);
+    title(ax_heat,'Heatmap');
+
+    xlabel(ax_heat,'Time (s)');
+    ylabel(ax_heat,'Sensor');
+
+    % Create vertical cursor line
+    hold(ax_heat,'on')
+    cursor_line = xline(ax_heat, 0, 'w--', 'LineWidth', 1.5);
+    hold(ax_heat,'off')
+
+    % ── Initial hex ──
+    hex_map(ax_hex, current_cells(1,:), -1, 't=0', 1);
+
+    % ── Per-point ──
+    cla(ax_per)
+    if ~isempty(events)
+        data = vertcat(events.peak);
+        avg = mean(data,1);
+        bar(ax_per, avg)
+        ylim(ax_per,[0 1.1])
+        title(ax_per,'Average response per cell')
+    end
+
+    % ── Hex maps grid ──
+    delete(panel_hex.Children)
+    n = length(events);
+    cols = 5;
+    rows = ceil(n/cols);
+
+    w = 1360/cols;
+    h = 740/rows;
+
+    for i = 1:n
+        col = mod(i-1,cols);
+        row = floor((i-1)/cols);
+
+        ax = uiaxes(panel_hex,...
+            'Position',[col*w, 740-(row+1)*h, w, h]);
+
+        hex_map(ax, events(i).peak, -1, ...
+            sprintf('Event %d',i), 1);
+    end
+
+    % ── Force ──
+    cla(ax_force)
+    if chk_force.Value && ismember('fz', df.Properties.VariableNames)
+        plot(ax_force, df.t, df.fz,'r'); hold(ax_force,'on')
+        if ismember('fx', df.Properties.VariableNames)
+            plot(ax_force, df.t, df.fx,'b')
+        end
+        if ismember('fy', df.Properties.VariableNames)
+            plot(ax_force, df.t, df.fy,'g')
+        end
+        hold(ax_force,'off')
+        legend(ax_force,{'Fz','Fx','Fy'})
+        title(ax_force,'Force')
+    end
+
+    % ── Correlation ──
+    cla(ax_corr)
+    press_idx = df.ur5_pressing == 1;
+    data = table2array(df(press_idx, cell_cols));
+
+    if size(data,1) > 10
+        imagesc(ax_corr, corrcoef(data))
+        colorbar(ax_corr)
+        caxis(ax_corr,[-1 1])
+        title(ax_corr,'Correlation')
+    end
+end
+
+% ── SLIDER UPDATE ─────────────────────────────────────
+function update_time(t_now)
+
+    if isempty(current_df)
+        return;
+    end
+
+    [~, idx] = min(abs(current_df.t - t_now));
+    values = current_cells(idx,:);
+
+    % Update hex
+    hex_map(ax_hex, values, -1, ...
+    sprintf('t = %.2f s', t_now), 1);
+
+    % Move heatmap cursor
+    if ~isempty(cursor_line) && isvalid(cursor_line)
+        cursor_line.Value = t_now;
+    end
+
+    lbl_time.Text = sprintf('t = %.2f s', t_now);
+end
+
+% ── PLAY ──────────────────────────────────────────────
+function play_anim()
+
+    if isempty(current_df)
+        return;
+    end
+
+    for t_now = linspace(0, current_df.t(end), 200)
+        slider.Value = t_now;
+        update_time(t_now);
+        pause(0.03);
+    end
+end
+
+end

@@ -51,8 +51,14 @@ UR5_TO_IDX = {
     13:15, 14:10, 15:5,  16:1,
     17:11, 18:6,  19:2,
 }
-# Unique visit order from robot SEQUENCE [10,1,2,3,7,6,5,4,8,9,10,11,12,16,15,14,13,17,18,19,10]
-VISIT_ORDER = [10,1,2,3,7,6,5,4,8,9,11,12,16,15,14,13,17,18,19]
+# Unique points in robot visit order (for force plot aggregation)
+VISIT_ORDER    = [10,1,2,3,7,6,5,4,8,9,11,12,16,15,14,13,17,18,19]
+# Full sequence including repeated P10 visits, as (point, visit_index) tuples
+VISIT_SEQUENCE = [
+    (10,0),(1,0),(2,0),(3,0),(7,0),(6,0),(5,0),(4,0),
+    (8,0),(9,0),(10,1),(11,0),(12,0),(16,0),(15,0),(14,0),(13,0),
+    (17,0),(18,0),(19,0),(10,2),
+]
 
 CMAP = LinearSegmentedColormap.from_list('star_nose', [
     '#2ab5a0', '#33e666', '#ffe619', '#ff7300', '#dc0000'
@@ -166,11 +172,12 @@ def load_session(path):
     return df
 
 def get_press_events(df):
-    cell_cols = [f'cell_{i+1}' for i in range(N)]
-    events    = []
-    in_press  = False
-    rows      = []
-    pt        = None
+    cell_cols   = [f'cell_{i+1}' for i in range(N)]
+    events      = []
+    in_press    = False
+    rows        = []
+    pt          = None
+    visit_count = {}   # how many times each point has been pressed so far
 
     for _, row in df.iterrows():
         if row['ur5_pressing'] == 1:
@@ -187,7 +194,9 @@ def get_press_events(df):
                 mean = arr.mean(axis=0)
                 pt_i = int(pt) if not (
                     isinstance(pt, float) and math.isnan(pt)) else -1
-                ti   = UR5_TO_IDX.get(pt_i, -1)
+                ti    = UR5_TO_IDX.get(pt_i, -1)
+                visit = visit_count.get(pt_i, 0)
+                visit_count[pt_i] = visit + 1
 
                 fz_v = ([r['fz'] for r in rows]
                         if 'fz' in df.columns else [])
@@ -198,6 +207,7 @@ def get_press_events(df):
 
                 events.append({
                     'point':        pt_i,
+                    'visit':        visit,
                     'start':        rows[0]['t'],
                     'duration':     len(rows) * 0.05,
                     'n_frames':     len(rows),
@@ -433,8 +443,8 @@ def plot_per_point(df, events, csv_path, save=False):
         print("[analyze] No press events"); return
 
     label    = get_dataset_label(csv_path)
-    seen     = set(e['point'] for e in valid)
-    pts      = [p for p in VISIT_ORDER if p in seen]
+    seen     = {(e['point'], e['visit']) for e in valid}
+    pts      = [(p, v) for (p, v) in VISIT_SEQUENCE if (p, v) in seen]
     cols  = 4
     rows  = math.ceil(len(pts) / cols)
     fig, axes = plt.subplots(rows, cols,
@@ -444,9 +454,9 @@ def plot_per_point(df, events, csv_path, save=False):
         fontsize=12, fontweight='bold')
     axes = np.array(axes).flatten()
 
-    for idx, pt in enumerate(pts):
+    for idx, (pt, visit) in enumerate(pts):
         ax  = axes[idx]
-        evs = [e for e in valid if e['point'] == pt]
+        evs = [e for e in valid if e['point'] == pt and e['visit'] == visit]
         avg = np.mean([e['peak'] for e in evs], axis=0)
         ti  = UR5_TO_IDX.get(pt, -1)
 
@@ -459,12 +469,13 @@ def plot_per_point(df, events, csv_path, save=False):
             ax.axvspan(ti-0.5, ti+0.5, alpha=0.12,
                       color='red')
 
-        raw  = RAW_CELLS[ti] if 0 <= ti < N else '?'
-        fz_s = (f"  |Fz|={np.mean([e['fz_mean'] for e in evs]):.1f}N"
-                if evs[0]['fz_mean'] > 0 else "")
+        raw    = RAW_CELLS[ti] if 0 <= ti < N else '?'
+        v_tag  = f" #{visit+1}" if visit > 0 else ""
+        fz_s   = (f"  |Fz|={np.mean([e['fz_mean'] for e in evs]):.1f}N"
+                  if evs[0]['fz_mean'] > 0 else "")
         ax.set_title(
-            f"P{pt} → S{raw} "
-            f"({len(evs)} presses){fz_s}",
+            f"P{pt}{v_tag} → S{raw} "
+            f"({len(evs)} press){fz_s}",
             fontsize=8, fontweight='bold')
         ax.set_xticks(range(N))
         ax.set_xticklabels(
@@ -489,8 +500,8 @@ def plot_hex_detail(df, events, csv_path, save=False):
         print("[analyze] No press events"); return
 
     label    = get_dataset_label(csv_path)
-    seen     = set(e['point'] for e in valid)
-    pts      = [p for p in VISIT_ORDER if p in seen]
+    seen     = {(e['point'], e['visit']) for e in valid}
+    pts      = [(p, v) for (p, v) in VISIT_SEQUENCE if (p, v) in seen]
     cols  = 5
     rows  = math.ceil(len(pts) / cols)
     fig, axes = plt.subplots(rows, cols,
@@ -500,12 +511,13 @@ def plot_hex_detail(df, events, csv_path, save=False):
         fontsize=12, fontweight='bold')
     axes = np.array(axes).flatten()
 
-    for idx, pt in enumerate(pts):
-        evs = [e for e in valid if e['point'] == pt]
-        avg = np.mean([e['peak'] for e in evs], axis=0)
-        ti  = UR5_TO_IDX.get(pt, -1)
+    for idx, (pt, visit) in enumerate(pts):
+        evs   = [e for e in valid if e['point'] == pt and e['visit'] == visit]
+        avg   = np.mean([e['peak'] for e in evs], axis=0)
+        ti    = UR5_TO_IDX.get(pt, -1)
+        v_tag = f" #{visit+1}" if visit > 0 else ""
         _hex_map(axes[idx], avg, target_idx=ti,
-                 title=f"P{pt} (n={len(evs)})")
+                 title=f"P{pt}{v_tag} (n={len(evs)})")
 
     for idx in range(len(pts), len(axes)):
         axes[idx].set_visible(False)

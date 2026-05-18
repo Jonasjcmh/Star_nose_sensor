@@ -51,6 +51,7 @@ UR5_TO_IDX = {
     13:15, 14:10, 15:5,  16:1,
     17:11, 18:6,  19:2,
 }
+IDX_TO_UR5 = {v: k for k, v in UR5_TO_IDX.items()}
 # Unique points in robot visit order (for force plot aggregation)
 VISIT_ORDER    = [10,1,2,3,7,6,5,4,8,9,11,12,16,15,14,13,17,18,19]
 # Full sequence including repeated P10 visits, as (point, visit_index) tuples
@@ -479,7 +480,7 @@ def plot_per_point(df, events, csv_path, save=False):
             fontsize=8, fontweight='bold')
         ax.set_xticks(range(N))
         ax.set_xticklabels(
-            [f'P{i+1}' for i in range(N)],
+            [f'P{IDX_TO_UR5.get(i, "?")}' for i in range(N)],
             rotation=90, fontsize=5)
         ax.set_ylim(0, 1.05)
         ax.set_ylabel('Pressure', fontsize=7)

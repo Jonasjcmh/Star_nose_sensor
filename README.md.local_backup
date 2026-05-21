@@ -1,0 +1,368 @@
+# KYWO — Capacitive Skin Sensor + UR5 Integration
+
+A data-collection and visualization system that coordinates a **19-cell capacitive pressure mat** (Muca skin sensor) with a **Universal Robots UR5 arm**, recording force/pressure data as the robot presses each point on the mat in a hexagonal grid pattern.
+
+---
+
+## System Overview
+
+```
+Muca Skin Sensor (USB/serial) ──► sensor.py ──► /tmp/kywo_sensor.json
+                                      │
+                              data_logger.py ──► logs/session.csv
+                                      │
+UR5 Robot (RTDE / Ethernet) ──► ur5_control.py ─┘
+                                      │
+                              visualizer_2d.py  (Pygame, subprocess)
+                              sofa_scene.py     (SOFA 3D, subprocess)
+```
+
+The sensor mat has 19 usable cells arranged in a 5-row hexagonal grid (3-4-5-4-3). The UR5 presses each of those 19 points in sequence, dwelling 6 mm deep for 1.5 s, while the system logs sensor pressure, 6-axis force/torque, and TCP pose at 20 Hz.
+
+---
+
+## Quick Start
+
+```bash
+cd Integration
+
+# Full system (sensor + UR5 + 2D visualizer + logging)
+python3.10 main.py
+
+# Without SOFA 3D (most common)
+python3.10 main.py --no-sofa
+
+# Sensor + logging only, no robot
+python3.10 main.py --no-robot
+
+# Demo mode (simulated sensor, no hardware needed)
+python3.10 main.py --demo
+
+# Auto-stop after N seconds
+python3.10 main.py --no-sofa --duration 60
+
+# Run analysis after session ends
+python3.10 main.py --no-sofa --analyze
+
+# Analyze a saved session (standalone)
+python3.10 analyze_session.py logs/my_session.csv --save
+```
+
+---
+
+## Hardware
+
+| Component | Connection | Default |
+|-----------|-----------|---------|
+| Muca skin sensor | USB serial | `/dev/ttyUSB0` (auto-detect) |
+| UR5 robot | Ethernet RTDE | `177.22.22.2` |
+| F/T sensor | UR5 built-in | read at 125 Hz |
+
+---
+
+## File Reference
+
+### `Integration/` — Main System
+
+#### [`main.py`](Integration/main.py)
+**Central orchestrator.** Parses CLI arguments, starts all subsystems (sensor, UR5, logger, visualizers), runs the 20 Hz logging loop, and shuts everything down cleanly.
+
+**CLI flags:**
+
+| Flag | Effect |
+|------|--------|
+| `--no-sofa` | Skip SOFA 3D visualization |
+| `--no-viz` | Skip Pygame 2D visualizer |
+| `--no-robot` | Skip UR5 trajectory |
+| `--demo` | Simulated sensor, no hardware |
+| `--log-only` | Sensor + logger only |
+| `--sofa-only` | SOFA 3D only |
+| `--viz-only` | 2D visualizer only |
+| `--analyze` | Run `analyze_session.py` after session |
+| `--log-prefix NAME` | Set log filename prefix (skips prompt) |
+| `--duration SECS` | Auto-stop after N seconds |
+
+**Startup sequence:**
+1. Load `calib.json` offsets into `ur5_control`
+2. Start sensor (wait up to 60 s for calibration)
+3. Start CSV logger (asks for prefix if `--log-prefix` not set)
+4. Launch subprocess visualizers (SOFA, then Pygame)
+5. Start UR5 trajectory in a background thread
+6. Monitor loop: print state every 2 s, exit on trajectory-done / Ctrl-C / `--duration`
+
+---
+
+#### [`sensor.py`](Integration/sensor.py)
+**Capacitive skin sensor reader.** Opens the serial port, reads 252-cell CSV frames at ~100 Hz, extracts the 19 used cells, applies baseline calibration and gamma correction, and exposes thread-safe accessors.
+
+**Configuration constants:**
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `SERIAL_PORT` | `/dev/ttyACM0` | Falls back to auto-detect |
+| `SERIAL_RATE` | 115200 | Baud rate |
+| `SENSITIVITY` | 8.0 | ADC counts per full-scale |
+| `GAMMA` | 0.5 | Perceptual curve (< 1 = more sensitive at low values) |
+| `READ_TIMEOUT` | 2.0 s | Stale-frame threshold |
+| `SHARED_FILE` | `/tmp/kywo_sensor.json` | IPC file for subprocesses |
+
+**Key functions:**
+
+| Function | Description |
+|----------|-------------|
+| `start()` | Launch read thread + shared-file writer |
+| `get_values()` | Return list of 19 normalized floats [0.0–1.0] |
+| `wait_until_ready(timeout)` | Block until baseline calibration done |
+| `recalibrate()` | Reset baseline (next frame becomes new zero) |
+| `read_shared()` | Read the IPC JSON — used by subprocess visualizers |
+| `is_connected()` | True if a frame arrived within `READ_TIMEOUT` |
+
+**Normalization:** `value = clamp((raw − baseline) / SENSITIVITY, 0, 1) ^ GAMMA`
+
+The first valid frame sets the baseline. The serial loop reconnects automatically after failures (0.3 s fast / 3 s slow depending on age of last good frame).
+
+---
+
+#### [`ur5_control.py`](Integration/ur5_control.py)
+**UR5 robot controller.** Connects via RTDE, moves to each of 19 hexagonal points, presses 6 mm, dwells 1.5 s, retracts, and repeats.
+
+**Motion parameters:**
+
+| Parameter | Value |
+|-----------|-------|
+| Travel speed | 0.05 m/s |
+| Press speed | 0.01 m/s |
+| Acceleration | 0.3 m/s² |
+| Press depth | 6 mm |
+| Dwell time | 1.5 s |
+
+**Key functions:**
+
+| Function | Description |
+|----------|-------------|
+| `run_trajectory(on_press, on_release, interactive)` | Execute all 21 waypoints |
+| `get_state()` | Dict with `point`, `pressing`, `done`, `ft`, `tcp` |
+| `get_force()` | Latest 6-axis F/T reading |
+
+**Calibration offsets** (loaded from `calib.json` via `load_calibration.py`) shift every point by ΔX, ΔY, ΔZ mm before motion.
+
+**UR5_TO_SENSOR mapping** — which raw sensor cell each UR5 point activates when pressed — was verified empirically with `verify_mapping.py`.
+
+---
+
+#### [`data_logger.py`](Integration/data_logger.py)
+**CSV session logger.** Buffers rows in memory and writes atomically (temp file + rename) to avoid corruption.
+
+**CSV columns:** `timestamp`, `datetime`, `ur5_point`, `ur5_pressing`, `ur5_done`, `tcp_x/y/z`, `fx/y/fz`, `tx/ty/tz`, `cell_1` … `cell_19`
+
+**Key functions:**
+
+| Function | Description |
+|----------|-------------|
+| `start(filepath)` | Open log file, write header |
+| `log(sensor_vals, ur5_state)` | Append one row (call at 20 Hz) |
+| `stop()` | Flush buffer and close file |
+| `get_row_count()` | Number of rows written so far |
+| `build_filename(prefix, dir)` | `{prefix}_session_{YYYYMMDD_HHMMSS}.csv` |
+| `ask_file_prefix()` | Interactive prompt for prefix |
+| `sanitize_name(s)` | Strip special chars from prefix |
+
+---
+
+#### [`visualizer_2d.py`](Integration/visualizer_2d.py)
+**Pygame 2D hex pressure map.** Runs as a subprocess, reads sensor state from `/tmp/kywo_sensor.json`, and renders a live hex grid.
+
+**Left panel:** 19 hexagonal cells colored by pressure (black → blue → green → yellow → red).  
+**Right panel:** Active count, peak value, current UR5 point, robot state, per-cell bar chart.  
+**Status indicator:** Live / Buffered / Reconnecting / Demo.
+
+**Keyboard shortcuts:**
+
+| Key | Action |
+|-----|--------|
+| `L` | Toggle cell labels |
+| `V` | Toggle numeric values |
+| `C` | Recalibrate sensor |
+| `D` | Toggle demo (simulated) mode |
+| `ESC` | Quit |
+
+Can also be run standalone: `python3.10 visualizer_2d.py`
+
+---
+
+#### [`sofa_scene.py`](Integration/sofa_scene.py)
+**SOFA Framework 3D visualization.** Launched by `main.py` via `runSofa`. Renders the 19 sensor points as spheres whose height and radius grow with pressure, color-coded teal→green→yellow→orange→red.
+
+Reads sensor data from `/tmp/kywo_sensor.json` (same IPC file as Pygame visualizer). Does not open the serial port.
+
+**Camera shortcuts (in SOFA window):** `1` = Top, `2` = Isometric, `3` = Side.
+
+Requires `~/sofa/SOFA_v25.12.00_Linux/` installation with the SofaPython3 plugin.
+
+---
+
+#### [`analyze_session.py`](Integration/analyze_session.py)
+**Post-processing analysis dashboard.** Loads a session CSV and generates up to 5 Matplotlib figures.
+
+```bash
+# Analyze specific file
+python3.10 analyze_session.py logs/my_session.csv
+
+# Save figures to plots/
+python3.10 analyze_session.py logs/my_session.csv --save
+
+# Analyze all sessions + comparison table
+python3.10 analyze_session.py --all --save
+
+# Force-only analysis
+python3.10 analyze_session.py logs/my_session.csv --force
+```
+
+**Figures generated:**
+
+| Figure | Content |
+|--------|---------|
+| 1 — Overview | Sensor timeline + force timeline for full session |
+| 2 — Per-point bars | Average peak and mean per UR5 point |
+| 3 — Hex detail maps | Hex grid snapshot at each press event |
+| 4 — Force analysis | Fz vs sensor scatter with linear fit and r² |
+| 5 — Session comparison | Table of metrics across all sessions (`--all`) |
+
+---
+
+#### [`calibrate_ur5.py`](Integration/calibrate_ur5.py)
+**Interactive UR5 calibration tool.** Jog the TCP in fine increments to find the exact XYZ offset that aligns each robot point with the physical sensor cell.
+
+**Commands at the prompt:**
+
+| Command | Effect |
+|---------|--------|
+| `x+ / x-` | Jog +/− along X |
+| `y+ / y-` | Jog +/− along Y |
+| `z+ / z-` | Jog +/− along Z |
+| `step N` | Set jog step size (mm) |
+| `press` | Execute a press and read sensor peak |
+| `status` | Print TCP pose + sensor bar chart |
+| `reset` | Return to reference pose |
+| `save` | Write offsets to `calib.json` |
+| `quit` | Exit without saving |
+
+---
+
+#### [`verify_mapping.py`](Integration/verify_mapping.py)
+**Automated UR5↔sensor mapping verification.** Visits each of the 19 UR5 points, presses, reads which sensor cells activate, and prints a summary table comparing observed peaks against the expected `UR5_TO_SENSOR` mapping.
+
+```bash
+python3.10 verify_mapping.py
+```
+
+---
+
+#### [`load_calibration.py`](Integration/load_calibration.py)
+**Calibration loader.** Reads `calib.json` and patches the X/Y/Z offsets into `ur5_control` at import time. Called automatically by `main.py` on startup.
+
+```bash
+# Apply calibration manually (for testing)
+python3.10 -c "import load_calibration; load_calibration.apply()"
+```
+
+---
+
+#### [`sensor_bridge.py`](Integration/sensor_bridge.py)
+**Legacy sensor interface.** An earlier version of `sensor.py` used before the shared-file IPC approach. Retained as a backup/reference. Uses the same serial protocol but exposes a `SensorBridge` class with a `recalibrate()` method and `connection_age` attribute.
+
+---
+
+#### [`calib.json`](Integration/calib.json)
+Saved calibration offsets applied to all UR5 trajectory points.  
+Format: `{"x_offset_mm": -3.0, "y_offset_mm": 1.0, "z_offset_mm": 0.0}`
+
+---
+
+### Root-Level Scripts
+
+#### [`basic_routine.py`](basic_routine.py)
+Cyclic Z-axis indentation test. Connects directly to the UR5 via RTDE and moves the TCP down then up repeatedly, printing force and pose at each step. Used for early hardware validation.
+
+#### [`basic test.py`](basic%20test.py)
+Linear X-axis movement test. Moves the TCP 1 cm forward then streams TCP force data continuously. Used to verify the RTDE connection and F/T sensor.
+
+#### [`sine.py`](sine.py)
+Sinusoidal X-axis trajectory. Generates a smooth sine wave motion using `servoJ` for continuous control. Demonstrates the servo interface rather than waypoint-based `moveL`.
+
+#### [`Start.py`](Start.py)
+Hello-world sanity check. Prints "Hello World!" — used to verify the Python environment is working.
+
+---
+
+### `RTDE_Python_Client_Library/`
+
+Vendored copy of the Universal Robots RTDE Python client (v2.7.12).
+
+#### [`rtde/`](RTDE_Python_Client_Library/rtde/)
+Core RTDE protocol implementation: `rtde.py` (connection + send/receive), `serialize.py` (pack/unpack), `rtde_config.py` (XML recipe loader), `csv_reader.py`, `csv_writer.py`, `csv_binary_writer.py`.
+
+#### [`hexagon_trajectory.py`](RTDE_Python_Client_Library/hexagon_trajectory.py)
+Constant-Z hexagonal sweep. Visits all 19 points at a fixed height without indentation — useful for X/Y alignment checks without pressing.
+
+#### [`indentation.py`](RTDE_Python_Client_Library/indentation.py)
+Full hexagonal trajectory with per-point depth and dwell overrides. Predecessor to `Integration/ur5_control.py`, useful as a standalone script outside the integration system.
+
+#### [`ur_position.py`](RTDE_Python_Client_Library/ur_position.py)
+One-shot TCP pose reader. Connects, prints current X/Y/Z/Rx/Ry/Rz, disconnects. Handy for finding the reference pose before a session.
+
+#### [`daq_data.py`](RTDE_Python_Client_Library/daq_data.py)
+NI USB-6009 data acquisition interface via `pyusb`. Probes analog endpoints and returns raw bytes. Work-in-progress — was an early experiment for external DAQ before switching to the UR5 built-in F/T sensor.
+
+#### [`examples/`](RTDE_Python_Client_Library/examples/)
+Official RTDE example scripts: `record.py` (real-time data recording), `example_control_loop.py` (basic servo loop), `example_plotting.py` (live data plot).
+
+---
+
+## Session Run Output (example — 20 s without SOFA)
+
+```
+============================================================
+  KYWO — Sensor + UR5 + Visualization + Logging
+  2026-05-06 16:17:32
+============================================================
+  SOFA 3D    : OFF
+  2D viz     : ON
+  UR5 robot  : ON
+  Demo mode  : OFF
+  Logging    : ON
+============================================================
+[sensor] Found: /dev/ttyUSB0 — calibration done!
+[main]   Sensor ready!
+[logger] Started → readme_test_session_20260506_161734.csv
+[ur5]    TCP: X=-0.0400 Y=-0.4980 Z=0.0605 — trajectory started
+
+[main] t=  0.0s | active= 2/19 | max=0.354 | Fz= +0.00N | UR5=P10 moving   | rows=  60
+[main] t=  2.1s | active= 2/19 | max=0.354 | Fz=-17.32N | UR5=P10 PRESSING | rows=  62
+[main] t= 20.1s | active= 7/19 | max=0.866 | Fz= +2.61N | UR5=P6  PRESSING | rows= 395
+
+[main] Session complete!
+  Duration : 20.4 s   |   Rows : 395   |   Rate : 19.3 Hz
+  File     : logs/readme_test_session_20260506_161734.csv
+```
+
+---
+
+## Dependencies
+
+```bash
+pip install pyserial numpy matplotlib pygame pandas ur-rtde
+# SOFA: install runSofa + SofaPython3 plugin separately
+```
+
+Python 3.10 recommended (used throughout the project).
+
+---
+
+## Calibration Workflow
+
+1. **Find reference pose** — run `ur_position.py`, record TCP coordinates.
+2. **Run calibrate_ur5.py** — jog X/Y/Z until robot aligns with sensor center.
+3. **Save** — `save` command writes `calib.json`.
+4. **Verify** — run `verify_mapping.py` to confirm all 19 points map correctly.
+5. **Run session** — `main.py --no-sofa` loads calibration automatically.

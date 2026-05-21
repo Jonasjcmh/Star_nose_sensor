@@ -578,7 +578,7 @@ def plot_force(df, events, csv_path, save=False):
         fz_pt = {p: [] for p in pts}
         for _, row in df[df['ur5_pressing']==1].iterrows():
             pt = row.get('ur5_point')
-            if pd.notna(pt):
+            if pd.notna(pt) and int(pt) in fz_pt:
                 fz_pt[int(pt)].append(abs(row['fz']))
         fz_m = [np.mean(fz_pt[p]) if fz_pt[p] else 0
                 for p in pts]

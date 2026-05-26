@@ -31,12 +31,18 @@ SOFA_PLUGIN = os.path.expanduser(
     "~/sofa/SOFA_v25.12.00_Linux/plugins/SofaPython3/lib/libSofaPython3.so")
 SOFA_SCENE  = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "sofa_scene.py")
-VIZ_SCRIPT  = os.path.join(
+VIZ_SCRIPT      = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "visualizer_2d.py")
-ANALYZE_SCRIPT = os.path.join(
+VIZ3D_SCRIPT     = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "robot_viz_3d.py")
+VIZ_MESHCAT_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "robot_viz_meshcat.py")
+VIZ_PYBULLET_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "robot_viz_pybullet.py")
+ANALYZE_SCRIPT  = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "analyze_session.py")
 INTEGRATION_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_DIR     = os.path.join(INTEGRATION_DIR, "logs")
+LOG_DIR         = os.path.join(INTEGRATION_DIR, "logs")
 
 class NoRobotState:
     UR5_TO_SENSOR = {}
@@ -77,12 +83,22 @@ def parse_args():
                    help='Skip UR5 robot movement')
     p.add_argument('--demo',      action='store_true',
                    help='Demo mode — simulated sensor, no robot')
+    p.add_argument('--sim-sensor', action='store_true',
+                   help='Simulated sensor data — robot still runs (use with --sim)')
     p.add_argument('--log-only',  action='store_true',
                    help='Sensor + logging only')
     p.add_argument('--sofa-only', action='store_true',
                    help='SOFA only')
     p.add_argument('--viz-only',  action='store_true',
                    help='2D visualizer only')
+    p.add_argument('--sim',       action='store_true',
+                   help='Connect to URSim at localhost:30004 (Docker)')
+    p.add_argument('--robot-viz', action='store_true',
+                   help='Launch matplotlib 3D robot visualizer alongside the session')
+    p.add_argument('--robot-viz-meshcat', action='store_true',
+                   help='Launch browser-based Meshcat digital twin (Three.js)')
+    p.add_argument('--robot-viz-pybullet', action='store_true',
+                   help='Launch PyBullet OpenGL digital twin')
     p.add_argument('--analyze',   action='store_true',
                    help='Run analysis after session ends')
     p.add_argument('--log-prefix',
@@ -191,6 +207,9 @@ def main():
         args.no_viz   = True
     if args.demo:
         args.no_robot = True
+    if args.sim:
+        os.environ["UR_ROBOT_IP"] = "127.0.0.1"
+        print("[main] Simulator mode — robot IP set to 127.0.0.1")
 
     load_runtime_modules(robot_enabled=not args.no_robot)
 
@@ -204,8 +223,9 @@ def main():
         print(f"[main] No calibration file: {e}")
 
     # ── Start sensor ──────────────────────────────────────────
-    if args.demo:
-        print("\n[main] Demo mode — using simulated sensor")
+    _sim_sensor = args.demo or getattr(args, 'sim_sensor', False)
+    if _sim_sensor:
+        print("\n[main] Using simulated sensor data")
         start_demo_sensor()
     else:
         print("\n[main] Starting sensor...")
@@ -261,9 +281,39 @@ def main():
         except Exception as e:
             print(f"[main] 2D visualizer failed: {e}")
 
+    if getattr(args, 'robot_viz', False):
+        try:
+            sim_flag = ["--sim"] if args.sim else []
+            proc = subprocess.Popen(
+                [sys.executable, VIZ3D_SCRIPT] + sim_flag)
+            procs.append(('3D viz', proc))
+            print("[main] 3D robot visualizer launched")
+        except Exception as e:
+            print(f"[main] 3D visualizer failed: {e}")
+
+    if getattr(args, 'robot_viz_meshcat', False):
+        try:
+            sim_flag = ["--sim"] if args.sim else []
+            proc = subprocess.Popen(
+                [sys.executable, VIZ_MESHCAT_SCRIPT] + sim_flag)
+            procs.append(('meshcat', proc))
+            print("[main] Meshcat browser digital twin launched")
+        except Exception as e:
+            print(f"[main] Meshcat visualizer failed: {e}")
+
+    if getattr(args, 'robot_viz_pybullet', False):
+        try:
+            sim_flag = ["--sim"] if args.sim else []
+            proc = subprocess.Popen(
+                [sys.executable, VIZ_PYBULLET_SCRIPT] + sim_flag)
+            procs.append(('pybullet', proc))
+            print("[main] PyBullet digital twin launched")
+        except Exception as e:
+            print(f"[main] PyBullet visualizer failed: {e}")
+
     # ── Start UR5 trajectory ──────────────────────────────────
     ur5_thread = None
-    if not args.no_robot and not args.demo:
+    if not args.no_robot and not args.demo:  # --demo always implies --no-robot
 
         USED_CELLS = sensor.USED_CELLS
 
@@ -340,7 +390,8 @@ def main():
                 break
 
             # Robot finished trajectory
-            if not args.no_robot and not args.demo:
+            _robot_active = not args.no_robot and not args.demo
+            if _robot_active:
                 if state.get('done'):
                     print("\n[main] ✓ UR5 trajectory complete!")
                     time.sleep(2)  # collect last frames
@@ -352,7 +403,7 @@ def main():
                 break
 
             # No exit condition — keep running until Ctrl+C
-            if args.no_robot or args.demo:
+            if not _robot_active:
                 if procs and len(procs) == 0:
                     break
 

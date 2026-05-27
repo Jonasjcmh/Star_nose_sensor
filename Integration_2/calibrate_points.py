@@ -54,8 +54,8 @@ import threading
 
 # ── Optional matplotlib (graceful fallback if headless) ───────────────────────
 try:
-    import matplotlib
-    matplotlib.use("TkAgg")          # change to Qt5Agg if TkAgg unavailable
+    import platform, matplotlib
+    matplotlib.use("MacOSX" if platform.system() == "Darwin" else "TkAgg")
     import matplotlib.pyplot as plt
     from matplotlib.patches import RegularPolygon
     from matplotlib.colors import LinearSegmentedColormap, Normalize
@@ -73,7 +73,7 @@ CALIB_PTS  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calib_poi
 VELOCITY_TRAVEL = 0.05
 VELOCITY_PRESS  = 0.01
 ACCELERATION    = 0.3
-INDENT_MM       = 6.0
+INDENT_MM       = 10.0
 SAFE_Z_MM       = 20.0
 
 REFERENCE_POSE = [

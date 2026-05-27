@@ -35,7 +35,8 @@ from matplotlib.patches import RegularPolygon, FancyArrowPatch
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.cm import ScalarMappable
 
-matplotlib.use("MacOSX")   # native macOS interactive window
+import platform as _platform
+matplotlib.use("MacOSX" if _platform.system() == "Darwin" else "TkAgg")
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 HERE     = Path(__file__).parent

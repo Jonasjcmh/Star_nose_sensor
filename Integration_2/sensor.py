@@ -53,8 +53,10 @@ def get_raw():
     with _lock:
         return list(_raw_values)
 
+_UR5_TO_IDX = {1:16,2:12,3:7,4:17,5:13,6:8,7:3,8:18,9:14,10:9,11:4,12:0,13:15,14:10,15:5,16:1,17:11,18:6,19:2}
+
 def get_value_for_ur5_point(point_number):
-    idx = point_number - 1
+    idx = _UR5_TO_IDX.get(point_number, -1)
     with _lock:
         return _values[idx] if 0 <= idx < 19 else 0.0
 

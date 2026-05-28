@@ -66,9 +66,16 @@ except ImportError:
     _HAS_MPL = False
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-ROBOT_IP   = "177.22.22.2"
-CALIB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calib.json")
-CALIB_PTS  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calib_points.json")
+ROBOT_IP  = "177.22.22.2"
+CALIB_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def calib_file(tip=None):
+    name = f"calib_{tip}.json" if tip else "calib.json"
+    return os.path.join(CALIB_DIR, name)
+
+def calib_pts_file(tip=None):
+    name = f"calib_points_{tip}.json" if tip else "calib_points.json"
+    return os.path.join(CALIB_DIR, name)
 
 VELOCITY_TRAVEL = 0.05
 VELOCITY_PRESS  = 0.01
@@ -114,20 +121,22 @@ if _HAS_MPL:
     EDGE = "#444444"
 
 # ── File I/O ──────────────────────────────────────────────────────────────────
-def load_global_calib():
-    if os.path.exists(CALIB_FILE):
-        with open(CALIB_FILE) as f:
+def load_global_calib(tip=None):
+    f_path = calib_file(tip)
+    if os.path.exists(f_path):
+        with open(f_path) as f:
             d = json.load(f)
         gx, gy, gz = d.get("x_mm", 0.0), d.get("y_mm", 0.0), d.get("z_mm", 0.0)
         print(f"[calib] Global offset: X={gx:+.3f} Y={gy:+.3f} Z={gz:+.3f} mm")
         return gx, gy, gz
-    print("[calib] No calib.json — using zero global offset")
+    print(f"[calib] No {os.path.basename(f_path)} — using zero global offset")
     return 0.0, 0.0, 0.0
 
 
-def load_point_offsets():
-    if os.path.exists(CALIB_PTS):
-        with open(CALIB_PTS) as f:
+def load_point_offsets(tip=None):
+    f_path = calib_pts_file(tip)
+    if os.path.exists(f_path):
+        with open(f_path) as f:
             d = json.load(f)
         offsets = {int(k): (v.get("dx_mm", 0.0), v.get("dy_mm", 0.0))
                    for k, v in d.get("per_point", {}).items()}
@@ -136,8 +145,9 @@ def load_point_offsets():
     return {}, {}
 
 
-def save_results(global_calib, per_point_offsets, scan_results):
+def save_results(global_calib, per_point_offsets, scan_results, tip=None):
     gx, gy, gz = global_calib
+    f_path = calib_pts_file(tip)
     data = {
         "global": {"x_mm": gx, "y_mm": gy, "z_mm": gz},
         "per_point": {
@@ -146,9 +156,9 @@ def save_results(global_calib, per_point_offsets, scan_results):
         },
         "scan_results": scan_results,
     }
-    with open(CALIB_PTS, "w") as f:
+    with open(f_path, "w") as f:
         json.dump(data, f, indent=2)
-    print(f"\n[calib] Saved → {CALIB_PTS}")
+    print(f"\n[calib] Saved → {f_path}")
 
 # ── Pose builder ──────────────────────────────────────────────────────────────
 def build_pose(pt, global_calib, extra_dx=0.0, extra_dy=0.0, extra_z=0.0):
@@ -274,9 +284,8 @@ def open_live_hexmap(pt):
                        edgecolor=EDGE, linewidth=0.4)
     _live_bar_rects.extend(rects)
 
-    exp_idx = UR5_TO_IDX[pt]
-    ax_bar.axvline(exp_idx, color="red", linewidth=2, alpha=0.6,
-                   label=f"Target S{UR5_TO_RAW[pt]}")
+    ax_bar.axvline(pt - 1, color="red", linewidth=2, alpha=0.6,
+                   label=f"Target P{pt} → S{UR5_TO_RAW[pt]}")
     ax_bar.legend(fontsize=7, facecolor=BG, labelcolor="white",
                   edgecolor=EDGE)
     ax_bar.set_xlim(-0.5, 18.5)
@@ -827,14 +836,22 @@ def parse_args():
                    help="Save deviation map to PNG file and exit")
     p.add_argument("--no-sensor", action="store_true",
                    help="Skip sensor checks (robot motion only)")
+    p.add_argument("--tip", default=None,
+                   help="Tip name (e.g. short, long_5mm). Loads calib_<tip>.json, saves calib_points_<tip>.json")
     return p.parse_args()
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     args = parse_args()
 
-    global_calib = load_global_calib()
-    per_point_offsets, scan_results = load_point_offsets()
+    tip = args.tip
+    global_calib = load_global_calib(tip)
+    per_point_offsets, scan_results = load_point_offsets(tip)
+
+    if tip:
+        print(f"[calib] Tip profile  : {tip}")
+        print(f"[calib] Global file  : calib_{tip}.json")
+        print(f"[calib] Points file  : calib_points_{tip}.json")
 
     # ── Map-only mode ─────────────────────────────────────────────────────────
     if args.map or args.save_map:
@@ -909,8 +926,9 @@ def main():
             target_points, rtde_c, rtde_r,
             global_calib, per_point_offsets, scan_results, sensor_mod)
         print_summary(scan_results, per_point_offsets)
-        save_results(global_calib, per_point_offsets, scan_results)
-        map_path = os.path.join(os.path.dirname(CALIB_PTS), "deviation_map.png")
+        save_results(global_calib, per_point_offsets, scan_results, tip)
+        map_suffix = f"_{tip}" if tip else ""
+        map_path = os.path.join(CALIB_DIR, f"deviation_map{map_suffix}.png")
         show_deviation_map(per_point_offsets, scan_results, save_path=map_path)
         print("[calib] Scan complete.")
 
@@ -937,12 +955,12 @@ def main():
                 global_calib, per_point_offsets, scan_results, sensor_mod)
 
             if cont is None:
-                save_results(global_calib, per_point_offsets, scan_results)
+                save_results(global_calib, per_point_offsets, scan_results, tip)
                 show_deviation_map(per_point_offsets, scan_results)
                 break
         else:
             print_summary(scan_results, per_point_offsets)
-            save_results(global_calib, per_point_offsets, scan_results)
+            save_results(global_calib, per_point_offsets, scan_results, tip)
             show_deviation_map(per_point_offsets, scan_results)
             print("\n[calib] All done!")
 

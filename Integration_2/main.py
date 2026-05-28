@@ -117,6 +117,8 @@ def parse_args():
                    help='Beginning of the log filename')
     p.add_argument('--duration', type=float,
                    help='Stop automatically after this many seconds')
+    p.add_argument('--tip', default=None,
+                   help='Tip profile name — loads calib_<tip>.json (e.g. --tip long_5mm)')
     return p.parse_args()
 
 def print_banner(args):
@@ -252,9 +254,28 @@ def main():
     # ── Load calibration ──────────────────────────────────────
     try:
         import load_calibration
-        load_calibration.apply()
+        tip = getattr(args, 'tip', None)
+        load_calibration.preview(tip=tip)
+        load_calibration.apply(tip=tip)
+    except SystemExit:
+        raise
     except Exception as e:
         print(f"[main] No calibration file: {e}")
+
+    # ── Indentation depth ─────────────────────────────────────
+    if not (args.no_robot or args.demo):
+        import ur5_control as _ur5
+        print(f"\n  Current indentation : {_ur5.DEFAULT_INDENT_MM:.1f} mm")
+        try:
+            ans = input("  Press depth in mm [Enter = keep current] > ").strip()
+            if ans:
+                _ur5.DEFAULT_INDENT_MM = float(ans)
+            print(f"  Indentation set to  : {_ur5.DEFAULT_INDENT_MM:.1f} mm\n")
+        except (EOFError, KeyboardInterrupt):
+            print("\n[main] Aborted.")
+            raise SystemExit(1)
+        except ValueError:
+            print(f"  Invalid value — keeping {_ur5.DEFAULT_INDENT_MM:.1f} mm\n")
 
     # ── Start sensor ──────────────────────────────────────────
     _sim_sensor = args.demo or getattr(args, 'sim_sensor', False)

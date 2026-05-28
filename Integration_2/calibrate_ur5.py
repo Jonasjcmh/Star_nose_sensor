@@ -25,7 +25,11 @@ import time
 import threading
 
 ROBOT_IP   = "177.22.22.2"
-CALIB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'calib.json')
+CALIB_DIR  = os.path.dirname(os.path.abspath(__file__))
+
+def calib_file(tip=None):
+    name = f'calib_{tip}.json' if tip else 'calib.json'
+    return os.path.join(CALIB_DIR, name)
 
 REFERENCE_POSE = [
     -0.03746+0.0005,
@@ -37,26 +41,28 @@ REFERENCE_POSE = [
 VELOCITY_JOG   = 0.02
 VELOCITY_PRESS = 0.01
 ACCEL          = 0.3
-INDENT_MM      = 6.0
+INDENT_MM      = 10.0
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import sensor
 
-def load_existing():
-    if os.path.exists(CALIB_FILE):
-        with open(CALIB_FILE) as f:
+def load_existing(tip=None):
+    f_path = calib_file(tip)
+    if os.path.exists(f_path):
+        with open(f_path) as f:
             d = json.load(f)
         print(f"[calib] Loaded existing offset: "
               f"X={d['x_mm']:+.3f} Y={d['y_mm']:+.3f} Z={d['z_mm']:+.3f} mm")
         return d['x_mm'], d['y_mm'], d['z_mm']
     return 0.0, 0.0, 0.0
 
-def save_calib(x, y, z):
-    with open(CALIB_FILE, 'w') as f:
+def save_calib(x, y, z, tip=None):
+    f_path = calib_file(tip)
+    with open(f_path, 'w') as f:
         json.dump({'x_mm': round(x,4),
                    'y_mm': round(y,4),
                    'z_mm': round(z,4)}, f, indent=2)
-    print(f"\n[calib] Saved to {CALIB_FILE}")
+    print(f"\n[calib] Saved to {f_path}")
     print(f"[calib] Paste into ur5_control.py:")
     print(f"         CALIB_X_MM = {round(x,4)}")
     print(f"         CALIB_Y_MM = {round(y,4)}")
@@ -121,10 +127,19 @@ def do_press(rtde_c, rtde_r, ox, oy, oz):
         print(f"  Moderate reading — try adjusting position")
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description='UR5 global calibration')
+    ap.add_argument('--tip', default=None,
+                    help='Tip name (e.g. short, long_5mm). Saves to calib_<tip>.json')
+    args = ap.parse_args()
+
+    tip_label = f' [{args.tip}]' if args.tip else ''
     print("="*55)
-    print("  UR5 Calibration Tool — PyCharm compatible")
+    print(f"  UR5 Calibration Tool{tip_label}")
     print("  Target: align TCP over S26 (center of sensor)")
     print("="*55)
+    if args.tip:
+        print(f"  Tip profile : {args.tip}  →  calib_{args.tip}.json\n")
     print("""
   Commands:
     x+  x-         move right/left
@@ -138,7 +153,7 @@ def main():
     quit           exit without saving
 """)
 
-    ox, oy, oz = load_existing()
+    ox, oy, oz = load_existing(args.tip)
     step_mm = 0.5
 
     print("[calib] Starting sensor...")
@@ -200,7 +215,7 @@ def main():
             ox=oy=oz=0.0; moved=True
             print("  Reset to zero offset")
         elif cmd == 'save':
-            save_calib(ox, oy, oz)
+            save_calib(ox, oy, oz, args.tip)
             rtde_c.stopScript()
             print("[calib] Done!")
             return

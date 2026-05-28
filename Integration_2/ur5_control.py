@@ -28,9 +28,10 @@ SAFE_HOME_Z_MM    = 30.0   # clearance above surface at home position
 # Adjust these to correct TCP misalignment.
 # Run calibrate_ur5.py to find the correct values.
 # Positive X = move right, Positive Y = move forward
-CALIB_X_MM = 0.0   # ← set after calibration
-CALIB_Y_MM = 0.0   # ← set after calibration
-CALIB_Z_MM = 0.0   # ← set after calibration (surface height)
+CALIB_X_MM    = 0.0   # ← set after calibration
+CALIB_Y_MM    = 0.0   # ← set after calibration
+CALIB_Z_MM    = 0.0   # ← set after calibration (surface height)
+POINT_OFFSETS = {}    # pt → (dx_mm, dy_mm) from calib_points_<tip>.json
 
 REFERENCE_POSE = [
     -0.03746+0.0005,
@@ -135,12 +136,18 @@ def _force_reader_loop():
         time.sleep(0.008)  # 125Hz
 
 def set_calibration(x_mm=0.0, y_mm=0.0, z_mm=0.0):
-    """Update calibration offsets at runtime"""
+    """Update global calibration offsets at runtime."""
     global CALIB_X_MM, CALIB_Y_MM, CALIB_Z_MM
     CALIB_X_MM = x_mm
     CALIB_Y_MM = y_mm
     CALIB_Z_MM = z_mm
     print(f"[ur5] Calibration set: X={x_mm:+.3f} Y={y_mm:+.3f} Z={z_mm:+.3f} mm")
+
+def set_point_offsets(offsets):
+    """Load per-point (dx, dy) offsets from calib_points_<tip>.json."""
+    global POINT_OFFSETS
+    POINT_OFFSETS = offsets
+    print(f"[ur5] Per-point offsets loaded for {len(offsets)} point(s)")
 
 def _home_pose():
     """Safe park position: P10 center lifted SAFE_HOME_Z_MM above the mat."""
@@ -160,10 +167,10 @@ def _get_indent_dwell(pt):
 
 def _build_pose(pt, extra_z_mm=0.0):
     dx, dy = POINTS[pt]
+    pdx, pdy = POINT_OFFSETS.get(pt, (0.0, 0.0))
     pose = REFERENCE_POSE.copy()
-    # Apply point offset + calibration correction
-    pose[0] += (dx + CALIB_X_MM) / 1000.0
-    pose[1] += (dy + CALIB_Y_MM) / 1000.0
+    pose[0] += (dx + CALIB_X_MM + pdx) / 1000.0
+    pose[1] += (dy + CALIB_Y_MM + pdy) / 1000.0
     pose[2] += (extra_z_mm + CALIB_Z_MM) / 1000.0
     return pose
 

@@ -33,6 +33,19 @@ PLOTS_DIR       = os.path.join(INTEGRATION_DIR, "plots")
 LEGACY_DATASETS_DIR = os.path.join(INTEGRATION_DIR, "datasets")
 LEGACY_LOG_DIR  = os.path.expanduser("~/sofa-projects/logs")
 
+# ── FUTEK load cell calibration ───────────────────────────────
+# 10 lb (44.482 N) load cell, amplifier output: 5 V = 0 N
+# Compression → voltage < 5 V → negative force (matches robot fz sign)
+AI0_ZERO_V        = 5.0          # V at zero force
+LOADCELL_MAX_LB   = 10.0         # rated capacity (lb)
+LOADCELL_MAX_N    = LOADCELL_MAX_LB * 4.44822   # = 44.482 N
+LOADCELL_V_RANGE  = 5.0          # V from zero to full scale
+LOADCELL_N_PER_V  = LOADCELL_MAX_N / LOADCELL_V_RANGE   # N / V
+
+def ai0_to_newtons(ai0_v):
+    """Convert AI0 voltage to Newtons (positive = compression, matches |fz|)."""
+    return -(np.asarray(ai0_v) - AI0_ZERO_V) * LOADCELL_N_PER_V
+
 # ── Sensor layout ─────────────────────────────────────────────
 POINTS_MM = [
     (-8,  +14), ( 0, +14), (+8, +14),
@@ -51,7 +64,9 @@ UR5_TO_IDX = {
     13:15, 14:10, 15:5,  16:1,
     17:11, 18:6,  19:2,
 }
-IDX_TO_UR5 = {v: k for k, v in UR5_TO_IDX.items()}
+IDX_TO_UR5    = {v: k for k, v in UR5_TO_IDX.items()}
+POS_TO_SENSOR = [UR5_TO_IDX[i+1] for i in range(N)]
+SENSOR_TO_POS = {s: i for i, s in enumerate(POS_TO_SENSOR)}
 # Unique points in robot visit order (for force plot aggregation)
 VISIT_ORDER    = [10,1,2,3,7,6,5,4,8,9,11,12,16,15,14,13,17,18,19]
 # Full sequence including repeated P10 visits, as (point, visit_index) tuples
@@ -74,8 +89,10 @@ def parse_args():
                    help='Compare all sessions')
     p.add_argument('--save',  action='store_true',
                    help='Save figures to plots folder')
-    p.add_argument('--force', action='store_true',
+    p.add_argument('--force',    action='store_true',
                    help='Show force analysis only')
+    p.add_argument('--loadcell', action='store_true',
+                   help='Show FUTEK load cell vs robot force comparison only')
     return p.parse_args()
 
 # ── File helpers ──────────────────────────────────────────────
@@ -253,18 +270,20 @@ def savefig(fig, csv_path, suffix, save):
 def _hex_map(ax, values_19, target_idx=-1, title='',
              vmax=1.0, unit=''):
     vmax = max(vmax, 1e-6)
+    pos_target = SENSOR_TO_POS.get(target_idx, -1)
     for i, (xmm, ymm) in enumerate(POINTS_MM):
-        v   = float(values_19[i]) / vmax \
-              if i < len(values_19) else 0.0
+        si  = POS_TO_SENSOR[i]
+        v   = float(values_19[si]) / vmax \
+              if si < len(values_19) else 0.0
         v   = max(0.0, min(1.0, v))
         col = CMAP(v)
-        lw  = 2.5 if i == target_idx else 0.5
-        ec  = 'red' if i == target_idx else 'white'
+        lw  = 2.5 if i == pos_target else 0.5
+        ec  = 'red' if i == pos_target else 'white'
         h   = RegularPolygon(
             (xmm, ymm), numVertices=6, radius=4.5,
             facecolor=col, edgecolor=ec, linewidth=lw)
         ax.add_patch(h)
-        val = values_19[i] if i < len(values_19) else 0
+        val = values_19[si] if si < len(values_19) else 0
         txt = (f"{val:.2f}{unit}"
                if abs(float(val)) > 0.01 else "")
         ax.text(xmm, ymm, txt,
@@ -833,6 +852,167 @@ def plot_analog(df, events, csv_path, save=False):
     savefig(fig, csv_path, 'analog', save)
     plt.show()
 
+# ── Plot 5c: FUTEK load cell vs robot force ───────────────────
+def plot_loadcell_vs_robot(df, events, csv_path, save=False):
+    """Compare FUTEK load cell (AI0 → N) against the robot's Fz sensor."""
+    has_ai0 = 'ai0' in df.columns and df['ai0'].abs().max() > 1e-6
+    has_fz  = 'fz'  in df.columns
+
+    if not has_ai0:
+        print("[analyze] No AI0 data — skipping load cell comparison")
+        return
+    if not has_fz:
+        print("[analyze] No robot Fz data — skipping load cell comparison")
+        return
+
+    label     = get_dataset_label(csv_path)
+    press_df  = df[df['ur5_pressing'] == 1].copy()
+    valid     = [e for e in events if e['point'] > 0]
+
+    if len(press_df) < 5:
+        print("[analyze] Too few pressing frames for load cell comparison")
+        return
+
+    # ── Baseline correction (at-rest offset removal) ──────────
+    rest      = df[df['ur5_pressing'] == 0]
+    fz_base   = float(rest['fz'].mean())  if len(rest) > 0 else 0.0
+    lc_base   = float(ai0_to_newtons(rest['ai0']).mean()) if len(rest) > 0 else 0.0
+    print(f"[analyze] Load cell baseline — Robot Fz: {fz_base:+.3f} N  "
+          f"Load cell: {lc_base:+.3f} N  (subtracted)")
+
+    def _fz_c(v):
+        """Robot Fz → positive compression, baseline removed."""
+        return -(np.asarray(v) - fz_base)
+
+    def _lc_c(v):
+        """AI0 → Newtons, positive compression, baseline removed."""
+        return ai0_to_newtons(v) - lc_base
+
+    t_all    = df['t'].to_numpy()
+    lc_all   = _lc_c(df['ai0'].to_numpy())
+    fz_all   = _fz_c(df['fz'].to_numpy())
+    pressing = (df['ur5_pressing'] == 1).to_numpy()
+
+    lc_press = _lc_c(press_df['ai0'].to_numpy())
+    fz_press = _fz_c(press_df['fz'].to_numpy())
+
+    # ── Figure layout ─────────────────────────────────────────
+    fig = plt.figure(figsize=(18, 12))
+    fig.suptitle(
+        f"FUTEK Load Cell vs Robot Force Sensor — {label}\n"
+        f"Load cell: {LOADCELL_MAX_LB:.0f} lb / {LOADCELL_MAX_N:.1f} N  "
+        f"|  {LOADCELL_N_PER_V:.3f} N/V  "
+        f"|  Baselines removed — Robot: {fz_base:+.2f} N   LC: {lc_base:+.2f} N"
+        f"|  Positive = compression",
+        fontsize=10, fontweight='bold')
+    gs = gridspec.GridSpec(3, 3, figure=fig,
+                           hspace=0.50, wspace=0.38)
+
+    # ── 1. Time-series overlay ────────────────────────────────
+    ax1 = fig.add_subplot(gs[0, :])
+    ax1.plot(t_all, lc_all, color='#9b59b6', linewidth=0.9,
+             label='FUTEK load cell (N, baseline removed)', zorder=3)
+    ax1.plot(t_all, fz_all, color='#dc0000', linewidth=0.9,
+             alpha=0.8, label='Robot Fz (N, baseline removed)', zorder=2)
+    fmin = min(lc_all.min(), fz_all.min())
+    fmax = max(lc_all.max(), fz_all.max())
+    ax1.fill_between(t_all, fmin, fmax,
+                     where=pressing, alpha=0.10,
+                     color='steelblue', label='Pressing')
+    ax1.axhline(0, color='black', linewidth=0.6, linestyle='--', alpha=0.4)
+    for ev in valid:
+        ax1.axvline(ev['start'], color='gray', alpha=0.35, linewidth=0.6)
+        ax1.text(ev['start'] + 0.05, fmax * 0.88,
+                 f"P{ev['point']}", fontsize=5,
+                 color='gray', rotation=90)
+    ax1.set_xlabel('Time (s)', fontsize=9)
+    ax1.set_ylabel('Force (N)', fontsize=9)
+    ax1.set_title('Load cell vs robot force — full session', fontsize=10)
+    ax1.legend(fontsize=8, loc='lower right')
+    ax1.grid(alpha=0.3)
+
+    # ── 2. Scatter: load cell vs robot (pressing frames only) ─
+    ax2 = fig.add_subplot(gs[1, 0])
+    sc = ax2.scatter(lc_press, fz_press,
+                     alpha=0.35, s=6,
+                     c=press_df['t'].to_numpy(), cmap='viridis')
+    plt.colorbar(sc, ax=ax2, label='Time (s)', shrink=0.85)
+    # 1:1 reference line
+    all_vals = np.concatenate([lc_press, fz_press])
+    lim = [all_vals.min() * 1.05, all_vals.max() * 1.05]
+    ax2.plot(lim, lim, 'k--', linewidth=0.8, alpha=0.5, label='1:1 line')
+    ax2.set_xlabel('FUTEK load cell (N)', fontsize=9)
+    ax2.set_ylabel('Robot Fz (N)', fontsize=9)
+    ax2.set_title('Correlation (pressing frames)', fontsize=9)
+    ax2.legend(fontsize=7)
+    ax2.grid(alpha=0.3)
+    # Pearson r
+    if len(lc_press) > 2:
+        r = float(np.corrcoef(lc_press, fz_press)[0, 1])
+        ax2.text(0.05, 0.92, f"r = {r:.3f}",
+                 transform=ax2.transAxes, fontsize=9,
+                 color='#333', fontweight='bold')
+
+    # ── 3. Residuals over time (robot − load cell) ────────────
+    ax3 = fig.add_subplot(gs[1, 1])
+    residuals = fz_press - lc_press
+    ax3.plot(press_df['t'].to_numpy(), residuals,
+             color='#e67e22', linewidth=0.8, alpha=0.85)
+    ax3.axhline(0,   color='black', linewidth=0.8, linestyle='--')
+    ax3.axhline( residuals.mean(), color='red',
+                linewidth=0.8, linestyle=':', label=f'mean={residuals.mean():.2f} N')
+    ax3.set_xlabel('Time (s)', fontsize=9)
+    ax3.set_ylabel('Robot Fz − Load cell (N)', fontsize=9)
+    ax3.set_title('Residuals during pressing', fontsize=9)
+    ax3.legend(fontsize=7)
+    ax3.grid(alpha=0.3)
+
+    # ── 4. Bland-Altman agreement plot ───────────────────────
+    ax4 = fig.add_subplot(gs[1, 2])
+    mean_sig  = (lc_press + fz_press) / 2.0
+    diff_sig  = fz_press - lc_press
+    mean_diff = float(diff_sig.mean())
+    std_diff  = float(diff_sig.std())
+    ax4.scatter(mean_sig, diff_sig, alpha=0.3, s=6, color='#2980b9')
+    ax4.axhline(mean_diff,             color='red',  linewidth=1.0,
+                label=f'Bias = {mean_diff:.2f} N')
+    ax4.axhline(mean_diff + 1.96*std_diff, color='gray', linewidth=0.8,
+                linestyle='--', label=f'+1.96σ = {mean_diff+1.96*std_diff:.2f} N')
+    ax4.axhline(mean_diff - 1.96*std_diff, color='gray', linewidth=0.8,
+                linestyle='--', label=f'−1.96σ = {mean_diff-1.96*std_diff:.2f} N')
+    ax4.set_xlabel('Mean of two sensors (N)', fontsize=9)
+    ax4.set_ylabel('Robot − Load cell (N)', fontsize=9)
+    ax4.set_title('Bland–Altman agreement', fontsize=9)
+    ax4.legend(fontsize=6)
+    ax4.grid(alpha=0.3)
+
+    # ── 5. Per-press peak comparison bar chart ────────────────
+    ax5 = fig.add_subplot(gs[2, :])
+    if valid:
+        x      = np.arange(len(valid))
+        lc_pk  = [max(0.0, float(_lc_c(e.get('ai0_peak', AI0_ZERO_V))))
+                  for e in valid]
+        fz_pk  = [max(0.0, float(_fz_c(-e.get('fz_peak', 0.0))))
+                  for e in valid]
+        width  = 0.38
+        b1 = ax5.bar(x - width/2, lc_pk, width,
+                     color='#9b59b6', alpha=0.85,
+                     label='FUTEK peak |F| (N)', edgecolor='white')
+        b2 = ax5.bar(x + width/2, fz_pk, width,
+                     color='#dc0000', alpha=0.85,
+                     label='Robot |Fz| peak (N)', edgecolor='white')
+        ax5.set_xticks(x)
+        ax5.set_xticklabels([f"P{e['point']}" for e in valid],
+                            rotation=60, fontsize=7)
+        ax5.set_ylabel('Peak force magnitude (N)', fontsize=9)
+        ax5.set_title('Peak force per press event — load cell vs robot',
+                      fontsize=10)
+        ax5.legend(fontsize=8)
+        ax5.grid(axis='y', alpha=0.3)
+
+    savefig(fig, csv_path, 'loadcell_vs_robot', save)
+    plt.show()
+
 # ── Plot 5: Session comparison ────────────────────────────────
 def plot_comparison(save=False):
     files = find_all_csvs()
@@ -1039,11 +1219,16 @@ def main():
         plot_force(df, events, path, save=args.save)
         return
 
+    if args.loadcell:
+        plot_loadcell_vs_robot(df, events, path, save=args.save)
+        return
+
     plot_overview(df,   events, path, save=args.save)
     plot_per_point(df,  events, path, save=args.save)
     plot_hex_detail(df, events, path, save=args.save)
     plot_force(df,      events, path, save=args.save)
     plot_analog(df,     events, path, save=args.save)
+    plot_loadcell_vs_robot(df, events, path, save=args.save)
 
     if args.save:
         save_dir = get_save_dir(path)

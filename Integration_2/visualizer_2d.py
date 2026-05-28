@@ -38,6 +38,9 @@ POINTS_MM = [
     (-8,  -14), ( 0, -14), (+8, -14),
 ]
 RAW_CELLS = [2,15,28,1,14,27,40,0,13,26,39,52,12,25,38,51,24,37,50]
+# Maps hex grid position i (= physical point i+1) → sensor array index
+UR5_TO_IDX  = {1:16,2:12,3:7,4:17,5:13,6:8,7:3,8:18,9:14,10:9,11:4,12:0,13:15,14:10,15:5,16:1,17:11,18:6,19:2}
+POS_TO_SENSOR = [UR5_TO_IDX[i+1] for i in range(19)]
 
 W, H    = 920, 680
 FPS     = 25
@@ -313,7 +316,8 @@ def main():
             try:
                 cx  = HEX_CX + xmm * SX
                 cy  = HEX_CY - ymm * SY
-                v   = float(values[i]) if i < len(values) else 0.0
+                si  = POS_TO_SENSOR[i]
+                v   = float(values[si]) if si < len(values) else 0.0
                 col = lerp_color(v)
                 pts = hex_pts(cx, cy, HEX_R)
 
@@ -329,7 +333,7 @@ def main():
                 if show_labels:
                     blit(screen, f"P{i+1}",
                          font_sm, tc, cx, cy-14, 'center')
-                    blit(screen, f"S{RAW_CELLS[i]}",
+                    blit(screen, f"S{RAW_CELLS[si]}",
                          font_sm, mc, cx, cy, 'center')
 
                 if show_values and v > 0.02:

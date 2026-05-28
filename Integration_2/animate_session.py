@@ -46,11 +46,21 @@ UR5_TO_IDX = {
     13:15, 14:10, 15:5,  16:1,
     17:11, 18:6,  19:2,
 }
-IDX_TO_UR5 = {v: k for k, v in UR5_TO_IDX.items()}
+IDX_TO_UR5    = {v: k for k, v in UR5_TO_IDX.items()}
+POS_TO_SENSOR = [UR5_TO_IDX[i+1] for i in range(N)]
 
 CMAP = LinearSegmentedColormap.from_list('star_nose', [
     '#2ab5a0', '#33e666', '#ffe619', '#ff7300', '#dc0000'
 ])
+
+# FUTEK load cell calibration (must match analyze_session.py)
+AI0_ZERO_V       = 5.0          # V at zero force
+LOADCELL_MAX_N   = 10.0 * 4.44822  # 10 lb in Newtons
+LOADCELL_N_PER_V = LOADCELL_MAX_N / 5.0  # N per volt from zero
+
+def _ai0_to_n(v):
+    """AI0 voltage → Newtons, positive = compression."""
+    return -(np.asarray(v) - AI0_ZERO_V) * LOADCELL_N_PER_V
 
 BG   = '#111111'
 MID  = '#222222'
@@ -120,7 +130,16 @@ def load_session(path):
 # ── Build animation ───────────────────────────────────────────────────────────
 def build_animation(df, label, step=1, speed=1.0):
     cell_cols  = [f'cell_{i+1}' for i in range(N)]
-    has_force  = 'fz' in df.columns
+    has_force  = 'fz'  in df.columns
+    has_ai0    = 'ai0' in df.columns and df['ai0'].abs().max() > 1e-6
+
+    # ── Baseline offset removal ───────────────────────────────────────────────
+    # Use frames where the robot is NOT pressing to compute the at-rest baseline.
+    rest = df[df['ur5_pressing'] == 0]
+    fz_baseline = float(rest['fz'].mean())  if (has_force and len(rest) > 0) else 0.0
+    lc_baseline = float(_ai0_to_n(rest['ai0']).mean()) if (has_ai0  and len(rest) > 0) else 0.0
+    print(f"[animate] Baseline  — Robot Fz: {fz_baseline:+.3f} N   "
+          f"Load cell: {lc_baseline:+.3f} N  (removed from signals)")
     frames_df  = df.iloc[::step].reset_index(drop=True)
     n_frames   = len(frames_df)
     total_t    = frames_df['t'].iloc[-1]
@@ -130,7 +149,6 @@ def build_animation(df, label, step=1, speed=1.0):
     interval = max(10.0, avg_dt_s * step * 1000.0 / speed)
 
     # ── Layout ──
-    has_ai0 = 'ai0' in df.columns and df['ai0'].abs().max() > 1e-6
     fig = plt.figure(figsize=(13, 9), facecolor=BG)
     gs  = gridspec.GridSpec(
         4, 2, figure=fig,
@@ -140,13 +158,13 @@ def build_animation(df, label, step=1, speed=1.0):
         left=0.04, right=0.97, top=0.93, bottom=0.06,
     )
 
-    ax_hex  = fig.add_subplot(gs[0, 0])   # hexmap
-    ax_bar  = fig.add_subplot(gs[0, 1])   # per-cell bar chart
-    ax_hist = fig.add_subplot(gs[1, :])   # rolling history strip
-    ax_ai0  = fig.add_subplot(gs[2, :])   # AI0 analog input trace
-    ax_prog = fig.add_subplot(gs[3, :])   # progress bar
+    ax_hex   = fig.add_subplot(gs[0, 0])   # hexmap
+    ax_bar   = fig.add_subplot(gs[0, 1])   # per-cell bar chart
+    ax_hist  = fig.add_subplot(gs[1, :])   # rolling history strip
+    ax_force = fig.add_subplot(gs[2, :])   # robot Fz + load cell (N)
+    ax_prog  = fig.add_subplot(gs[3, :])   # progress bar
 
-    for ax in [ax_hex, ax_bar, ax_hist, ax_ai0, ax_prog]:
+    for ax in [ax_hex, ax_bar, ax_hist, ax_force, ax_prog]:
         ax.set_facecolor(BG)
         for sp in ax.spines.values():
             sp.set_edgecolor(EDGE)
@@ -216,30 +234,55 @@ def build_animation(df, label, step=1, speed=1.0):
     press_vline = ax_hist.axvline(HIST_WIN - 1, color='white',
                                    linewidth=0.8, alpha=0.5)
 
-    # ── AI0 analog input trace ────────────────────────────────────────────────
-    AI0_WIN  = HIST_WIN
-    ai0_buf  = np.full(AI0_WIN, float(df['ai0'].iloc[0]) if has_ai0 else 0.0)
+    # ── Force comparison panel (robot Fz + FUTEK load cell in N) ─────────────
+    FORCE_WIN = HIST_WIN
+
+    # Offset-corrected helpers (positive = compression, baseline removed)
+    def _fz_corrected(v):
+        return -(np.asarray(v) - fz_baseline)
+
+    def _lc_corrected(v):
+        return _ai0_to_n(v) - lc_baseline
+
+    # Pre-fill buffers with 0 (baseline removed, so rest = 0)
+    fz_buf = np.zeros(FORCE_WIN)
+    lc_buf = np.zeros(FORCE_WIN)
+
+    # Y-axis range from offset-corrected signals across the whole session
+    all_force_vals = []
+    if has_force:
+        all_force_vals.append(_fz_corrected(df['fz'].to_numpy()))
     if has_ai0:
-        ai0_min = float(df['ai0'].min())
-        ai0_max = float(df['ai0'].max())
-        ai0_pad = max((ai0_max - ai0_min) * 0.15, 0.05)
-        ai0_ymin, ai0_ymax = ai0_min - ai0_pad, ai0_max + ai0_pad
+        all_force_vals.append(_lc_corrected(df['ai0'].to_numpy()))
+    if all_force_vals:
+        combined = np.concatenate(all_force_vals)
+        f_min = float(combined.min())
+        f_max = float(combined.max())
+        f_pad = max((f_max - f_min) * 0.15, 0.5)
+        f_ymin, f_ymax = f_min - f_pad, f_max + f_pad
     else:
-        ai0_ymin, ai0_ymax = -1.0, 1.0
-    ai0_line, = ax_ai0.plot(range(AI0_WIN), ai0_buf,
-                             color='#9b59b6', linewidth=1.0)
-    ax_ai0.set_xlim(0, AI0_WIN)
-    ax_ai0.set_ylim(ai0_ymin, ai0_ymax)
-    ax_ai0.set_xticks([])
-    ax_ai0.set_ylabel('V', fontsize=7, color='#aaaaaa')
-    ax_ai0.tick_params(axis='y', colors='#aaaaaa', labelsize=6)
-    ax_ai0.set_title('Analog Input 0 (AI0)', fontsize=8,
-                     color='white', pad=3)
-    ax_ai0.grid(axis='y', color=EDGE, alpha=0.4, linewidth=0.5)
-    if not has_ai0:
-        ax_ai0.text(AI0_WIN / 2, 0, 'no AI0 data',
-                    ha='center', va='center',
-                    fontsize=7, color='#666666')
+        f_ymin, f_ymax = -1.0, 1.0
+
+    fz_line, = ax_force.plot(range(FORCE_WIN), fz_buf,
+                              color='#dc0000', linewidth=1.0,
+                              label='Robot Fz (N)')
+    lc_line, = ax_force.plot(range(FORCE_WIN), lc_buf,
+                              color='#9b59b6', linewidth=1.0,
+                              label='Load cell (N)')
+    ax_force.set_xlim(0, FORCE_WIN)
+    ax_force.set_ylim(f_ymin, f_ymax)
+    ax_force.set_xticks([])
+    ax_force.set_ylabel('N', fontsize=7, color='#aaaaaa')
+    ax_force.tick_params(axis='y', colors='#aaaaaa', labelsize=6)
+    ax_force.set_title('Force — Robot Fz vs FUTEK load cell  (compression = positive)',
+                       fontsize=8, color='white', pad=3)
+    ax_force.axhline(0, color=EDGE, linewidth=0.5, linestyle='--')
+    ax_force.grid(axis='y', color=EDGE, alpha=0.4, linewidth=0.5)
+    ax_force.legend(fontsize=6, facecolor=BG, labelcolor='white',
+                    edgecolor=EDGE, loc='upper left')
+    if not has_force and not has_ai0:
+        ax_force.text(FORCE_WIN / 2, 0, 'no force data',
+                      ha='center', va='center', fontsize=7, color='#666666')
 
     # ── Progress bar ──────────────────────────────────────────────────────────
     (prog_rect,) = ax_prog.barh([0], [0], height=0.8, color='#2ab5a0')
@@ -268,16 +311,17 @@ def build_animation(df, label, step=1, speed=1.0):
 
         # Hex patches
         for i, (patch, txt) in enumerate(zip(hex_patches, hex_texts)):
-            v   = float(np.clip(vals[i], 0.0, 1.0))
+            si  = POS_TO_SENSOR[i]
+            v   = float(np.clip(vals[si], 0.0, 1.0))
             col = CMAP(v)
             patch.set_facecolor(col)
-            if i == ti and pressing:
+            if i == pt_i - 1 and pressing:
                 patch.set_edgecolor('red')
                 patch.set_linewidth(2.5)
             else:
                 patch.set_edgecolor(EDGE)
                 patch.set_linewidth(0.8)
-            txt.set_text(f'{vals[i]:.2f}' if vals[i] > 0.02 else '')
+            txt.set_text(f'{vals[si]:.2f}' if vals[si] > 0.02 else '')
             txt.set_color('white' if v > 0.45 else '#cccccc')
 
         # Bar chart
@@ -298,18 +342,25 @@ def build_animation(df, label, step=1, speed=1.0):
         hist_buf[:, -1]  = vals
         hist_img.set_data(hist_buf)
 
-        # AI0 trace
-        ai0_val = float(row['ai0']) if (has_ai0 and pd.notna(row.get('ai0'))) else 0.0
-        ai0_buf[:-1] = ai0_buf[1:]
-        ai0_buf[-1]  = ai0_val
-        ai0_line.set_ydata(ai0_buf)
+        # Force comparison buffers — offset-corrected, positive = compression
+        fz_val = float(_fz_corrected(row['fz'])) if (has_force and pd.notna(row.get('fz'))) else 0.0
+        lc_val = float(_lc_corrected(row['ai0'])) if (has_ai0 and pd.notna(row.get('ai0'))) else 0.0
+        fz_buf[:-1] = fz_buf[1:];  fz_buf[-1] = fz_val
+        lc_buf[:-1] = lc_buf[1:];  lc_buf[-1] = lc_val
+        fz_line.set_ydata(fz_buf)
+        lc_line.set_ydata(lc_buf)
 
         # Title
-        fz_str = ''
-        if has_force and pressing and pd.notna(row.get('fz')):
-            fz_str = f'   |Fz| = {abs(row["fz"]):.1f} N'
+        force_str = ''
         if pressing and pt_i > 0:
-            hex_title.set_text(f't = {t_now:.2f} s   ▶  PRESSING P{pt_i}{fz_str}')
+            parts = []
+            if has_force:
+                parts.append(f'Robot={fz_val:.1f} N')
+            if has_ai0:
+                parts.append(f'LC={lc_val:.1f} N')
+            if parts:
+                force_str = '   ' + '  |  '.join(parts)
+            hex_title.set_text(f't = {t_now:.2f} s   ▶  PRESSING P{pt_i}{force_str}')
             hex_title.set_color('#ff5555')
         else:
             hex_title.set_text(f't = {t_now:.2f} s')
@@ -321,7 +372,7 @@ def build_animation(df, label, step=1, speed=1.0):
 
         return (hex_patches + hex_texts +
                 list(bar_rects) + [target_vline, hist_img,
-                ai0_line, prog_rect, prog_label, hex_title])
+                fz_line, lc_line, prog_rect, prog_label, hex_title])
 
     anim = FuncAnimation(fig, update, frames=n_frames,
                          interval=interval, blit=True)

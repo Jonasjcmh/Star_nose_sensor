@@ -218,18 +218,23 @@ def build_animation(df, label, step=1, speed=1.0):
 
     # ── AI0 analog input trace ────────────────────────────────────────────────
     AI0_WIN  = HIST_WIN
-    ai0_buf  = np.zeros(AI0_WIN)
-    ai0_rng  = max(float(df['ai0'].abs().max()), 0.1) if has_ai0 else 1.0
+    ai0_buf  = np.full(AI0_WIN, float(df['ai0'].iloc[0]) if has_ai0 else 0.0)
+    if has_ai0:
+        ai0_min = float(df['ai0'].min())
+        ai0_max = float(df['ai0'].max())
+        ai0_pad = max((ai0_max - ai0_min) * 0.15, 0.05)
+        ai0_ymin, ai0_ymax = ai0_min - ai0_pad, ai0_max + ai0_pad
+    else:
+        ai0_ymin, ai0_ymax = -1.0, 1.0
     ai0_line, = ax_ai0.plot(range(AI0_WIN), ai0_buf,
                              color='#9b59b6', linewidth=1.0)
     ax_ai0.set_xlim(0, AI0_WIN)
-    ax_ai0.set_ylim(-ai0_rng * 1.1, ai0_rng * 1.1)
+    ax_ai0.set_ylim(ai0_ymin, ai0_ymax)
     ax_ai0.set_xticks([])
     ax_ai0.set_ylabel('V', fontsize=7, color='#aaaaaa')
     ax_ai0.tick_params(axis='y', colors='#aaaaaa', labelsize=6)
     ax_ai0.set_title('Analog Input 0 (AI0)', fontsize=8,
                      color='white', pad=3)
-    ax_ai0.axhline(0, color=EDGE, linewidth=0.5)
     ax_ai0.grid(axis='y', color=EDGE, alpha=0.4, linewidth=0.5)
     if not has_ai0:
         ax_ai0.text(AI0_WIN / 2, 0, 'no AI0 data',

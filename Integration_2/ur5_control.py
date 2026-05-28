@@ -81,6 +81,7 @@ is_pressing   = False
 is_done       = False
 current_ft    = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # Fx Fy Fz Tx Ty Tz
 current_tcp   = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]  # x y z rx ry rz
+current_ai0   = 0.0  # standard analog input 0 (AI0), volts
 _lock         = threading.Lock()
 _rtde_r_ref   = [None]  # shared reference to rtde_receive
 _stop_flag    = threading.Event()  # set to request early stop + home return
@@ -97,6 +98,7 @@ def get_state():
             'done':     is_done,
             'ft':       list(current_ft),
             'tcp':      list(current_tcp),
+            'ai0':      current_ai0,
         }
 
 def get_force():
@@ -109,18 +111,25 @@ def get_tcp():
     with _lock:
         return list(current_tcp)
 
+def get_ai0():
+    """Get current standard analog input 0 (AI0) in volts"""
+    with _lock:
+        return current_ai0
+
 def _force_reader_loop():
-    """Read force/pose at 125Hz in background"""
-    global current_ft, current_tcp
+    """Read force/pose/AI0 at 125Hz in background"""
+    global current_ft, current_tcp, current_ai0
     while True:
         rtde_r = _rtde_r_ref[0]
         if rtde_r is not None:
             try:
                 ft  = rtde_r.getActualTCPForce()
                 tcp = rtde_r.getActualTCPPose()
+                ai0 = rtde_r.getStandardAnalogInput0()
                 with _lock:
                     current_ft  = list(ft)
                     current_tcp = list(tcp)
+                    current_ai0 = float(ai0)
             except Exception:
                 pass
         time.sleep(0.008)  # 125Hz

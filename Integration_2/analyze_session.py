@@ -152,7 +152,7 @@ def load_session(path):
                 df[c], errors='coerce').fillna(0)
 
     for c in ['fx','fy','fz','tx','ty','tz',
-              'tcp_x','tcp_y','tcp_z']:
+              'tcp_x','tcp_y','tcp_z','ai0']:
         if c in df.columns:
             df[c] = pd.to_numeric(
                 df[c], errors='coerce').fillna(0)
@@ -205,6 +205,8 @@ def get_press_events(df):
                         if 'fx' in df.columns else [])
                 fy_v = ([r['fy'] for r in rows]
                         if 'fy' in df.columns else [])
+                ai0_v = ([float(r['ai0']) for r in rows]
+                         if 'ai0' in df.columns else [])
 
                 events.append({
                     'point':        pt_i,
@@ -227,6 +229,10 @@ def get_press_events(df):
                                     if fx_v else 0.0,
                     'fy_mean':      float(np.mean(np.abs(fy_v)))
                                     if fy_v else 0.0,
+                    'ai0_mean':     float(np.mean(ai0_v))
+                                    if ai0_v else 0.0,
+                    'ai0_peak':     float(np.max(ai0_v))
+                                    if ai0_v else 0.0,
                 })
             in_press = False
             rows     = []
@@ -401,11 +407,14 @@ def plot_overview(df, events, csv_path, save=False):
     # Summary stats
     ax7 = fig.add_subplot(gs[2, 2])
     ax7.axis('off')
-    has_ft = 'fz' in df.columns
-    avg_pk = np.mean([e['peak_max']    for e in valid]) if valid else 0
-    avg_tg = np.mean([e['target_peak'] for e in valid]) if valid else 0
-    avg_fz = (np.mean([e['fz_mean'] for e in valid])
-              if (valid and has_ft) else None)
+    has_ft  = 'fz' in df.columns
+    has_ai0 = 'ai0' in df.columns and df['ai0'].abs().max() > 1e-6
+    avg_pk  = np.mean([e['peak_max']    for e in valid]) if valid else 0
+    avg_tg  = np.mean([e['target_peak'] for e in valid]) if valid else 0
+    avg_fz  = (np.mean([e['fz_mean'] for e in valid])
+               if (valid and has_ft)  else None)
+    avg_ai0 = (np.mean([e.get('ai0_mean', 0.0) for e in valid])
+               if (valid and has_ai0) else None)
 
     stats = [
         ("Dataset",       label[:28]),
@@ -418,10 +427,13 @@ def plot_overview(df, events, csv_path, save=False):
         ("Avg target",    f"{avg_tg:.3f}"),
         ("Target ratio",  f"{avg_tg/avg_pk*100:.1f}%"
                           if avg_pk > 0 else "N/A"),
-        ("Force data",    "YES" if has_ft else "NO"),
+        ("Force data",    "YES" if has_ft  else "NO"),
+        ("AI0 data",      "YES" if has_ai0 else "NO"),
     ]
     if avg_fz is not None:
-        stats.append(("Avg |Fz|", f"{avg_fz:.2f} N"))
+        stats.append(("Avg |Fz|",  f"{avg_fz:.2f} N"))
+    if avg_ai0 is not None:
+        stats.append(("Avg AI0",   f"{avg_ai0:.4f} V"))
 
     y = 0.96
     ax7.text(0.05, y, "Summary", fontweight='bold',
@@ -567,7 +579,20 @@ def plot_force(df, events, csv_path, save=False):
     ax1.set_ylabel('Force (N)', fontsize=9)
     ax1.set_title(
         'TCP force components over session', fontsize=10)
-    ax1.legend(fontsize=8, loc='upper right')
+    has_ai0_f = 'ai0' in df.columns and df['ai0'].abs().max() > 1e-6
+    if has_ai0_f:
+        ax1b = ax1.twinx()
+        ax1b.plot(df['t'].to_numpy(), df['ai0'].to_numpy(),
+                 color='#9b59b6', linewidth=0.7, linestyle='--',
+                 alpha=0.9, label='AI0 (V)')
+        ax1b.set_ylabel('AI0 (V)', fontsize=9, color='#9b59b6')
+        ax1b.tick_params(axis='y', colors='#9b59b6', labelsize=7)
+        lines1, lbl1 = ax1.get_legend_handles_labels()
+        lines2, lbl2 = ax1b.get_legend_handles_labels()
+        ax1.legend(lines1 + lines2, lbl1 + lbl2,
+                  fontsize=8, loc='upper right')
+    else:
+        ax1.legend(fontsize=8, loc='upper right')
     ax1.grid(alpha=0.3)
 
     # Mean |Fz| per point
@@ -716,6 +741,96 @@ def plot_force(df, events, csv_path, save=False):
         ax7.grid(alpha=0.3)
 
     savefig(fig, csv_path, 'force', save)
+    plt.show()
+
+# ── Plot 5b: Analog input (AI0) ───────────────────────────────
+def plot_analog(df, events, csv_path, save=False):
+    has_ai0 = 'ai0' in df.columns and df['ai0'].abs().max() > 1e-6
+    if not has_ai0:
+        print("[analyze] No AI0 analog data in this session")
+        return
+
+    label    = get_dataset_label(csv_path)
+    valid    = [e for e in events if e['point'] > 0]
+
+    fig = plt.figure(figsize=(16, 10))
+    fig.suptitle(
+        f"UR Robot Analog Input (AI0) — {label}",
+        fontsize=12, fontweight='bold')
+    gs = gridspec.GridSpec(2, 2, figure=fig,
+                           hspace=0.45, wspace=0.35)
+
+    # AI0 timeline
+    ax1 = fig.add_subplot(gs[0, :])
+    ax1.plot(df['t'].to_numpy(), df['ai0'].to_numpy(),
+            color='#9b59b6', linewidth=0.8, label='AI0 (V)')
+    pressing = (df['ur5_pressing'] == 1).to_numpy()
+    ai0_arr  = df['ai0'].to_numpy()
+    ai0_min, ai0_max = float(ai0_arr.min()), float(ai0_arr.max())
+    span = ai0_max - ai0_min
+    if span > 1e-6:
+        ax1.fill_between(df['t'].to_numpy(), ai0_min, ai0_max,
+                        where=pressing, alpha=0.15,
+                        color='red', label='Pressing')
+    for ev in valid:
+        ax1.axvline(ev['start'], color='gray',
+                   alpha=0.4, linewidth=0.7)
+        ax1.text(ev['start'] + 0.1,
+                ai0_min + span * 0.9 if span > 1e-6 else ai0_min,
+                f"P{ev['point']}", fontsize=5,
+                color='gray', rotation=90)
+    ax1.set_xlabel('Time (s)', fontsize=9)
+    ax1.set_ylabel('AI0 (V)', fontsize=9)
+    ax1.set_title('Analog Input 0 — full session', fontsize=10)
+    ax1.legend(fontsize=8)
+    ax1.grid(alpha=0.3)
+
+    # Mean / peak AI0 per press event
+    ax2 = fig.add_subplot(gs[1, 0])
+    if valid:
+        ai0_means = [e.get('ai0_mean', 0.0) for e in valid]
+        ai0_peaks = [e.get('ai0_peak', 0.0) for e in valid]
+        x = list(range(len(valid)))
+        ax2.bar([i - 0.2 for i in x], ai0_means, width=0.35,
+               color='#9b59b6', alpha=0.85,
+               edgecolor='white', label='Mean')
+        ax2.bar([i + 0.2 for i in x], ai0_peaks, width=0.35,
+               color='#e056b6', alpha=0.85,
+               edgecolor='white', label='Peak')
+        ax2.set_xticks(x)
+        ax2.set_xticklabels(
+            [f"P{e['point']}" for e in valid],
+            rotation=60, fontsize=6)
+        ax2.set_ylabel('AI0 (V)', fontsize=9)
+        ax2.set_title('AI0 per press event', fontsize=9)
+        ax2.legend(fontsize=7)
+        ax2.grid(axis='y', alpha=0.3)
+
+    # AI0 vs Force scatter (pressing frames)
+    ax3 = fig.add_subplot(gs[1, 1])
+    press_df = df[df['ur5_pressing'] == 1].copy()
+    has_ft   = 'fz' in df.columns
+    if has_ft and len(press_df) > 10:
+        sc = ax3.scatter(
+            press_df['ai0'].to_numpy(),
+            press_df['fz'].abs().to_numpy(),
+            alpha=0.3, s=8,
+            c=press_df['t'].to_numpy(), cmap=CMAP)
+        plt.colorbar(sc, ax=ax3, label='Time (s)', shrink=0.8)
+        ax3.set_xlabel('AI0 (V)', fontsize=9)
+        ax3.set_ylabel('|Fz| (N)', fontsize=9)
+        ax3.set_title('AI0 vs Contact Force (pressing)',
+                      fontsize=9)
+        ax3.grid(alpha=0.3)
+    else:
+        msg = 'No force data' if not has_ft else 'Not enough data'
+        ax3.text(0.5, 0.5, msg,
+                ha='center', va='center',
+                transform=ax3.transAxes,
+                fontsize=11, color='gray')
+        ax3.axis('off')
+
+    savefig(fig, csv_path, 'analog', save)
     plt.show()
 
 # ── Plot 5: Session comparison ────────────────────────────────
@@ -928,6 +1043,7 @@ def main():
     plot_per_point(df,  events, path, save=args.save)
     plot_hex_detail(df, events, path, save=args.save)
     plot_force(df,      events, path, save=args.save)
+    plot_analog(df,     events, path, save=args.save)
 
     if args.save:
         save_dir = get_save_dir(path)

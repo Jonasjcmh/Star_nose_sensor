@@ -14,7 +14,8 @@ Usage:
 import os, sys, glob, argparse, math
 import pandas as pd
 import numpy as np
-import matplotlib
+import platform, matplotlib
+matplotlib.use("MacOSX" if platform.system() == "Darwin" else "TkAgg")
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.colors import LinearSegmentedColormap, Normalize
@@ -108,7 +109,7 @@ def load_session(path):
     for c in [f'cell_{i+1}' for i in range(N)]:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
-    for c in ['fx', 'fy', 'fz']:
+    for c in ['fx', 'fy', 'fz', 'ai0']:
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
     dur  = df['t'].iloc[-1]
@@ -129,21 +130,23 @@ def build_animation(df, label, step=1, speed=1.0):
     interval = max(10.0, avg_dt_s * step * 1000.0 / speed)
 
     # ── Layout ──
-    fig = plt.figure(figsize=(13, 8), facecolor=BG)
+    has_ai0 = 'ai0' in df.columns and df['ai0'].abs().max() > 1e-6
+    fig = plt.figure(figsize=(13, 9), facecolor=BG)
     gs  = gridspec.GridSpec(
-        3, 2, figure=fig,
-        height_ratios=[11, 3, 0.6],
+        4, 2, figure=fig,
+        height_ratios=[10, 3, 2, 0.6],
         width_ratios=[6, 4],
-        hspace=0.12, wspace=0.15,
+        hspace=0.15, wspace=0.15,
         left=0.04, right=0.97, top=0.93, bottom=0.06,
     )
 
     ax_hex  = fig.add_subplot(gs[0, 0])   # hexmap
     ax_bar  = fig.add_subplot(gs[0, 1])   # per-cell bar chart
     ax_hist = fig.add_subplot(gs[1, :])   # rolling history strip
-    ax_prog = fig.add_subplot(gs[2, :])   # progress bar
+    ax_ai0  = fig.add_subplot(gs[2, :])   # AI0 analog input trace
+    ax_prog = fig.add_subplot(gs[3, :])   # progress bar
 
-    for ax in [ax_hex, ax_bar, ax_hist, ax_prog]:
+    for ax in [ax_hex, ax_bar, ax_hist, ax_ai0, ax_prog]:
         ax.set_facecolor(BG)
         for sp in ax.spines.values():
             sp.set_edgecolor(EDGE)
@@ -213,6 +216,26 @@ def build_animation(df, label, step=1, speed=1.0):
     press_vline = ax_hist.axvline(HIST_WIN - 1, color='white',
                                    linewidth=0.8, alpha=0.5)
 
+    # ── AI0 analog input trace ────────────────────────────────────────────────
+    AI0_WIN  = HIST_WIN
+    ai0_buf  = np.zeros(AI0_WIN)
+    ai0_rng  = max(float(df['ai0'].abs().max()), 0.1) if has_ai0 else 1.0
+    ai0_line, = ax_ai0.plot(range(AI0_WIN), ai0_buf,
+                             color='#9b59b6', linewidth=1.0)
+    ax_ai0.set_xlim(0, AI0_WIN)
+    ax_ai0.set_ylim(-ai0_rng * 1.1, ai0_rng * 1.1)
+    ax_ai0.set_xticks([])
+    ax_ai0.set_ylabel('V', fontsize=7, color='#aaaaaa')
+    ax_ai0.tick_params(axis='y', colors='#aaaaaa', labelsize=6)
+    ax_ai0.set_title('Analog Input 0 (AI0)', fontsize=8,
+                     color='white', pad=3)
+    ax_ai0.axhline(0, color=EDGE, linewidth=0.5)
+    ax_ai0.grid(axis='y', color=EDGE, alpha=0.4, linewidth=0.5)
+    if not has_ai0:
+        ax_ai0.text(AI0_WIN / 2, 0, 'no AI0 data',
+                    ha='center', va='center',
+                    fontsize=7, color='#666666')
+
     # ── Progress bar ──────────────────────────────────────────────────────────
     (prog_rect,) = ax_prog.barh([0], [0], height=0.8, color='#2ab5a0')
     ax_prog.set_xlim(0, total_t)
@@ -270,6 +293,12 @@ def build_animation(df, label, step=1, speed=1.0):
         hist_buf[:, -1]  = vals
         hist_img.set_data(hist_buf)
 
+        # AI0 trace
+        ai0_val = float(row['ai0']) if (has_ai0 and pd.notna(row.get('ai0'))) else 0.0
+        ai0_buf[:-1] = ai0_buf[1:]
+        ai0_buf[-1]  = ai0_val
+        ai0_line.set_ydata(ai0_buf)
+
         # Title
         fz_str = ''
         if has_force and pressing and pd.notna(row.get('fz')):
@@ -287,7 +316,7 @@ def build_animation(df, label, step=1, speed=1.0):
 
         return (hex_patches + hex_texts +
                 list(bar_rects) + [target_vline, hist_img,
-                prog_rect, prog_label, hex_title])
+                ai0_line, prog_rect, prog_label, hex_title])
 
     anim = FuncAnimation(fig, update, frames=n_frames,
                          interval=interval, blit=True)

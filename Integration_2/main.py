@@ -39,10 +39,19 @@ VIZ_MESHCAT_SCRIPT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "robot_viz_meshcat.py")
 VIZ_PYBULLET_SCRIPT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "robot_viz_pybullet.py")
+VIZ_GAZEBO_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "robot_viz_gazebo.py")
 ANALYZE_SCRIPT  = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "analyze_session.py")
 INTEGRATION_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR         = os.path.join(INTEGRATION_DIR, "logs")
+
+# Marker file the Gazebo twin writes once its scene is loaded.
+# main waits for it before moving the robot so motion and visualization start together.
+GAZEBO_READY_FILE = "/tmp/star_nose_gazebo_ready"
+# Gazebo twin's stdout/stderr go here so its verbose logs don't clutter the
+# main terminal (which needs a clean prompt for the start-robot confirmation).
+GAZEBO_LOG_FILE   = "/tmp/star_nose_gazebo_viz.log"
 
 class NoRobotState:
     UR5_TO_SENSOR = {}
@@ -57,6 +66,7 @@ class NoRobotState:
             'done': True,
             'ft': [0.0] * 6,
             'tcp': [0.0] * 6,
+            'ai0': 0.0,
         }
 
     @staticmethod
@@ -99,6 +109,8 @@ def parse_args():
                    help='Launch browser-based Meshcat digital twin (Three.js)')
     p.add_argument('--robot-viz-pybullet', action='store_true',
                    help='Launch PyBullet OpenGL digital twin')
+    p.add_argument('--robot-viz-gazebo', action='store_true',
+                   help='Launch Gazebo + ROS2 digital twin')
     p.add_argument('--analyze',   action='store_true',
                    help='Run analysis after session ends')
     p.add_argument('--log-prefix',
@@ -135,6 +147,28 @@ def launch_viz2d():
     time.sleep(2)
     print("[main] 2D visualizer ready!")
     return proc
+
+def wait_for_gazebo_ready(proc, timeout=600.0):
+    """Block until the Gazebo twin signals its scene is loaded.
+
+    The twin writes GAZEBO_READY_FILE once the robot is spawned and visible.
+    Returns True when the marker appears. Returns False (with a warning) if
+    the twin process exits or the timeout elapses, so a Gazebo failure never
+    blocks the experiment indefinitely.
+    """
+    print("[main] Waiting for Gazebo simulation to load the robot...")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if os.path.exists(GAZEBO_READY_FILE):
+            print("[main] Gazebo scene loaded")
+            return True
+        if proc.poll() is not None:
+            print("[main] WARNING: Gazebo exited before loading — "
+                  "starting robot anyway")
+            return False
+        time.sleep(0.5)
+    print("[main] WARNING: Gazebo load-wait timed out — starting robot anyway")
+    return False
 
 def run_ur5_safe(on_press=None, on_release=None):
     """Run UR5 trajectory with retry logic"""
@@ -311,6 +345,33 @@ def main():
         except Exception as e:
             print(f"[main] PyBullet visualizer failed: {e}")
 
+    gazebo_proc = None
+    if getattr(args, 'robot_viz_gazebo', False):
+        try:
+            # Clear any stale marker so we only react to this run's signal
+            if os.path.exists(GAZEBO_READY_FILE):
+                os.remove(GAZEBO_READY_FILE)
+            sim_flag = ["--sim"] if args.sim else []
+            # Redirect the twin's verbose output to a log file so the main
+            # terminal stays clean for the start-robot confirmation prompt.
+            gz_log = open(GAZEBO_LOG_FILE, "w")
+            gazebo_proc = subprocess.Popen(
+                [sys.executable, VIZ_GAZEBO_SCRIPT] + sim_flag,
+                stdout=gz_log, stderr=subprocess.STDOUT)
+            procs.append(('gazebo', gazebo_proc))
+            print(f"[main] Gazebo digital twin launched (log → {GAZEBO_LOG_FILE})")
+        except Exception as e:
+            print(f"[main] Gazebo visualizer failed: {e}")
+
+    # ── Wait for Gazebo to be up, then confirm before moving robot ──
+    if gazebo_proc is not None and not args.no_robot and not args.demo:
+        if wait_for_gazebo_ready(gazebo_proc):
+            try:
+                input("\n[main] Gazebo is up — check the window, then press "
+                      "Enter to start the robot... ")
+            except EOFError:
+                pass  # non-interactive: start immediately
+
     # ── Start UR5 trajectory ──────────────────────────────────
     ur5_thread = None
     if not args.no_robot and not args.demo:  # --demo always implies --no-robot
@@ -366,6 +427,7 @@ def main():
             pt     = state.get('point', '-')
             press  = 'PRESSING' if state.get('pressing') else 'moving  '
             fz     = ft[2] if ft else 0.0
+            ai0    = state.get('ai0', 0.0)
             elapsed = time.time() - start_time
 
             # Check visualizers still alive
@@ -380,6 +442,7 @@ def main():
                   f"active={active:2d}/19 | "
                   f"max={maxv:.3f} | "
                   f"Fz={fz:+6.2f}N | "
+                  f"AI0={ai0:5.3f}V | "
                   f"UR5=P{pt} {press} | "
                   f"rows={rows:5d} | "
                   f"viz={'|'.join(n for n, _ in procs) or 'none'}")

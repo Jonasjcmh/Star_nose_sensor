@@ -81,6 +81,7 @@ def log(sensor_values, ur5_state):
         'tx':  round(ft[3], 4) if len(ft) > 3 else 0,
         'ty':  round(ft[4], 4) if len(ft) > 4 else 0,
         'tz':  round(ft[5], 4) if len(ft) > 5 else 0,
+        'ai0': round(float(ur5_state.get('ai0', 0.0)), 5),
     }
 
     for i, v in enumerate(sensor_values):

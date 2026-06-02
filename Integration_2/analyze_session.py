@@ -67,6 +67,8 @@ UR5_TO_IDX = {
 IDX_TO_UR5    = {v: k for k, v in UR5_TO_IDX.items()}
 POS_TO_SENSOR = [UR5_TO_IDX[i+1] for i in range(N)]
 SENSOR_TO_POS = {s: i for i, s in enumerate(POS_TO_SENSOR)}
+# Bar/heatmap row j (0-based) → cell array index for UR5 point j+1
+POINT_ORDER   = [UR5_TO_IDX[p] for p in range(1, N+1)]
 # Unique points in robot visit order (for force plot aggregation)
 VISIT_ORDER    = [10,1,2,3,7,6,5,4,8,9,11,12,16,15,14,13,17,18,19]
 # Full sequence including repeated P10 visits, as (point, visit_index) tuples
@@ -322,18 +324,18 @@ def plot_overview(df, events, csv_path, save=False):
     gs = gridspec.GridSpec(3, 3, figure=fig,
                            hspace=0.50, wspace=0.38)
 
-    # Timeline heatmap
+    # Timeline heatmap — rows ordered P1…P19
     ax1 = fig.add_subplot(gs[0, :])
-    data = df[cell_cols].values.T
+    data = df[cell_cols].values.T[POINT_ORDER, :]   # reorder rows P1→P19
     im   = ax1.imshow(data, aspect='auto', cmap=CMAP,
                       vmin=0, vmax=1,
                       extent=[0, dur, N+0.5, 0.5])
     ax1.set_xlabel('Time (s)', fontsize=9)
-    ax1.set_ylabel('Sensor cell', fontsize=9)
+    ax1.set_ylabel('UR5 point', fontsize=9)
     ax1.set_title('All 19 cells — full session', fontsize=10)
     ax1.set_yticks(range(1, N+1))
     ax1.set_yticklabels(
-        [f'P{i} S{RAW_CELLS[i-1]}' for i in range(1, N+1)],
+        [f'P{p}' for p in range(1, N+1)],
         fontsize=6)
     plt.colorbar(im, ax=ax1, label='Pressure', shrink=0.9)
     valid = [e for e in events if e['point'] > 0]
@@ -492,14 +494,16 @@ def plot_per_point(df, events, csv_path, save=False):
         avg = np.mean([e['peak'] for e in evs], axis=0)
         ti  = UR5_TO_IDX.get(pt, -1)
 
-        colors = [CMAP(v) for v in avg]
-        bars   = ax.bar(range(N), avg, color=colors,
-                        edgecolor='white', linewidth=0.4)
-        if 0 <= ti < N:
-            bars[ti].set_edgecolor('red')
-            bars[ti].set_linewidth(2.5)
-            ax.axvspan(ti-0.5, ti+0.5, alpha=0.12,
-                      color='red')
+        avg_ord = avg[POINT_ORDER]   # reorder to P1…P19
+        colors  = [CMAP(v) for v in avg_ord]
+        bars    = ax.bar(range(N), avg_ord, color=colors,
+                         edgecolor='white', linewidth=0.4)
+        bar_idx = pt - 1   # 0-based position of the target point in P1…P19 order
+        if 0 <= bar_idx < N:
+            bars[bar_idx].set_edgecolor('red')
+            bars[bar_idx].set_linewidth(2.5)
+            ax.axvspan(bar_idx-0.5, bar_idx+0.5, alpha=0.12,
+                       color='red')
 
         raw    = RAW_CELLS[ti] if 0 <= ti < N else '?'
         v_tag  = f" #{visit+1}" if visit > 0 else ""
@@ -511,7 +515,7 @@ def plot_per_point(df, events, csv_path, save=False):
             fontsize=8, fontweight='bold')
         ax.set_xticks(range(N))
         ax.set_xticklabels(
-            [f'P{IDX_TO_UR5.get(i, "?")}' for i in range(N)],
+            [f'P{p}' for p in range(1, N+1)],
             rotation=90, fontsize=5)
         ax.set_ylim(0, 1.05)
         ax.set_ylabel('Pressure', fontsize=7)
@@ -567,6 +571,11 @@ def plot_force(df, events, csv_path, save=False):
 
     label = get_dataset_label(csv_path)
     valid = [e for e in events if e['point'] > 0]
+
+    # Zero-reference conditioning: min of full signal = 0, no inversion
+    df = df.copy()
+    df['fz'] = df['fz'] - float(df['fz'].min())
+
     fig   = plt.figure(figsize=(20, 12))
     fig.suptitle(
         f"Force / torque analysis — {label}",
@@ -618,12 +627,12 @@ def plot_force(df, events, csv_path, save=False):
     ax2 = fig.add_subplot(gs[1, 0])
     if valid:
         seen  = set(e['point'] for e in valid)
-        pts   = [p for p in VISIT_ORDER if p in seen]
+        pts   = [p for p in range(1, N+1) if p in seen]
         fz_pt = {p: [] for p in pts}
         for _, row in df[df['ur5_pressing']==1].iterrows():
             pt = row.get('ur5_point')
             if pd.notna(pt) and int(pt) in fz_pt:
-                fz_pt[int(pt)].append(abs(row['fz']))
+                fz_pt[int(pt)].append(row['fz'])
         fz_m = [np.mean(fz_pt[p]) if fz_pt[p] else 0
                 for p in pts]
         fz_s = [np.std(fz_pt[p])  if fz_pt[p] else 0
@@ -873,20 +882,18 @@ def plot_loadcell_vs_robot(df, events, csv_path, save=False):
         print("[analyze] Too few pressing frames for load cell comparison")
         return
 
-    # ── Baseline correction (at-rest offset removal) ──────────
-    rest      = df[df['ur5_pressing'] == 0]
-    fz_base   = float(rest['fz'].mean())  if len(rest) > 0 else 0.0
-    lc_base   = float(ai0_to_newtons(rest['ai0']).mean()) if len(rest) > 0 else 0.0
-    print(f"[analyze] Load cell baseline — Robot Fz: {fz_base:+.3f} N  "
-          f"Load cell: {lc_base:+.3f} N  (subtracted)")
+    # ── Zero-reference conditioning (same as MATLAB) ──────────
+    # min of full signal = zero reference; no inversion for either sensor
+    fz_zero = float(df['fz'].min())
+    lc_zero = float(ai0_to_newtons(df['ai0']).min())
+    print(f"[analyze] Zero ref — Robot Fz: {fz_zero:+.3f} N  "
+          f"Load cell: {lc_zero:+.3f} N  (subtracted)")
 
     def _fz_c(v):
-        """Robot Fz → positive compression, baseline removed."""
-        return -(np.asarray(v) - fz_base)
+        return np.asarray(v) - fz_zero
 
     def _lc_c(v):
-        """AI0 → Newtons, positive compression, baseline removed."""
-        return ai0_to_newtons(v) - lc_base
+        return ai0_to_newtons(v) - lc_zero
 
     t_all    = df['t'].to_numpy()
     lc_all   = _lc_c(df['ai0'].to_numpy())
@@ -902,7 +909,7 @@ def plot_loadcell_vs_robot(df, events, csv_path, save=False):
         f"FUTEK Load Cell vs Robot Force Sensor — {label}\n"
         f"Load cell: {LOADCELL_MAX_LB:.0f} lb / {LOADCELL_MAX_N:.1f} N  "
         f"|  {LOADCELL_N_PER_V:.3f} N/V  "
-        f"|  Baselines removed — Robot: {fz_base:+.2f} N   LC: {lc_base:+.2f} N"
+        f"|  Zero ref — Robot: {fz_zero:+.2f} N   LC: {lc_zero:+.2f} N"
         f"|  Positive = compression",
         fontsize=10, fontweight='bold')
     gs = gridspec.GridSpec(3, 3, figure=fig,
@@ -990,10 +997,14 @@ def plot_loadcell_vs_robot(df, events, csv_path, save=False):
     ax5 = fig.add_subplot(gs[2, :])
     if valid:
         x      = np.arange(len(valid))
-        lc_pk  = [max(0.0, float(_lc_c(e.get('ai0_peak', AI0_ZERO_V))))
-                  for e in valid]
-        fz_pk  = [max(0.0, float(_fz_c(-e.get('fz_peak', 0.0))))
-                  for e in valid]
+        lc_pk, fz_pk = [], []
+        for e in valid:
+            pt_mask = (df['ur5_pressing'] == 1) & (df['ur5_point'] == e['point'])
+            if pt_mask.any():
+                lc_pk.append(max(0.0, float(_lc_c(df.loc[pt_mask, 'ai0']).max())))
+                fz_pk.append(max(0.0, float(_fz_c(df.loc[pt_mask, 'fz']).max())))
+            else:
+                lc_pk.append(0.0); fz_pk.append(0.0)
         width  = 0.38
         b1 = ax5.bar(x - width/2, lc_pk, width,
                      color='#9b59b6', alpha=0.85,

@@ -48,6 +48,8 @@ UR5_TO_IDX = {
 }
 IDX_TO_UR5    = {v: k for k, v in UR5_TO_IDX.items()}
 POS_TO_SENSOR = [UR5_TO_IDX[i+1] for i in range(N)]
+# Bar/history position j (0-based) → cell array index for UR5 point j+1
+POINT_ORDER   = [UR5_TO_IDX[p] for p in range(1, N+1)]
 
 CMAP = LinearSegmentedColormap.from_list('star_nose', [
     '#2ab5a0', '#33e666', '#ffe619', '#ff7300', '#dc0000'
@@ -94,6 +96,11 @@ def find_csv(arg=None):
         sys.exit(1)
     if arg is None:
         return files[-1]
+    # direct path (absolute or relative)
+    candidate = arg if os.path.isabs(arg) else os.path.join(INTEGRATION_DIR, arg)
+    if os.path.isfile(candidate):
+        return candidate
+    # partial name match against known files
     matches = [f for f in files
                if os.path.basename(f) == arg or arg in os.path.basename(f)]
     return matches[-1] if matches else files[-1]
@@ -133,13 +140,12 @@ def build_animation(df, label, step=1, speed=1.0):
     has_force  = 'fz'  in df.columns
     has_ai0    = 'ai0' in df.columns and df['ai0'].abs().max() > 1e-6
 
-    # ── Baseline offset removal ───────────────────────────────────────────────
-    # Use frames where the robot is NOT pressing to compute the at-rest baseline.
-    rest = df[df['ur5_pressing'] == 0]
-    fz_baseline = float(rest['fz'].mean())  if (has_force and len(rest) > 0) else 0.0
-    lc_baseline = float(_ai0_to_n(rest['ai0']).mean()) if (has_ai0  and len(rest) > 0) else 0.0
-    print(f"[animate] Baseline  — Robot Fz: {fz_baseline:+.3f} N   "
-          f"Load cell: {lc_baseline:+.3f} N  (removed from signals)")
+    # ── Zero-reference conditioning (same as MATLAB) ─────────────────────────
+    # min of full signal = zero reference; no inversion for either sensor
+    fz_baseline = float(df['fz'].min())              if has_force else 0.0
+    lc_baseline = float(_ai0_to_n(df['ai0']).min()) if has_ai0   else 0.0
+    print(f"[animate] Zero ref  — Robot Fz: {fz_baseline:+.3f} N   "
+          f"Load cell: {lc_baseline:+.3f} N  (subtracted)")
     frames_df  = df.iloc[::step].reset_index(drop=True)
     n_frames   = len(frames_df)
     total_t    = frames_df['t'].iloc[-1]
@@ -183,6 +189,12 @@ def build_animation(df, label, step=1, speed=1.0):
                         fontsize=5.5, color='white')
         hex_texts.append(t)
 
+    # Static UR5 point number labels on each hex cell
+    for i, (xmm, ymm) in enumerate(POINTS_MM):
+        ax_hex.text(xmm, ymm + 2.0, f"P{IDX_TO_UR5.get(i, '?')}",
+                    ha='center', va='center', fontsize=4.5,
+                    color='#bbbbbb', alpha=0.85)
+
     ax_hex.set_xlim(-22, 22)
     ax_hex.set_ylim(-20, 20)
     ax_hex.set_aspect('equal')
@@ -208,7 +220,7 @@ def build_animation(df, label, step=1, speed=1.0):
     ax_bar.set_ylim(0, 1.05)
     ax_bar.set_xticks(x_pos)
     ax_bar.set_xticklabels(
-        [f'P{IDX_TO_UR5.get(i, "?")}' for i in range(N)],
+        [f'P{p}' for p in range(1, N+1)],
         rotation=90, fontsize=5, color='#aaaaaa')
     ax_bar.tick_params(axis='y', colors='#aaaaaa', labelsize=7)
     ax_bar.set_ylabel('Pressure', fontsize=8, color='#aaaaaa')
@@ -226,7 +238,7 @@ def build_animation(df, label, step=1, speed=1.0):
     )
     ax_hist.set_yticks(range(1, N + 1))
     ax_hist.set_yticklabels(
-        [f'P{IDX_TO_UR5.get(i, "?")}' for i in range(N)],
+        [f'P{p}' for p in range(1, N+1)],
         fontsize=5, color='#aaaaaa')
     ax_hist.set_xticks([])
     ax_hist.set_title('Recent history (last ~200 frames)', fontsize=8,
@@ -237,9 +249,9 @@ def build_animation(df, label, step=1, speed=1.0):
     # ── Force comparison panel (robot Fz + FUTEK load cell in N) ─────────────
     FORCE_WIN = HIST_WIN
 
-    # Offset-corrected helpers (positive = compression, baseline removed)
+    # Zero-ref helpers: signal − min → rest = 0, pressing > 0, no inversion
     def _fz_corrected(v):
-        return -(np.asarray(v) - fz_baseline)
+        return np.asarray(v) - fz_baseline
 
     def _lc_corrected(v):
         return _ai0_to_n(v) - lc_baseline
@@ -324,22 +336,22 @@ def build_animation(df, label, step=1, speed=1.0):
             txt.set_text(f'{vals[si]:.2f}' if vals[si] > 0.02 else '')
             txt.set_color('white' if v > 0.45 else '#cccccc')
 
-        # Bar chart
-        for i, rect in enumerate(bar_rects):
-            v = float(np.clip(vals[i], 0.0, 1.0))
+        # Bar chart — bars ordered P1…P19, POINT_ORDER maps bar pos → cell index
+        for j, rect in enumerate(bar_rects):
+            v = float(np.clip(vals[POINT_ORDER[j]], 0.0, 1.0))
             rect.set_height(v)
             rect.set_facecolor(CMAP(v))
-            if i == ti and pressing:
+            if j == pt_i - 1 and pressing:
                 rect.set_edgecolor('red')
                 rect.set_linewidth(2.0)
             else:
                 rect.set_edgecolor(EDGE)
                 rect.set_linewidth(0.4)
-        target_vline.set_xdata([ti, ti] if (ti >= 0 and pressing) else [-2, -2])
+        target_vline.set_xdata([pt_i - 1, pt_i - 1] if (pt_i > 0 and pressing) else [-2, -2])
 
-        # Rolling history
+        # Rolling history — rows ordered P1…P19
         hist_buf[:, :-1] = hist_buf[:, 1:]
-        hist_buf[:, -1]  = vals
+        hist_buf[:, -1]  = [vals[POINT_ORDER[j]] for j in range(N)]
         hist_img.set_data(hist_buf)
 
         # Force comparison buffers — offset-corrected, positive = compression

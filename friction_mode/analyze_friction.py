@@ -301,93 +301,124 @@ def fig_force(df, csv_path, save):
     label    = session_label(csv_path)
     t        = df['t'].to_numpy()
     pressing = (df.get('ur5_pressing', pd.Series(0, index=df.index)) == 1).to_numpy()
-    ft_cols  = [c for c in ['fx', 'fy', 'fz', 'tx', 'ty', 'tz'] if c in df.columns]
+    window   = max(5, int(0.5 / (df['t'].diff().median() or 0.05)))
 
-    fig = plt.figure(figsize=(20, 11))
-    fig.suptitle(f'UR5 force / torque — {label}', fontsize=12, fontweight='bold')
-    gs = gridspec.GridSpec(3, 2, figure=fig, hspace=0.50, wspace=0.38)
+    f_cols  = [c for c in ['fx', 'fy', 'fz'] if c in df.columns]
+    tq_cols = [c for c in ['tx', 'ty', 'tz'] if c in df.columns]
+    ft_cols = f_cols + tq_cols
 
-    # ── Force time-series ─────────────────────────────────────────────────────
+    f_colors  = {'fx': '#2ab5a0', 'fy': '#EF9F27', 'fz': '#dc0000'}
+    tq_colors = {'tx': '#3498db', 'ty': '#9b59b6', 'tz': '#e67e22'}
+
+    fig = plt.figure(figsize=(20, 16))
+    fig.suptitle(f'UR5 force & torque — {label}', fontsize=12, fontweight='bold')
+    gs = gridspec.GridSpec(4, 3, figure=fig, hspace=0.52, wspace=0.38)
+
+    # ── Row 0: Force time-series (Fx Fy Fz) ──────────────────────────────────
     ax1 = fig.add_subplot(gs[0, :])
-    force_colors = {'fx': '#2ab5a0', 'fy': '#EF9F27', 'fz': '#dc0000',
-                    'tx': '#2ab5a0', 'ty': '#EF9F27', 'tz': '#dc0000'}
-    force_ls     = {'fx': '-', 'fy': '-', 'fz': '-',
-                    'tx': '--', 'ty': '--', 'tz': '--'}
-    for c in ft_cols:
-        ax1.plot(t, df[c].to_numpy(), linewidth=0.8, alpha=0.85,
-                 color=force_colors.get(c, 'gray'),
-                 linestyle=force_ls.get(c, '-'), label=c)
-    fmin = df[ft_cols].min().min()
-    fmax = df[ft_cols].max().max()
+    for c in f_cols:
+        ax1.plot(t, df[c].to_numpy(), linewidth=0.9, alpha=0.9,
+                 color=f_colors[c], label=c)
+    fmin = df[f_cols].min().min()
+    fmax = df[f_cols].max().max()
     ax1.fill_between(t, fmin, fmax, where=pressing, alpha=0.09,
                      color='steelblue', label='Sliding')
-    ax1.axhline(0, color='black', linewidth=0.5, linestyle=':', alpha=0.5)
+    ax1.axhline(0, color='black', linewidth=0.5, linestyle=':', alpha=0.4)
     ax1.set_xlabel('Time (s)', fontsize=9)
-    ax1.set_ylabel('Force (N) / Torque (Nm)', fontsize=9)
-    ax1.set_title('TCP force & torque — full session', fontsize=10)
+    ax1.set_ylabel('Force (N)', fontsize=9)
+    ax1.set_title('TCP linear force components — Fx  Fy  Fz', fontsize=10)
     ax1.legend(fontsize=8, ncol=4, loc='upper right')
     ax1.grid(alpha=0.25)
 
-    # ── Fz time-series zoomed ─────────────────────────────────────────────────
-    ax2 = fig.add_subplot(gs[1, 0])
-    ax2.plot(t, df['fz'].to_numpy(), linewidth=0.9, color='#dc0000', label='Fz')
-    if 'fz_c' in df.columns:
-        ax2.plot(t, df['fz_c'].to_numpy(), linewidth=0.7, color='#ff7300',
-                 linestyle='--', alpha=0.7, label='Fz (zeroed)')
-    ax2.fill_between(t, df['fz'].min(), df['fz'].max(),
-                     where=pressing, alpha=0.09, color='steelblue')
+    # ── Row 1: Torque time-series (Tx Ty Tz) ─────────────────────────────────
+    ax2 = fig.add_subplot(gs[1, :])
+    for c in tq_cols:
+        ax2.plot(t, df[c].to_numpy(), linewidth=0.9, alpha=0.9,
+                 color=tq_colors[c], label=c)
+    tmin = df[tq_cols].min().min() if tq_cols else 0
+    tmax = df[tq_cols].max().max() if tq_cols else 1
+    ax2.fill_between(t, tmin, tmax, where=pressing, alpha=0.09,
+                     color='steelblue', label='Sliding')
+    ax2.axhline(0, color='black', linewidth=0.5, linestyle=':', alpha=0.4)
     ax2.set_xlabel('Time (s)', fontsize=9)
-    ax2.set_ylabel('Fz (N)', fontsize=9)
-    ax2.set_title('Contact force Fz', fontsize=10)
-    ax2.legend(fontsize=8)
+    ax2.set_ylabel('Torque (Nm)', fontsize=9)
+    ax2.set_title('TCP rotational torque components — Tx  Ty  Tz', fontsize=10)
+    ax2.legend(fontsize=8, ncol=4, loc='upper right')
     ax2.grid(alpha=0.25)
 
-    # ── Fz rolling statistics ─────────────────────────────────────────────────
-    ax3 = fig.add_subplot(gs[1, 1])
-    window = max(5, int(0.5 / (df['t'].diff().median() or 0.05)))
-    fz_roll_mean = df['fz'].rolling(window, center=True).mean()
-    fz_roll_std  = df['fz'].rolling(window, center=True).std()
-    ax3.plot(t, fz_roll_mean.to_numpy(), linewidth=1.0, color='#dc0000',
-             label=f'Rolling mean ({window} frames)')
-    ax3.fill_between(t,
-                     (fz_roll_mean - fz_roll_std).to_numpy(),
-                     (fz_roll_mean + fz_roll_std).to_numpy(),
-                     alpha=0.25, color='#dc0000', label='±1 std')
-    ax3.fill_between(t, fz_roll_mean.min(), fz_roll_mean.max(),
-                     where=pressing, alpha=0.09, color='steelblue')
+    # ── Row 2 left: Torque rolling mean ± std per axis ───────────────────────
+    ax3 = fig.add_subplot(gs[2, :2])
+    for c in tq_cols:
+        rm  = df[c].rolling(window, center=True).mean()
+        rs  = df[c].rolling(window, center=True).std()
+        col = tq_colors[c]
+        ax3.plot(t, rm.to_numpy(), linewidth=1.1, color=col, label=c)
+        ax3.fill_between(t, (rm - rs).to_numpy(), (rm + rs).to_numpy(),
+                         alpha=0.18, color=col)
+    ax3.fill_between(t, tmin, tmax, where=pressing, alpha=0.07,
+                     color='steelblue')
+    ax3.axhline(0, color='black', linewidth=0.5, linestyle=':', alpha=0.4)
     ax3.set_xlabel('Time (s)', fontsize=9)
-    ax3.set_ylabel('Fz (N)', fontsize=9)
-    ax3.set_title('Fz rolling statistics', fontsize=10)
+    ax3.set_ylabel('Torque (Nm)', fontsize=9)
+    ax3.set_title(f'Torque rolling mean ± std  ({window}-frame window)', fontsize=10)
     ax3.legend(fontsize=8)
     ax3.grid(alpha=0.25)
 
-    # ── Box plots (all components) ────────────────────────────────────────────
-    ax4 = fig.add_subplot(gs[2, 0])
-    slide_df = df[df.get('ur5_pressing', 0) == 1] if pressing.any() else df
-    bdata  = [slide_df[c].abs().dropna().values for c in ft_cols]
-    bp = ax4.boxplot(bdata, labels=ft_cols, patch_artist=True,
+    # ── Row 2 right: Torque magnitude over time ───────────────────────────────
+    ax4 = fig.add_subplot(gs[2, 2])
+    if tq_cols:
+        tmag = np.sqrt(sum(df[c].to_numpy()**2 for c in tq_cols))
+        ax4.plot(t, tmag, linewidth=0.9, color='#e67e22', label='|τ| magnitude')
+        ax4.fill_between(t, 0, tmag.max(), where=pressing,
+                         alpha=0.09, color='steelblue')
+        ax4.set_xlabel('Time (s)', fontsize=9)
+        ax4.set_ylabel('|τ| (Nm)', fontsize=9)
+        ax4.set_title('Total torque magnitude', fontsize=10)
+        ax4.legend(fontsize=8)
+        ax4.grid(alpha=0.25)
+
+    # ── Row 3 left: Box plots force vs torque ────────────────────────────────
+    ax5 = fig.add_subplot(gs[3, 0])
+    slide_df = df[pressing] if pressing.any() else df
+    bdata    = [slide_df[c].abs().dropna().values for c in ft_cols]
+    bp = ax5.boxplot(bdata, labels=ft_cols, patch_artist=True,
                      medianprops={'color': 'white', 'linewidth': 1.5})
-    box_colors = ['#2ab5a0', '#EF9F27', '#dc0000', '#2ab5a0', '#EF9F27', '#dc0000']
-    for patch, col in zip(bp['boxes'], box_colors[:len(ft_cols)]):
+    box_colors = [f_colors.get(c, tq_colors.get(c, 'gray')) for c in ft_cols]
+    for patch, col in zip(bp['boxes'], box_colors):
         patch.set_facecolor(col)
         patch.set_alpha(0.75)
-    ax4.set_ylabel('|Value|', fontsize=9)
-    ax4.set_title('Force/torque distribution (sliding)', fontsize=10)
-    ax4.grid(axis='y', alpha=0.25)
+    ax5.set_ylabel('|Value|', fontsize=9)
+    ax5.set_title('Force & torque distribution (sliding)', fontsize=10)
+    ax5.grid(axis='y', alpha=0.25)
 
-    # ── Force magnitude over time ─────────────────────────────────────────────
-    ax5 = fig.add_subplot(gs[2, 1])
-    force_only = [c for c in ['fx', 'fy', 'fz'] if c in df.columns]
-    if force_only:
-        fmag = np.sqrt(sum(df[c].to_numpy()**2 for c in force_only))
-        ax5.plot(t, fmag, linewidth=0.9, color='#9b59b6', label='|F| magnitude')
-        ax5.fill_between(t, 0, fmag.max(), where=pressing,
-                         alpha=0.09, color='steelblue')
-        ax5.set_xlabel('Time (s)', fontsize=9)
-        ax5.set_ylabel('|F| (N)', fontsize=9)
-        ax5.set_title('Total force magnitude', fontsize=10)
-        ax5.legend(fontsize=8)
-        ax5.grid(alpha=0.25)
+    # ── Row 3 centre: Fz rolling statistics ──────────────────────────────────
+    ax6 = fig.add_subplot(gs[3, 1])
+    fz_rm  = df['fz'].rolling(window, center=True).mean()
+    fz_rs  = df['fz'].rolling(window, center=True).std()
+    ax6.plot(t, fz_rm.to_numpy(), linewidth=1.0, color='#dc0000',
+             label=f'Fz rolling mean')
+    ax6.fill_between(t, (fz_rm - fz_rs).to_numpy(), (fz_rm + fz_rs).to_numpy(),
+                     alpha=0.22, color='#dc0000', label='±1 std')
+    ax6.fill_between(t, fz_rm.min(), fz_rm.max(), where=pressing,
+                     alpha=0.09, color='steelblue')
+    ax6.set_xlabel('Time (s)', fontsize=9)
+    ax6.set_ylabel('Fz (N)', fontsize=9)
+    ax6.set_title('Fz rolling statistics', fontsize=10)
+    ax6.legend(fontsize=8)
+    ax6.grid(alpha=0.25)
+
+    # ── Row 3 right: Force vs torque magnitude scatter ────────────────────────
+    ax7 = fig.add_subplot(gs[3, 2])
+    if f_cols and tq_cols:
+        fmag = np.sqrt(sum(df[c].to_numpy()**2 for c in f_cols))
+        tmag = np.sqrt(sum(df[c].to_numpy()**2 for c in tq_cols))
+        sc   = ax7.scatter(fmag, tmag, alpha=0.25, s=6,
+                           c=t, cmap='viridis')
+        plt.colorbar(sc, ax=ax7, label='Time (s)', shrink=0.85)
+        ax7.set_xlabel('|F| (N)', fontsize=9)
+        ax7.set_ylabel('|τ| (Nm)', fontsize=9)
+        ax7.set_title('Force vs torque magnitude', fontsize=10)
+        ax7.grid(alpha=0.25)
 
     plt.tight_layout()
     savefig(fig, csv_path, '2_force', save)

@@ -208,9 +208,7 @@ def main():
     if args.log_prefix:
         prefix = data_logger.sanitize_name(args.log_prefix)
     else:
-        mode_tag = 'disp' if args.displacement else 'force'
-        prefix   = data_logger.sanitize_name(
-            f"friction_{mode_tag}_{args.trajectory}")
+        prefix = data_logger.ask_file_prefix()
 
     log_file = data_logger.build_filename(prefix, LOG_DIR)
     data_logger.start(log_file)

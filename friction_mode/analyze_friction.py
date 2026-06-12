@@ -22,11 +22,16 @@ import os
 import sys
 import glob
 import argparse
+import platform
 from datetime import datetime
 
 import numpy as np
 import pandas as pd
 import matplotlib
+if '--save' in sys.argv:
+    matplotlib.use('Agg')
+elif platform.system() == 'Darwin':
+    matplotlib.use('MacOSX')
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.colors import LinearSegmentedColormap, Normalize
@@ -79,6 +84,14 @@ matplotlib.rcParams.update({
     'axes.spines.top':   False,
     'axes.spines.right': False,
 })
+
+
+def _show(save):
+    """Show figure interactively, or close it when running in save/batch mode."""
+    if save:
+        plt.close('all')
+    else:
+        plt.show()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -287,7 +300,7 @@ def fig_sensor(df, csv_path, save):
 
     plt.tight_layout()
     savefig(fig, csv_path, '1_sensor', save)
-    plt.show()
+    _show(save)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -381,7 +394,7 @@ def fig_force(df, csv_path, save):
     ax5 = fig.add_subplot(gs[3, 0])
     slide_df = df[pressing] if pressing.any() else df
     bdata    = [slide_df[c].abs().dropna().values for c in ft_cols]
-    bp = ax5.boxplot(bdata, labels=ft_cols, patch_artist=True,
+    bp = ax5.boxplot(bdata, tick_labels=ft_cols, patch_artist=True,
                      medianprops={'color': 'white', 'linewidth': 1.5})
     box_colors = [f_colors.get(c, tq_colors.get(c, 'gray')) for c in ft_cols]
     for patch, col in zip(bp['boxes'], box_colors):
@@ -422,7 +435,7 @@ def fig_force(df, csv_path, save):
 
     plt.tight_layout()
     savefig(fig, csv_path, '2_force', save)
-    plt.show()
+    _show(save)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -528,7 +541,7 @@ def fig_loadcell(df, csv_path, save):
 
     plt.tight_layout()
     savefig(fig, csv_path, '3_loadcell', save)
-    plt.show()
+    _show(save)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -622,7 +635,7 @@ def fig_force_comparison(df, csv_path, save):
 
     plt.tight_layout()
     savefig(fig, csv_path, '4_force_comparison', save)
-    plt.show()
+    _show(save)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -719,7 +732,7 @@ def fig_trajectory(df, csv_path, save):
 
     plt.tight_layout()
     savefig(fig, csv_path, '5_trajectory', save)
-    plt.show()
+    _show(save)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -817,7 +830,7 @@ def fig_correlation(df, csv_path, save):
 
     plt.tight_layout()
     savefig(fig, csv_path, '6_correlation', save)
-    plt.show()
+    _show(save)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

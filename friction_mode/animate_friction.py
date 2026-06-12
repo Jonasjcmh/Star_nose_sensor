@@ -28,16 +28,24 @@ import glob
 import argparse
 import platform
 
+import shutil
+
 import numpy as np
 import pandas as pd
 import matplotlib
-matplotlib.use('MacOSX' if platform.system() == 'Darwin' else 'TkAgg')
+if '--save' in sys.argv:
+    matplotlib.use('Agg')
+elif platform.system() == 'Darwin':
+    matplotlib.use('MacOSX')
+# on Linux: let matplotlib auto-detect (TkAgg / Qt5Agg / GTK3Agg)
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.patches import RegularPolygon, FancyArrowPatch
 from matplotlib.cm import ScalarMappable
 from matplotlib.animation import FuncAnimation, FFMpegWriter, PillowWriter
+
+_HAS_FFMPEG = shutil.which('ffmpeg') is not None
 from matplotlib.collections import LineCollection
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
@@ -504,7 +512,8 @@ def main():
         out_dir = os.path.join(PLOTS_DIR, label)
         os.makedirs(out_dir, exist_ok=True)
 
-        if args.gif:
+        use_gif = args.gif or not _HAS_FFMPEG
+        if use_gif:
             out = os.path.join(out_dir, 'friction_animation.gif')
             print(f'[animate] Saving GIF @ {fps} fps → {out}')
             anim.save(out, writer=PillowWriter(fps=fps))

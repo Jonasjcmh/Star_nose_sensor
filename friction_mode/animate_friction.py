@@ -167,8 +167,17 @@ def build_animation(df, label, step=1, speed=1.0):
     cell_cols = [f'cell_{i+1}' for i in range(N)]
     has_force = 'fz'    in df.columns
     has_ai0   = 'ai0'   in df.columns and df['ai0'].abs().max() > 1e-6
-    has_tcp   = 'tcp_x' in df.columns
+    has_tcp   = 'tcp_x' in df.columns and df['tcp_x'].abs().max() > 1e-6
     has_tq    = all(c in df.columns for c in ['tx', 'ty', 'tz'])
+
+    # Sensor centre for trajectory alignment (computed once here for all uses)
+    if has_tcp:
+        _press = df['ur5_pressing'].to_numpy().astype(int) == 1
+        _ref   = _press if _press.any() else np.ones(len(df), bool)
+        cx = df['tcp_x'].to_numpy()[_ref].mean()
+        cy = df['tcp_y'].to_numpy()[_ref].mean()
+    else:
+        cx, cy = 0.0, 0.0
 
     # Zero baselines (subtract global min so rest = 0)
     fz_base = float(df['fz'].min())           if has_force else 0.0
@@ -237,26 +246,36 @@ def build_animation(df, label, step=1, speed=1.0):
 
     # ── TCP XY trajectory ─────────────────────────────────────────────────────
     if has_tcp:
-        tx_all = df['tcp_x'].to_numpy() * 1000   # m → mm
-        ty_all = df['tcp_y'].to_numpy() * 1000
+        tx_all    = (df['tcp_x'].to_numpy() - cx) * 1000   # m → mm, sensor-centred
+        ty_all    = (df['tcp_y'].to_numpy() - cy) * 1000
         max_s_all = df[cell_cols].max(axis=1).to_numpy()
 
+        # Static hex cell positions as dim background
+        for xmm, ymm in POINTS_MM:
+            h = RegularPolygon((xmm, ymm), numVertices=6, radius=4.2,
+                               facecolor='#1c1c1c', edgecolor='#3a3a3a',
+                               linewidth=0.8, zorder=1)
+            ax_traj.add_patch(h)
+        for i, (xmm, ymm) in enumerate(POINTS_MM):
+            ax_traj.text(xmm, ymm, f'P{i+1}', ha='center', va='center',
+                         fontsize=4, color='#4a4a4a', zorder=2)
+
         # Static full-path background (grey)
-        ax_traj.plot(tx_all, ty_all, color='#333333', linewidth=0.8,
-                     alpha=0.6, zorder=1)
+        ax_traj.plot(tx_all, ty_all, color='#444444', linewidth=0.8,
+                     alpha=0.6, zorder=3)
 
         # Start / end markers
         ax_traj.scatter(tx_all[0],  ty_all[0],  s=50, color='#2ecc71',
-                        zorder=4, label='Start')
+                        zorder=5, label='Start')
         ax_traj.scatter(tx_all[-1], ty_all[-1], s=50, color='#e74c3c',
-                        zorder=4, label='End')
+                        zorder=5, label='End')
 
         # Travelled path line (dynamic, coloured by sensor max)
         traj_seg_data = np.array([tx_all, ty_all]).T.reshape(-1, 1, 2)
         traj_segs     = np.concatenate([traj_seg_data[:-1], traj_seg_data[1:]], axis=1)
         traj_lc = LineCollection([], cmap=CMAP,
                                  norm=Normalize(0, max(max_s_all.max(), 1e-6)),
-                                 linewidth=1.8, zorder=2, alpha=0.9)
+                                 linewidth=2.0, zorder=4, alpha=0.92)
         ax_traj.add_collection(traj_lc)
         cb2 = fig.colorbar(traj_lc, ax=ax_traj, shrink=0.55, pad=0.02,
                            label='Sensor max')
@@ -266,12 +285,10 @@ def build_animation(df, label, step=1, speed=1.0):
         # Current position dot
         pos_dot, = ax_traj.plot([], [], 'o', ms=8, color='white',
                                 markeredgecolor='#dc0000',
-                                markeredgewidth=1.5, zorder=5)
+                                markeredgewidth=1.5, zorder=6)
 
-        pad_x = max((tx_all.max() - tx_all.min()) * 0.15, 2.0)
-        pad_y = max((ty_all.max() - ty_all.min()) * 0.15, 2.0)
-        ax_traj.set_xlim(tx_all.min() - pad_x, tx_all.max() + pad_x)
-        ax_traj.set_ylim(ty_all.min() - pad_y, ty_all.max() + pad_y)
+        ax_traj.set_xlim(-24, 24)
+        ax_traj.set_ylim(-22, 22)
     else:
         ax_traj.text(0.5, 0.5, 'No TCP data', ha='center', va='center',
                      transform=ax_traj.transAxes, fontsize=10, color='#666666')
@@ -397,8 +414,8 @@ def build_animation(df, label, step=1, speed=1.0):
     pressing_arr = frames_df['ur5_pressing'].to_numpy().astype(int)
     fz_arr      = (frames_df['fz'].to_numpy() - fz_base) if has_force else np.zeros(n_frames)
     lc_arr      = (_ai0_to_n(frames_df['ai0'].to_numpy()) - lc_base) if has_ai0 else np.zeros(n_frames)
-    tx_frame    = (frames_df['tcp_x'].to_numpy() * 1000) if has_tcp else np.zeros(n_frames)
-    ty_frame    = (frames_df['tcp_y'].to_numpy() * 1000) if has_tcp else np.zeros(n_frames)
+    tx_frame    = ((frames_df['tcp_x'].to_numpy() - cx) * 1000) if has_tcp else np.zeros(n_frames)
+    ty_frame    = ((frames_df['tcp_y'].to_numpy() - cy) * 1000) if has_tcp else np.zeros(n_frames)
     tq_arr      = {c: frames_df[c].to_numpy() if has_tq else np.zeros(n_frames)
                    for c in ['tx', 'ty', 'tz']}
     max_s_frame = cell_arr.max(axis=1)

@@ -250,16 +250,26 @@ def make_figure(df, csv_path):
                      fontsize=8.5, fontweight='bold')
     ax_hex.grid(alpha=0.18)
 
-    # ── Panel 3 : Z force strip ───────────────────────────────────────────────
+    # ── Panel 3 : Z force strip — cropped to contact window only ─────────────
+    # Find the time window where the tip was in contact with the surface
+    if pressing.any():
+        contact_idx = np.where(pressing)[0]
+        i0, i1 = contact_idx[0], contact_idx[-1]
+    else:
+        i0, i1 = 0, len(t) - 1
+
+    t_crop       = t[i0:i1 + 1]
+    press_crop   = pressing[i0:i1 + 1]
+
     all_force_vals = []
     if has_fz:
-        fz_vals = df['fz_c'].to_numpy()
-        ax_fz.plot(t, fz_vals, linewidth=1.1, color='#dc0000',
+        fz_vals = df['fz_c'].to_numpy()[i0:i1 + 1]
+        ax_fz.plot(t_crop, fz_vals, linewidth=1.1, color='#dc0000',
                    alpha=0.90, label='UR5 Fz (N, zeroed)', zorder=3)
         all_force_vals.append(fz_vals)
     if has_lc:
-        lc_vals = df['lc_N'].to_numpy()
-        ax_fz.plot(t, lc_vals, linewidth=1.1, color='#9b59b6',
+        lc_vals = df['lc_N'].to_numpy()[i0:i1 + 1]
+        ax_fz.plot(t_crop, lc_vals, linewidth=1.1, color='#9b59b6',
                    alpha=0.85, label='Load cell (N, zeroed)', zorder=3)
         all_force_vals.append(lc_vals)
 
@@ -268,19 +278,19 @@ def make_figure(df, csv_path):
         fmin, fmax = combined.min(), combined.max()
         margin = max((fmax - fmin) * 0.07, 0.1)
         ax_fz.set_ylim(fmin - margin, fmax + margin)
-        if pressing.any():
-            ax_fz.fill_between(t, fmin - margin, fmax + margin,
-                               where=pressing, alpha=0.10,
+        if press_crop.any():
+            ax_fz.fill_between(t_crop, fmin - margin, fmax + margin,
+                               where=press_crop, alpha=0.10,
                                color='steelblue', label='Contact', zorder=1)
 
     ax_fz.axhline(0, color='black', linewidth=0.6, linestyle=':', alpha=0.5)
     ax_fz.set_xlabel('Time (s)', fontsize=9)
     ax_fz.set_ylabel('Force (N)', fontsize=9)
-    ax_fz.set_title('Z-force: UR5 Fz vs FUTEK load cell',
+    ax_fz.set_title('Z-force during contact: UR5 Fz vs FUTEK load cell',
                     fontsize=9, fontweight='bold')
     ax_fz.legend(fontsize=8, loc='upper right', ncol=3)
     ax_fz.grid(alpha=0.25)
-    ax_fz.set_xlim(t[0], t[-1])
+    ax_fz.set_xlim(t_crop[0], t_crop[-1])
 
     return fig
 

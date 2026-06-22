@@ -1,0 +1,11 @@
+# Core
+numpy>=1.23
+pandas>=1.5
+# Learned models + metrics (static pipeline)
+scikit-learn>=1.2
+joblib>=1.2
+# Trajectory smoothing + plotting (dynamic pipeline)
+scipy>=1.9
+matplotlib>=3.6
+# Optional, only if you build the deep sequence models in Part 2.4:
+# torch>=2.0

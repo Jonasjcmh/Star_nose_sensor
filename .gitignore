@@ -11,3 +11,4 @@ env/
 
 *.log
 *.tmp
+ML_model/saved_models/*.pkl

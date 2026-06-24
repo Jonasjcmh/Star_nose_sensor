@@ -51,7 +51,7 @@ from lcr6100 import LCR6100, list_ports
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 _HERE        = os.path.dirname(os.path.abspath(__file__))
-_INTEGRATION = os.path.normpath(os.path.join(_HERE, '..', 'Integration_2'))
+_INTEGRATION = os.path.normpath(os.path.join(_HERE, '..', 'integration_2'))
 LOG_DIR      = os.path.join(_HERE, 'logs')
 
 # ── Robot ─────────────────────────────────────────────────────────────────────
@@ -329,7 +329,7 @@ def print_plan_summary(plan, n_samples):
 # ── Indentation ───────────────────────────────────────────────────────────────
 
 def do_indentation(rtde_c, pt, depth_mm, round_idx, sample_idx,
-                   lcr, hold_s=1.0, rate_hz=100):
+                   lcr, hold_s=10.0, rate_hz=100):
     """
     Execute one step-impulse indentation and log all data at rate_hz.
 

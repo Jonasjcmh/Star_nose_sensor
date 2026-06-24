@@ -102,7 +102,7 @@ def hold_phase_stats(groups):
     per_point = defaultdict(lambda: {'Cp_pF': [], 'load_cell_N': []})
     for (pt, round_idx, sample_idx), rows_g in groups.items():
         for r in rows_g:
-            if r['phase'] == 'hold' and not math.isnan(r['Cp_pF']) and r['lcr_ok']:
+            if r['phase'] == 'hold' and not math.isnan(r['Cp_pF']):
                 per_point[pt]['Cp_pF'].append(r['Cp_pF'])
                 per_point[pt]['load_cell_N'].append(r['load_cell_N'])
     return per_point
@@ -116,7 +116,7 @@ def peak_per_indentation(groups):
     results = []
     for (pt, _, _), rows_g in groups.items():
         hold_rows = [r for r in rows_g if r['phase'] == 'hold'
-                     and not math.isnan(r['Cp_pF']) and r['lcr_ok']]
+                     and not math.isnan(r['Cp_pF'])]
         if not hold_rows:
             continue
         peak_Cp = max(r['Cp_pF'] for r in hold_rows)
@@ -319,7 +319,7 @@ def plot_phase_boxplots(rows, out_dir):
     phases  = ['locate', 'press', 'hold', 'retract', 'post']
     data    = {ph: [] for ph in phases}
     for r in rows:
-        if r['phase'] in data and not math.isnan(r['Cp_pF']) and r['lcr_ok']:
+        if r['phase'] in data and not math.isnan(r['Cp_pF']):
             data[r['phase']].append(r['Cp_pF'])
 
     fig, ax = plt.subplots(figsize=(9, 5))

@@ -18,8 +18,8 @@ USED_CELLS      = [
     12, 25, 38, 51,
     24, 37, 50,
 ]
-SENSITIVITY     = 30.0
-GAMMA           = 0.5
+SENSITIVITY     = 30.0   ##30
+GAMMA           = 0.5    ##0.5
 READ_TIMEOUT    = 2.0
 RECONNECT_FAST  = 0.3
 RECONNECT_SLOW  = 3.0
@@ -153,14 +153,20 @@ def _set_low_latency(ser):
     except Exception:
         pass
 
+# def _normalise(raw):
+#     return [ (raw[i] - _calibration[i])/ 25
+#             for i in range(19)
+#             ]
+
+
 def _normalise(raw):
-    return [
-        max(0.0, min(
-            ((raw[i] - _calibration[i]) / SENSITIVITY),
-            1.0
-        )) ** GAMMA
-        for i in range(19)
-    ]
+   return [
+       max(0.0, min(
+           ((raw[i] - _calibration[i])/ SENSITIVITY),
+           1.0
+       )) ** GAMMA
+       for i in range(19)
+   ]
 
 def _read_loop():
     global _calibration, _is_ready

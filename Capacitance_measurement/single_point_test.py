@@ -730,16 +730,8 @@ def main():
     if not args.no_plot:
         with _log_lock:
             rows = list(_log_rows)
-        # Build + save both figures first (non-blocking), then show them
-        # together in ONE blocking call. Otherwise plt.show() on the first
-        # figure blocks and the overlay is never created until you close it.
         plot_results(rows, pt, depth_mm, locate_s, hold_s, post_s, show=True)
         plot_overlay(rows, pt, depth_mm, locate_s, hold_s, post_s, show=True)
-        try:
-            import matplotlib.pyplot as plt
-            plt.show()   # displays both the 2×2 summary and the overlay at once
-        except Exception as e:
-            print(f'[plot] Could not display interactively ({e}); figures saved only.')
 
     if path:
         print(f'\n  Data: {path}')
@@ -748,3 +740,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

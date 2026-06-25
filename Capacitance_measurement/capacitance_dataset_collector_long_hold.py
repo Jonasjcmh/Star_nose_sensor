@@ -1,6 +1,25 @@
 """
-capacitance_dataset_collector.py — Star-Nose Sensor | Capacitance Dataset Builder
-==================================================================================
+capacitance_dataset_collector_long_hold.py — Star-Nose Sensor | Capacitance Dataset Builder
+============================================================================================
+Same as capacitance_dataset_collector.py, but the **hold-at-depth** time is
+guaranteed to be **longer than or equal to the press/retract ramp time**.
+
+Why
+---
+  In the original script the hold phase was a fixed 1 s. The press and retract
+  motions move `depth_mm` at VEL_PRESS (0.004 m/s), so for anything but the
+  shallowest presses each ramp takes *longer* than the 1 s hold. That makes the
+  dataset spend more time ramping than dwelling at the load we actually care
+  about.
+
+  Here the effective hold is computed as:
+
+      ramp_s     = trapezoidal time to move depth_mm at VEL_PRESS / ACCEL
+      hold_s_eff = max(user_hold_s, ramp_s * hold_mult)         (hold_mult ≥ 1)
+
+  so each press/retract ramp never out-runs the dwell at depth (and the same
+  floor is applied to the locate / post surface holds for symmetry).
+
 Collects a multi-sample dataset correlating:
   • LCR-6100 capacitance (Cp-Rp, 20 kHz, 1 V, FAST) for each sensor point
   • UR5 TCP position and F/T sensor
@@ -16,22 +35,18 @@ Sampling strategy
 
 Indentation waveform (step impulse)
 ------------------------------------
-  locate  : robot moves to point surface, holds 1 s
-  press   : robot presses to depth at VEL_PRESS m/s
-  hold    : robot holds at depth, 1 s
-  retract : robot retracts to surface at VEL_PRESS m/s
-  post    : robot holds at surface, 1 s
-
-Logging window
---------------
-  Starts when user confirms wiring (Enter).
-  Stops at the end of the post-retract hold.
-  All phases within this window are written to CSV.
+  locate  : robot moves to point surface, holds hold_s_eff
+  press   : robot presses to depth at VEL_PRESS m/s  (ramp_s)
+  hold    : robot holds at depth, hold_s_eff   (≥ ramp_s)
+  retract : robot retracts to surface at VEL_PRESS m/s  (ramp_s)
+  post    : robot holds at surface, hold_s_eff
 
 Usage
 -----
-  python capacitance_dataset_collector.py
-  python capacitance_dataset_collector.py --samples 5 --depth 1.5
+  python capacitance_dataset_collector_long_hold.py
+  python capacitance_dataset_collector_long_hold.py --samples 5 --depth 3.0
+  python capacitance_dataset_collector_long_hold.py --hold-mult 1.5
+  python capacitance_dataset_collector_long_hold.py --hold 4.0    # explicit floor
 """
 
 import os
@@ -124,6 +139,27 @@ def get_robot_state():
     with _state_lock:
         return {k: list(v) if isinstance(v, list) else v
                 for k, v in _state.items()}
+
+# ── Ramp-time model ────────────────────────────────────────────────────────────
+
+def ramp_time_s(depth_mm, vel=VEL_PRESS, accel=ACCEL):
+    """
+    Time for a single straight press (or retract) of `depth_mm` under a
+    trapezoidal velocity profile with cruise velocity `vel` and acceleration
+    `accel`. This is the duration UR's moveL takes for that motion.
+
+    - If the move is long enough to reach `vel`:
+          t = d/vel + vel/accel        (accel ramp-up + ramp-down overhead)
+    - If too short to reach `vel` (triangular profile):
+          t = 2 * sqrt(d / accel)
+    """
+    d = abs(depth_mm) / 1000.0          # mm → m
+    if d <= 0.0:
+        return 0.0
+    d_to_vel = vel * vel / accel        # distance needed to accel then decel
+    if d >= d_to_vel:
+        return d / vel + vel / accel
+    return 2.0 * (d / accel) ** 0.5
 
 # ── Dataset log ───────────────────────────────────────────────────────────────
 _log_rows = []
@@ -330,15 +366,17 @@ def print_plan_summary(plan, n_samples):
 
 def do_indentation(rtde_c, pt, depth_mm, round_idx, sample_idx,
                    lcr, hold_s=10.0, rate_hz=100):
-    """ress
-    pppp
+    """
     Execute one step-impulse indentation and log all data at rate_hz.
+
+    `hold_s` here is the *effective* hold (already forced ≥ the press/retract
+    ramp time by main()), applied to the locate, hold and post phases.
 
     Waveform:
       locate:   surface → hold hold_s s
-      press:    press motion (logged row-by-row)
-      hold:     at depth, hold hold_s s
-      retract:  retract motion (logged row-by-row)
+      press:    press motion (logged row-by-row)         ← ramp_s
+      hold:     at depth, hold hold_s s                  ← ≥ ramp_s
+      retract:  retract motion (logged row-by-row)        ← ramp_s
       post:     surface → hold hold_s s
     """
     surface = _build_pose(pt, 0.0)
@@ -364,7 +402,7 @@ def do_indentation(rtde_c, pt, depth_mm, round_idx, sample_idx,
     rtde_c.moveL(pressed, VEL_PRESS, ACCEL)
     log('press')
 
-    # ── Hold: hold at depth ───────────────────────────────────────────────────
+    # ── Hold: hold at depth (≥ ramp) ──────────────────────────────────────────
     _log_timed(pt, depth_mm, 'hold', round_idx, sample_idx,
                lcr, rate_hz, hold_s)
 
@@ -430,7 +468,7 @@ def _select_lcr_port():
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description='Capacitance dataset collector — 19-point star-nose sensor',
+        description='Capacitance dataset collector (long-hold) — 19-point star-nose sensor',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__)
     p.add_argument('--samples', type=int, default=None,
@@ -440,7 +478,11 @@ def parse_args():
     p.add_argument('--rate',    type=int, default=100,
                    help='Logging rate in Hz (default: 100)')
     p.add_argument('--hold',    type=float, default=1.0,
-                   help='Hold duration per phase in seconds (default: 1.0)')
+                   help='Minimum hold per phase in seconds — a floor; the actual '
+                        'hold is raised to at least the ramp time (default: 1.0)')
+    p.add_argument('--hold-mult', type=float, default=1.0, dest='hold_mult',
+                   help='Hold = ramp_time * this multiplier (≥1.0 keeps hold ≥ ramp; '
+                        'use e.g. 1.5 for a longer dwell). default: 1.0')
     p.add_argument('--port',    default=None,
                    help='LCR serial port (default: interactive selection)')
     p.add_argument('--seed',    type=int, default=None,
@@ -484,7 +526,7 @@ def main():
     args = parse_args()
 
     print('=' * 65)
-    print('  Capacitance Dataset Collector — Star-Nose Sensor')
+    print('  Capacitance Dataset Collector (long hold) — Star-Nose Sensor')
     print('=' * 65)
 
     # ── Session parameters ────────────────────────────────────────────────────
@@ -494,15 +536,24 @@ def main():
     depth_mm = args.depth or _ask_float(
         f'  Indentation depth (mm) [1.0] > ', default=1.0, minimum=0.1, maximum=10.0)
 
-    rate_hz  = args.rate
-    hold_s   = args.hold
+    rate_hz   = args.rate
+    hold_mult = max(1.0, args.hold_mult)
+
+    # Force the hold to be ≥ the press/retract ramp time.
+    ramp_s = ramp_time_s(depth_mm)
+    hold_s = max(args.hold, ramp_s * hold_mult)
 
     print(f'\n  Samples per point : {n_samples}')
     print(f'  Indentation depth : {depth_mm:.2f} mm')
-    print(f'  Hold per phase    : {hold_s:.1f} s')
+    print(f'  Press/retract ramp: {ramp_s:.2f} s each  '
+          f'(@ {VEL_PRESS*1000:.1f} mm/s, accel {ACCEL} m/s²)')
+    print(f'  Hold per phase    : {hold_s:.2f} s   '
+          f'(≥ ramp; floor {args.hold:.1f} s, mult {hold_mult:.2f})')
     print(f'  Log rate          : {rate_hz} Hz')
     print(f'  Total indentations: {n_samples * 19}')
-    print(f'  Est. time         : ~{n_samples * 19 * (3 * hold_s + 20) / 60:.0f} min '
+    # 3 holds + 2 ramps + ~travel/wiring slack per indentation
+    per_indent_s = 3 * hold_s + 2 * ramp_s + 20
+    print(f'  Est. time         : ~{n_samples * 19 * per_indent_s / 60:.0f} min '
           f'(excl. wiring time)')
 
     # ── Calibration ───────────────────────────────────────────────────────────

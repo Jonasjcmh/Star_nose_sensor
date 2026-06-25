@@ -456,12 +456,10 @@ def plot_results(rows, pt, depth_mm, locate_s, hold_s, post_s, show=True):
     fig.savefig(path, dpi=130, bbox_inches='tight')
     print(f'[plot] Saved figure → {path}')
 
-    if show:
-        try:
-            plt.show()
-        except Exception as e:
-            print(f'[plot] Could not display interactively ({e}); figure saved only.')
-    plt.close(fig)
+    # When showing, leave the figure open so the caller can display it
+    # alongside the overlay in a single (blocking) plt.show().
+    if not show:
+        plt.close(fig)
     return path
 
 def plot_overlay(rows, pt, depth_mm, locate_s, hold_s, post_s, show=True):
@@ -539,12 +537,10 @@ def plot_overlay(rows, pt, depth_mm, locate_s, hold_s, post_s, show=True):
     fig.savefig(path, dpi=130, bbox_inches='tight')
     print(f'[plot] Saved overlay figure → {path}')
 
-    if show:
-        try:
-            plt.show()
-        except Exception as e:
-            print(f'[plot] Could not display interactively ({e}); figure saved only.')
-    plt.close(fig)
+    # Leave the figure open so the caller can show it together with the
+    # 2×2 summary in one blocking plt.show().
+    if not show:
+        plt.close(fig)
     return path
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -734,8 +730,16 @@ def main():
     if not args.no_plot:
         with _log_lock:
             rows = list(_log_rows)
+        # Build + save both figures first (non-blocking), then show them
+        # together in ONE blocking call. Otherwise plt.show() on the first
+        # figure blocks and the overlay is never created until you close it.
         plot_results(rows, pt, depth_mm, locate_s, hold_s, post_s, show=True)
         plot_overlay(rows, pt, depth_mm, locate_s, hold_s, post_s, show=True)
+        try:
+            import matplotlib.pyplot as plt
+            plt.show()   # displays both the 2×2 summary and the overlay at once
+        except Exception as e:
+            print(f'[plot] Could not display interactively ({e}); figures saved only.')
 
     if path:
         print(f'\n  Data: {path}')

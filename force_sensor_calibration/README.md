@@ -11,6 +11,8 @@ The star-nose sensor rig records two independent measurements of contact force d
 
 The UR5's internal sensor is convenient (no extra wiring, sampled at 125 Hz) but is not metrology-grade: it drifts, isn't re-zeroed every session, and includes tool/mounting load. The FUTEK is the more trustworthy reference, so we use it to derive a correction for `fz` rather than relying on the robot's raw reading.
 
+**Goal:** the FUTEK is a temporary reference, not a permanent part of the rig. Once the correction is fitted and shown to repeat across multiple independent sessions (see "Step 8" in the SOP), the FUTEK can be unmounted and future sessions can rely on the corrected `fz` alone — freeing up the AI0 wiring and one point of hardware failure. After removal, the FUTEK should still be reinstalled periodically for spot-checks, since there's no longer a live reference to catch new drift otherwise.
+
 ## Contents
 
 | File | Purpose |

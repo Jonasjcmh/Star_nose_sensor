@@ -1,29 +1,33 @@
 """
 force_calib.py — collect and fit the UR5 fz -> FUTEK force correction.
 
-Implements FORCE_CALIBRATION_SOP.md:
+Implements FORCE_CALIBRATION_SOP.md (data collection deviates from the
+written SOP — see below; fit/validate/save follow it as documented):
 
-  `collect` (Step 1-2, live) — connects to the UR5 directly (rtde_control /
-  rtde_receive), verifies the pressing tool axis is perpendicular to the
-  surface within tolerance, sweeps a set of indentation depths at a point,
-  and logs a session CSV (fz, ai0, TCP pose) at a known sample rate.
+  `collect` (live) — connects to the UR5 directly (rtde_control /
+  rtde_receive), verifies the tool axis is perpendicular to vertical within
+  tolerance, then holds a single static pose while known weights are
+  placed on and removed from the FUTEK load cell, which sits in the same
+  static load path as the UR5 tool flange. The robot never moves during
+  loading — fz and ai0 both see the same static gravity load through the
+  load cell. Logs a session CSV (fz, ai0, TCP pose) at a known sample rate.
 
-  `fit` (Steps 3-7, offline) — extracts one (fz_robot, lc_futek) sample
-  pair per press event from logged session CSVs (dwell-plateau mean, first
-  0.3 s of each press dropped, per-session zero subtracted), fits
+  `fit` (offline) — extracts one (fz_robot, lc_futek) sample pair per
+  loaded window from logged session CSVs (dwell-plateau mean, first 0.3 s
+  after each weight placement dropped, per-session zero subtracted), fits
   slope/offset by OLS, validates against a held-out session (RMSE, Pearson
   r, Bland-Altman), checks the SOP's acceptance criteria, and saves
   calib_fz_<tip>.json.
 
 Usage:
   # 1. Live data collection (run once per fit session, once for holdout):
-  python force_calib.py collect --tip short_6mm --point 10 \
-      --depths 1 2 3 4 6 --reps 3
+  python force_calib.py collect --tip futek_direct \
+      --weights 50 100 200 500 1000 --reps 3
 
   # 2. Offline fit + validation:
-  python force_calib.py fit --tip short_6mm \
-      --fit logs/fzcal_short_6mm_P10_session_*.csv \
-      --holdout logs/fzcal_short_6mm_P10_session_<held_out>.csv
+  python force_calib.py fit --tip futek_direct \
+      --fit logs/fzcal_futek_direct_session_*.csv \
+      --holdout logs/fzcal_futek_direct_session_<held_out>.csv
 """
 
 import argparse
@@ -50,7 +54,7 @@ except ImportError:
     rtde_control = None
     rtde_receive = None
 
-SETTLE_S = 0.3           # dropped from the start of each press window (Step 3)
+SETTLE_S = 0.3           # dropped from the start of each loaded window (placement settling)
 CALIB_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(CALIB_DIR, "logs")
 
@@ -78,12 +82,12 @@ def tilt_from_vertical_deg(rotvec):
     return float(np.degrees(np.arccos(cos_angle)))
 
 
-# ── Step 3: extract per-press (fz_robot, lc_futek) pairs ──────────────
+# ── Step 3: extract per-loaded-window (fz_robot, lc_futek) pairs ──────
 def load_session(path):
     df = pd.read_csv(path)
     df["t"] = df["timestamp"] - df["timestamp"].iloc[0]
-    df["ur5_pressing"] = pd.to_numeric(
-        df["ur5_pressing"], errors="coerce").fillna(0).astype(int)
+    df["loaded"] = pd.to_numeric(
+        df["loaded"], errors="coerce").fillna(0).astype(int)
     for c in ("fz", "ai0"):
         df[c] = pd.to_numeric(df[c], errors="coerce")
     df["lc_n"] = ai0_to_newtons(df["ai0"])
@@ -98,21 +102,21 @@ def session_sample_rate(df):
 
 
 def session_zero(df):
-    """Pre-contact idle mean (Step 1); falls back to signal min if the
-    recording starts already in contact (no idle window available)."""
-    first_press = df.index[df["ur5_pressing"] == 1]
-    idle = df.loc[: first_press[0] - 1] if len(first_press) else df.iloc[0:0]
+    """Pre-load idle mean (Step 1); falls back to signal min if the
+    recording starts already loaded (no idle window available)."""
+    first_loaded = df.index[df["loaded"] == 1]
+    idle = df.loc[: first_loaded[0] - 1] if len(first_loaded) else df.iloc[0:0]
     if len(idle) >= 5:
         return float(idle["fz"].mean()), float(idle["lc_n"].mean())
-    print(f"    [warn] no idle window before first press — "
+    print(f"    [warn] no idle window before first loaded window — "
           f"falling back to signal min for zero-reference")
     return float(df["fz"].min()), float(df["lc_n"].min())
 
 
-def press_windows(df):
-    """Contiguous ur5_pressing==1 runs, as (start_idx, end_idx) pairs."""
-    pressing = df["ur5_pressing"].to_numpy()
-    edges = np.diff(np.concatenate(([0], pressing, [0])))
+def load_windows(df):
+    """Contiguous loaded==1 runs, as (start_idx, end_idx) pairs."""
+    loaded = df["loaded"].to_numpy()
+    edges = np.diff(np.concatenate(([0], loaded, [0])))
     starts = np.where(edges == 1)[0]
     ends = np.where(edges == -1)[0]
     return list(zip(starts, ends))
@@ -127,7 +131,7 @@ def extract_pairs(path):
               f"gives < 1 sample in the {SETTLE_S}s settle window")
     fz_zero, lc_zero = session_zero(df)
     pairs = []
-    for start, end in press_windows(df):
+    for start, end in load_windows(df):
         window = df.iloc[start:end]
         if len(window) < 2:
             continue
@@ -148,7 +152,7 @@ def collect(paths):
     for f in files:
         pairs, rate = extract_pairs(f)
         rates.append(rate)
-        print(f"  {os.path.basename(f)}: {len(pairs)} press events "
+        print(f"  {os.path.basename(f)}: {len(pairs)} loaded events "
               f"@ {rate:.1f} Hz")
         all_pairs.append(pairs)
     return (np.vstack(all_pairs) if all_pairs else np.empty((0, 2))), files, rates
@@ -273,12 +277,12 @@ def cmd_fit(args):
 
 
 # ── `collect` subcommand ────────────────────────────────────────────────
-CSV_FIELDS = ["timestamp", "datetime", "ur5_point", "ur5_pressing",
+CSV_FIELDS = ["timestamp", "datetime", "weight_g", "loaded",
               "tcp_x", "tcp_y", "tcp_z", "fx", "fy", "fz",
               "tx", "ty", "tz", "ai0"]
 
 
-def _row(rtde_r, pt, pressing):
+def _row(rtde_r, loaded, weight_g):
     ft = rtde_r.getActualTCPForce()
     tcp = rtde_r.getActualTCPPose()
     ai0 = rtde_r.getStandardAnalogInput0()
@@ -286,8 +290,8 @@ def _row(rtde_r, pt, pressing):
     return {
         "timestamp": now,
         "datetime": datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
-        "ur5_point": pt,
-        "ur5_pressing": int(pressing),
+        "weight_g": weight_g,
+        "loaded": int(loaded),
         "tcp_x": tcp[0], "tcp_y": tcp[1], "tcp_z": tcp[2],
         "fx": ft[0], "fy": ft[1], "fz": ft[2],
         "tx": ft[3], "ty": ft[4], "tz": ft[5],
@@ -301,75 +305,60 @@ def cmd_collect(args):
                   "pip install ur-rtde --break-system-packages")
 
     import ur5_control
-    import load_calibration
 
     robot_ip = args.robot_ip or ur5_control.ROBOT_IP
-    pt = args.point
-    if pt not in ur5_control.POINTS:
-        sys.exit(f"Point P{pt} is not in ur5_control.POINTS")
 
-    # ── Perpendicularity check (before any load_calibration side effects) ──
+    # ── Perpendicularity check ──
+    # The load cell and weights sit in the tool's static load path (no
+    # pressing motion) — if the tool Z-axis isn't vertical, gravity's
+    # force vector leaks into fx/fy and fz under-reads the true weight.
     tilt = tilt_from_vertical_deg(ur5_control.REFERENCE_POSE[3:6])
-    print(f"[collect] Pressing-tool Z-axis tilt from vertical: "
+    print(f"[collect] Tool Z-axis tilt from vertical: "
           f"{tilt:.3f} deg (tolerance {args.tilt_tol_deg:.2f} deg)")
     if tilt > args.tilt_tol_deg:
         sys.exit(
             f"[collect] ABORT — tool axis is {tilt:.2f} deg off vertical, "
-            f"exceeds {args.tilt_tol_deg:.2f} deg tolerance. Off-axis "
-            "presses corrupt the Fz-vs-FUTEK relationship (FUTEK sees the "
-            "full contact load, robot Fz only sees the Z-component). "
-            "Re-square the tip/mount or re-teach REFERENCE_POSE in "
-            "ur5_control.py, then re-run."
+            f"exceeds {args.tilt_tol_deg:.2f} deg tolerance. An off-axis "
+            "load path means the applied weight's gravity vector isn't "
+            "aligned with the tool Z-axis, so fz under-reads the true "
+            "force. Re-square the load cell mount or re-teach "
+            "REFERENCE_POSE in ur5_control.py, then re-run."
         )
-
-    load_calibration.preview(args.tip)
-    load_calibration.apply(args.tip)
 
     print(f"[collect] Connecting to {robot_ip} ...")
     rtde_r = rtde_receive.RTDEReceiveInterface(robot_ip)
     rtde_c = rtde_control.RTDEControlInterface(robot_ip)
     print("[collect] Connected.")
 
-    home = ur5_control._build_pose(pt, ur5_control.SAFE_HOME_Z_MM)
-    surface = ur5_control._build_pose(pt, 0.0)
     sample_dt = 1.0 / args.rate
     rows = []
 
-    def sample(pressing, duration_s):
+    def sample(loaded, weight_g, duration_s):
         t_end = time.time() + duration_s
         while time.time() < t_end:
-            rows.append(_row(rtde_r, pt, pressing))
+            rows.append(_row(rtde_r, loaded, weight_g))
             time.sleep(sample_dt)
 
     try:
-        rtde_c.moveL(home, ur5_control.VELOCITY_TRAVEL, ur5_control.ACCELERATION)
-        input("\n[collect] Tip clear of surface, no load. "
+        input("\n[collect] Load cell mounted, no weight applied. "
               "Press Enter to zero the FT sensor...")
         rtde_c.zeroFtSensor()
         time.sleep(1.0)
 
         print(f"[collect] Recording {args.idle_s:.1f}s idle baseline "
               f"(fz_zero / ai0_zero)...")
-        sample(pressing=False, duration_s=args.idle_s)
+        sample(loaded=False, weight_g=0.0, duration_s=args.idle_s)
 
-        rtde_c.moveL(surface, ur5_control.VELOCITY_TRAVEL, ur5_control.ACCELERATION)
-
-        for depth in args.depths:
+        for weight in args.weights:
             for rep in range(args.reps):
-                print(f"[collect] P{pt}  depth={depth:.2f}mm  "
-                      f"rep={rep + 1}/{args.reps}")
-                pressed = ur5_control._build_pose(pt, -depth)
-                rtde_c.moveL(pressed, ur5_control.VELOCITY_PRESS,
-                             ur5_control.ACCELERATION)
-                sample(pressing=True, duration_s=args.dwell)
-                rtde_c.moveL(surface, ur5_control.VELOCITY_PRESS,
-                             ur5_control.ACCELERATION)
-                sample(pressing=False, duration_s=0.3)
-
-        rtde_c.moveL(home, ur5_control.VELOCITY_TRAVEL, ur5_control.ACCELERATION)
+                input(f"\n[collect] Place the {weight:g} g weight on the "
+                      f"load cell (rep {rep + 1}/{args.reps}). Press Enter "
+                      "once settled...")
+                sample(loaded=True, weight_g=weight, duration_s=args.dwell)
+                input("[collect] Remove the weight. Press Enter once clear...")
+                sample(loaded=False, weight_g=0.0, duration_s=0.3)
     except KeyboardInterrupt:
-        print("\n[collect] Interrupted — returning home")
-        rtde_c.moveL(home, ur5_control.VELOCITY_TRAVEL, ur5_control.ACCELERATION)
+        print("\n[collect] Interrupted")
     finally:
         try:
             rtde_c.stopScript()
@@ -386,7 +375,7 @@ def cmd_collect(args):
 
     os.makedirs(LOG_DIR, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_path = os.path.join(LOG_DIR, f"fzcal_{args.tip}_P{pt}_session_{ts}.csv")
+    csv_path = os.path.join(LOG_DIR, f"fzcal_{args.tip}_session_{ts}.csv")
     with open(csv_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
         w.writeheader()
@@ -396,11 +385,11 @@ def cmd_collect(args):
     meta_path = csv_path.replace(".csv", "_meta.json")
     with open(meta_path, "w") as f:
         json.dump({
-            "tip": args.tip, "point": pt,
+            "tip": args.tip,
             "tilt_from_vertical_deg": tilt,
             "target_rate_hz": args.rate,
             "achieved_rate_hz": achieved_rate,
-            "depths_mm": args.depths, "reps": args.reps,
+            "weights_g": args.weights, "reps": args.reps,
             "dwell_s": args.dwell, "idle_s": args.idle_s,
             "robot_ip": robot_ip,
         }, f, indent=2)
@@ -414,14 +403,13 @@ def build_parser():
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="command", required=True)
 
-    c = sub.add_parser("collect", help="live: sweep indentation depths on the robot and log a session CSV")
-    c.add_argument("--tip", required=True, help="tip profile name, e.g. short_6mm")
-    c.add_argument("--point", type=int, default=10, help="UR5 point to press (default: 10, center)")
-    c.add_argument("--depths", type=float, nargs="+", default=[1, 2, 3, 4, 6],
-                   help="indentation depths in mm (SOP Step 2 default: 1 2 3 4 6)")
-    c.add_argument("--reps", type=int, default=3, help="presses per depth")
-    c.add_argument("--dwell", type=float, default=1.5, help="dwell time per press (s)")
-    c.add_argument("--idle-s", type=float, default=3.0, help="idle baseline duration before pressing (s)")
+    c = sub.add_parser("collect", help="live: hold a static pose while known weights are applied to the load cell, and log a session CSV")
+    c.add_argument("--tip", required=True, help="config/fixture label used for filenames, e.g. futek_direct")
+    c.add_argument("--weights", type=float, nargs="+", required=True,
+                   help="known weights in grams to apply, e.g. 50 100 200 500 1000")
+    c.add_argument("--reps", type=int, default=3, help="place/remove cycles per weight")
+    c.add_argument("--dwell", type=float, default=1.5, help="dwell time per loaded rep (s)")
+    c.add_argument("--idle-s", type=float, default=3.0, help="idle baseline duration before loading (s)")
     c.add_argument("--rate", type=float, default=20.0, help="target sample rate (Hz), matches main.py's logger")
     c.add_argument("--tilt-tol-deg", type=float, default=2.0,
                    help="max allowed tool-axis tilt from vertical before aborting (deg)")

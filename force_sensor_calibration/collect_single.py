@@ -1,17 +1,18 @@
 """
-force_calib.py — collect the UR5 fz / FUTEK load-cell data for the force
-calibration (data collection only — no fitting or analysis).
+collect_single.py — collect UR5 fz / FUTEK load-cell data for ONE weight.
 
-Connects to the UR5 directly (rtde_control / rtde_receive), verifies the
-tool axis is perpendicular to vertical within tolerance, then holds a
-single static pose while known weights are placed on and removed from the
-FUTEK load cell, which sits in the same static load path as the UR5 tool
-flange. The robot never moves during loading — fz and ai0 both see the
-same static gravity load through the load cell. Logs a session CSV
-(fz, ai0, TCP pose) at a known sample rate.
+Run it once per weight: it asks you for the weight (e.g. 200), connects to
+the UR5, checks the tool is vertical, zeroes the force sensor, records a
+short no-load baseline, then holds while you place that single weight and
+logs the samples. One run = one weight = one CSV. Run it again for the
+next weight (100, 50, ...).
 
 Usage:
-  python force_calib.py --tip futek_direct --weights 200 100 50 20 10 5
+  python collect_single.py --tip futek_direct
+      -> prompts: "Enter weight in grams:"  (type 200, then run again for 100, ...)
+
+  # or pass the weight directly, skipping the prompt:
+  python collect_single.py --tip futek_direct --weight 200
 """
 
 import argparse
@@ -24,7 +25,7 @@ from datetime import datetime
 
 import numpy as np
 
-# ur5_control lives in Integration_2 (ROBOT_IP / REFERENCE_POSE).
+# ur5_control lives in Integration_2 (ROBOT_IP).
 INTEGRATION_DIR = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "Integration_2")
 sys.path.insert(0, os.path.abspath(INTEGRATION_DIR))
@@ -55,15 +56,14 @@ def rotvec_to_R(rotvec):
 
 
 def tilt_from_vertical_deg(rotvec):
-    """Angle (deg) between the tool Z-axis and vertical — 0 = perfectly
-    perpendicular to a horizontal surface, regardless of up/down sign."""
+    """Angle (deg) between the tool Z-axis and vertical — 0 = perfectly vertical."""
     R = rotvec_to_R(rotvec)
     tool_z = R @ np.array([0.0, 0.0, 1.0])
     cos_angle = np.clip(abs(tool_z[2]), -1.0, 1.0)
     return float(np.degrees(np.arccos(cos_angle)))
 
 
-# ── Data collection ────────────────────────────────────────────────────
+# ── One CSV row ────────────────────────────────────────────────────────
 CSV_FIELDS = ["timestamp", "datetime", "weight_g", "loaded",
               "tcp_x", "tcp_y", "tcp_z", "fx", "fy", "fz",
               "tx", "ty", "tz", "ai0"]
@@ -86,13 +86,30 @@ def _row(rtde_r, loaded, weight_g):
     }
 
 
-def collect(args):
+def ask_weight(cli_weight):
+    """Use --weight if given, otherwise prompt the user."""
+    if cli_weight is not None:
+        return float(cli_weight)
+    while True:
+        raw = input("\nEnter weight in grams (e.g. 200): ").strip()
+        try:
+            w = float(raw)
+            if w <= 0:
+                print("  Weight must be > 0.")
+                continue
+            return w
+        except ValueError:
+            print(f"  '{raw}' is not a number — try again.")
+
+
+def collect_one(args):
     if rtde_control is None or rtde_receive is None:
         sys.exit("ur_rtde is not installed — "
                   "pip install ur-rtde --break-system-packages")
 
-    import ur5_control
+    weight = ask_weight(args.weight)
 
+    import ur5_control
     robot_ip = args.robot_ip or ur5_control.ROBOT_IP
 
     print(f"[collect] Connecting to {robot_ip} ...")
@@ -100,12 +117,7 @@ def collect(args):
     rtde_c = rtde_control.RTDEControlInterface(robot_ip)
     print("[collect] Connected.")
 
-    # ── Perpendicularity check ──
-    # The load cell and weights sit in the tool's static load path (no
-    # pressing motion) — if the tool Z-axis isn't vertical, gravity's
-    # force vector leaks into fx/fy and fz under-reads the true weight.
-    # Check the robot's ACTUAL pose, not a stored constant — the tool
-    # must be physically at (or squared to) vertical right now.
+    # ── Perpendicularity check (actual live pose) ──
     actual_pose = rtde_r.getActualTCPPose()
     tilt = tilt_from_vertical_deg(actual_pose[3:6])
     print(f"[collect] Tool Z-axis tilt from vertical: "
@@ -117,11 +129,8 @@ def collect(args):
             pass
         sys.exit(
             f"[collect] ABORT — tool axis is {tilt:.2f} deg off vertical, "
-            f"exceeds {args.tilt_tol_deg:.2f} deg tolerance. An off-axis "
-            "load path means the applied weight's gravity vector isn't "
-            "aligned with the tool Z-axis, so fz under-reads the true "
-            "force. Re-square the load cell mount or move the tool to a "
-            "vertical pose, then re-run."
+            f"exceeds {args.tilt_tol_deg:.2f} deg tolerance. Re-square the "
+            "load cell mount or move the tool to a vertical pose, then re-run."
         )
 
     sample_dt = 1.0 / args.rate
@@ -134,23 +143,19 @@ def collect(args):
             time.sleep(sample_dt)
 
     try:
-        input("\n[collect] Load cell mounted, no weight applied. "
+        input("\n[collect] Load cell mounted, NO weight applied. "
               "Press Enter to zero the FT sensor...")
         rtde_c.zeroFtSensor()
         time.sleep(1.0)
 
-        print(f"[collect] Recording {args.idle_s:.1f}s idle baseline "
-              f"(fz_zero / ai0_zero)...")
+        print(f"[collect] Recording {args.idle_s:.1f}s no-load baseline...")
         sample(loaded=False, weight_g=0.0, duration_s=args.idle_s)
 
-        for weight in args.weights:
-            for rep in range(args.reps):
-                input(f"\n[collect] Place the {weight:g} g weight on the "
-                      f"load cell (rep {rep + 1}/{args.reps}). Press Enter "
-                      "once settled...")
-                sample(loaded=True, weight_g=weight, duration_s=args.dwell)
-                input("[collect] Remove the weight. Press Enter once clear...")
-                sample(loaded=False, weight_g=0.0, duration_s=0.3)
+        input(f"\n[collect] Place the {weight:g} g weight on the load cell. "
+              "Press Enter once settled...")
+        print(f"[collect] Holding & recording for {args.dwell:.1f}s...")
+        sample(loaded=True, weight_g=weight, duration_s=args.dwell)
+        print("[collect] Done holding. You can remove the weight now.")
     except KeyboardInterrupt:
         print("\n[collect] Interrupted")
     finally:
@@ -169,7 +174,8 @@ def collect(args):
 
     os.makedirs(LOG_DIR, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_path = os.path.join(LOG_DIR, f"fzcal_{args.tip}_session_{ts}.csv")
+    csv_path = os.path.join(
+        LOG_DIR, f"fzcal_{args.tip}_{weight:g}g_{ts}.csv")
     with open(csv_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
         w.writeheader()
@@ -180,31 +186,30 @@ def collect(args):
     with open(meta_path, "w") as f:
         json.dump({
             "tip": args.tip,
+            "weight_g": weight,
             "tilt_from_vertical_deg": tilt,
             "target_rate_hz": args.rate,
             "achieved_rate_hz": achieved_rate,
-            "weights_g": args.weights, "reps": args.reps,
-            "dwell_s": args.dwell, "idle_s": args.idle_s,
+            "dwell_s": args.dwell,
+            "idle_s": args.idle_s,
             "robot_ip": robot_ip,
         }, f, indent=2)
     print(f"[collect] Metadata -> {meta_path}")
+    print("[collect] Run again for the next weight.")
 
 
-# ── CLI ──────────────────────────────────────────────────────────────
 def build_parser():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tip", required=True,
                     help="config/fixture label used for filenames, e.g. futek_direct")
-    ap.add_argument("--weights", type=float, nargs="+", required=True,
-                    help="known weights in grams to apply, e.g. 200 100 50 20 10 5")
-    ap.add_argument("--reps", type=int, default=1,
-                    help="place/remove cycles per weight (1 = single stable hold, no repetition)")
+    ap.add_argument("--weight", type=float, default=None,
+                    help="weight in grams (if omitted, you'll be prompted)")
     ap.add_argument("--dwell", type=float, default=10.0,
-                    help="hold time per loaded rep (s)")
+                    help="hold time (s)")
     ap.add_argument("--idle-s", type=float, default=3.0,
-                    help="idle baseline duration before loading (s)")
+                    help="no-load baseline duration before loading (s)")
     ap.add_argument("--rate", type=float, default=20.0,
                     help="target sample rate (Hz)")
     ap.add_argument("--tilt-tol-deg", type=float, default=2.0,
@@ -215,8 +220,7 @@ def build_parser():
 
 
 def main():
-    args = build_parser().parse_args()
-    collect(args)
+    collect_one(build_parser().parse_args())
 
 
 if __name__ == "__main__":

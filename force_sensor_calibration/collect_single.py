@@ -13,11 +13,16 @@ Usage:
 
   # or pass the weight directly, skipping the prompt:
   python collect_single.py --tip futek_direct --weight 200
+
+  # collect with gravity loading the +Z tool axis instead of -Z:
+  # rotates wrist 2 by 180 deg before the tilt check / zeroing / collection.
+  python collect_single.py --tip futek_direct --z-dir pos --weight 200
 """
 
 import argparse
 import csv
 import json
+import math
 import os
 import sys
 import time
@@ -61,6 +66,18 @@ def tilt_from_vertical_deg(rotvec):
     tool_z = R @ np.array([0.0, 0.0, 1.0])
     cos_angle = np.clip(abs(tool_z[2]), -1.0, 1.0)
     return float(np.degrees(np.arccos(cos_angle)))
+
+
+# ── Flip gravity to load the +Z tool axis instead of -Z ────────────────
+WRIST2_JOINT_IDX = 4  # [base, shoulder, elbow, wrist1, wrist2, wrist3]
+
+
+def flip_wrist2_180(rtde_c, rtde_r, speed=0.3, accel=0.5):
+    """Rotate wrist 2 by 180 deg in place so the tool Z-axis flips."""
+    q = rtde_r.getActualQ()
+    q[WRIST2_JOINT_IDX] += math.pi
+    print("[collect] Rotating wrist 2 by 180 deg for +Z loading...")
+    rtde_c.moveJ(q, speed, accel)
 
 
 # ── One CSV row ────────────────────────────────────────────────────────
@@ -117,6 +134,9 @@ def collect_one(args):
     rtde_r = rtde_receive.RTDEReceiveInterface(robot_ip)
     rtde_c = rtde_control.RTDEControlInterface(robot_ip)
     print("[collect] Connected.")
+
+    if args.z_dir == "pos":
+        flip_wrist2_180(rtde_c, rtde_r)
 
     # ── Perpendicularity check (actual live pose) ──
     actual_pose = rtde_r.getActualTCPPose()
@@ -176,7 +196,7 @@ def collect_one(args):
     os.makedirs(LOG_DIR, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     csv_path = os.path.join(
-        LOG_DIR, f"fzcal_{args.tip}_{weight:g}g_{ts}.csv")
+        LOG_DIR, f"fzcal_{args.tip}_{args.z_dir}z_{weight:g}g_{ts}.csv")
     with open(csv_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
         w.writeheader()
@@ -187,6 +207,7 @@ def collect_one(args):
     with open(meta_path, "w") as f:
         json.dump({
             "tip": args.tip,
+            "z_dir": args.z_dir,
             "weight_g": weight,
             "tilt_from_vertical_deg": tilt,
             "target_rate_hz": args.rate,
@@ -207,6 +228,9 @@ def build_parser():
                     help="config/fixture label used for filenames, e.g. futek_direct")
     ap.add_argument("--weight", type=float, default=None,
                     help="weight in grams (if omitted, you'll be prompted)")
+    ap.add_argument("--z-dir", choices=["neg", "pos"], default="neg",
+                    help="which tool-Z direction gravity loads (default: neg). "
+                         "'pos' rotates wrist 2 by 180 deg before collecting")
     ap.add_argument("--dwell", type=float, default=10.0,
                     help="hold time (s)")
     ap.add_argument("--idle-s", type=float, default=3.0,

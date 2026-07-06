@@ -65,8 +65,8 @@ def tilt_from_vertical_deg(rotvec):
 
 # ── One CSV row ────────────────────────────────────────────────────────
 CSV_FIELDS = ["timestamp", "datetime", "weight_g", "loaded",
-              "tcp_x", "tcp_y", "tcp_z", "fx", "fy", "fz",
-              "tx", "ty", "tz", "ai0"]
+              "tcp_x", "tcp_y", "tcp_z", "tcp_rx", "tcp_ry", "tcp_rz",
+              "fx", "fy", "fz", "tx", "ty", "tz", "ai0"]
 
 
 def _row(rtde_r, loaded, weight_g):
@@ -80,6 +80,7 @@ def _row(rtde_r, loaded, weight_g):
         "weight_g": weight_g,
         "loaded": int(loaded),
         "tcp_x": tcp[0], "tcp_y": tcp[1], "tcp_z": tcp[2],
+        "tcp_rx": tcp[3], "tcp_ry": tcp[4], "tcp_rz": tcp[5],
         "fx": ft[0], "fy": ft[1], "fz": ft[2],
         "tx": ft[3], "ty": ft[4], "tz": ft[5],
         "ai0": float(ai0),

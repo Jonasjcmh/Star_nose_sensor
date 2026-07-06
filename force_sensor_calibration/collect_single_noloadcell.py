@@ -1,9 +1,13 @@
 """
-collect_single.py — collect UR5 fz / FUTEK load-cell data for ONE weight.
+collect_single_noloadcell.py — collect UR5 fz data for ONE weight, using
+the UR robot ONLY (no FUTEK load cell / analog reading).
+
+Same flow as collect_single.py, but it records only the UR5's built-in
+force/torque sensor — there is no external load cell and no ai0 channel.
 
 One easy command:
 
-    python collect_single.py
+    python collect_single_noloadcell.py
 
 It connects to the UR5, moves wrist 2 to +90 deg (the +z direction),
 checks the tool is vertical (and asks to fix it if it is off), then asks
@@ -14,7 +18,7 @@ the run is done it rotates wrist 2 back to -90 deg (the -z direction).
 One run = one weight = one CSV. Run it again for the next weight.
 
     # skip the weight prompt by passing it directly:
-    python collect_single.py --weight 200
+    python collect_single_noloadcell.py --weight 200
 """
 
 import argparse
@@ -150,6 +154,8 @@ def ensure_vertical(rtde_c, rtde_r, tilt_tol_deg):
 
 
 # ── One CSV row ────────────────────────────────────────────────────────
+# ai0 (FUTEK load cell) is still logged for compatibility, but this run
+# does not depend on it — it's here just to keep the same CSV schema.
 CSV_FIELDS = ["timestamp", "datetime", "weight_g", "loaded",
               "tcp_x", "tcp_y", "tcp_z", "tcp_rx", "tcp_ry", "tcp_rz",
               "fx", "fy", "fz", "tx", "ty", "tz", "ai0"]
@@ -219,7 +225,7 @@ def collect_one(args):
             time.sleep(sample_dt)
 
     try:
-        input("\n[collect] Load cell mounted, NO weight applied. "
+        input("\n[collect] Tool mounted, NO weight applied. "
               "Press Enter to zero the FT sensor...")
         rtde_c.zeroFtSensor()
         time.sleep(1.0)
@@ -227,7 +233,7 @@ def collect_one(args):
         print(f"[collect] Recording {args.idle_s:.1f}s no-load baseline...")
         sample(loaded=False, weight_g=0.0, duration_s=args.idle_s)
 
-        input(f"\n[collect] Place the {weight:g} g weight on the load cell. "
+        input(f"\n[collect] Place the {weight:g} g weight on the tool. "
               "Press Enter once settled...")
         print(f"[collect] Holding & recording for {args.dwell:.1f}s...")
         sample(loaded=True, weight_g=weight, duration_s=args.dwell)
@@ -269,6 +275,7 @@ def collect_one(args):
         json.dump({
             "tip": args.tip,
             "weight_g": weight,
+            "load_cell": False,
             "tilt_from_vertical_deg": tilt,
             "target_rate_hz": args.rate,
             "achieved_rate_hz": achieved_rate,
@@ -286,7 +293,7 @@ def build_parser():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--weight", type=float, default=None,
                     help="weight in grams (if omitted, you'll be prompted)")
-    ap.add_argument("--tip", default="futek_direct",
+    ap.add_argument("--tip", default="ur_only",
                     help="fixture label used for filenames")
     ap.add_argument("--dwell", type=float, default=10.0,
                     help="hold time (s)")

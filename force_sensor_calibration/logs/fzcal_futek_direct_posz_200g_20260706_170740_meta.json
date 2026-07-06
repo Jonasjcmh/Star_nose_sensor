@@ -1,0 +1,10 @@
+{
+  "tip": "futek_direct",
+  "weight_g": 200.0,
+  "tilt_from_vertical_deg": 0.11261764176849073,
+  "target_rate_hz": 20.0,
+  "achieved_rate_hz": 11.308736723051107,
+  "dwell_s": 10.0,
+  "idle_s": 3.0,
+  "robot_ip": "177.22.22.2"
+}

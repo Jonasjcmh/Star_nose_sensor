@@ -1,0 +1,11 @@
+{
+  "tip": "ur_only",
+  "weight_g": 200.0,
+  "load_cell": false,
+  "tilt_from_vertical_deg": 0.11197352833736267,
+  "target_rate_hz": 20.0,
+  "achieved_rate_hz": 14.110899349245548,
+  "dwell_s": 10.0,
+  "idle_s": 3.0,
+  "robot_ip": "177.22.22.2"
+}

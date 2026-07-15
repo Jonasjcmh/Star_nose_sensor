@@ -463,7 +463,16 @@ function entries = discover_entries(log_dir, instrument, standard_weights_g)
         e.weight_g = weight_g;
         e.nominal_weight_g = standard_weights_g(nearest_idx);
         e.ts = tok.ts;
-        e.version = tok.version;  % e.g. 'v2', or '' for un-tagged files
+        % regexp(...,'names') only creates a field for a named token that
+        % actually participated in THIS match -- un-tagged filenames (no
+        % "v2_" etc.) never get a .version field at all, so tok.version
+        % would error on them. isfield keeps every entry struct's field
+        % set identical, which [entries_cell{:}] below also requires.
+        if isfield(tok, 'version')
+            e.version = tok.version;
+        else
+            e.version = '';
+        end
         e.csv_path = fullfile(files(k).folder, files(k).name);
         e.meta_path = strrep(e.csv_path, '.csv', '_meta.json');
 

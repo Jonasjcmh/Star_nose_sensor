@@ -159,6 +159,15 @@ FNAME_RE = re.compile(
     r"fzcal_(?P<instrument>futek_direct|ur_only)_(?P<direction>posz|negz)_"
     r"(?P<weight>\d+(?:\.\d+)?)g_(?:(?P<version>v\d+)_)?(?P<ts>\d{8}_\d{6})\.csv$"
 )
+# The 20260715 negz v2 re-collection drops the direction token from the
+# filename entirely (fzcal_futek_direct_100g_v2_..._meta.json instead of
+# fzcal_futek_direct_negz_100g_v2_...) -- direction is only recoverable
+# from that session's own meta.json ("axis" field). Tried as a fallback
+# when FNAME_RE doesn't match.
+FNAME_RE_NO_DIR = re.compile(
+    r"fzcal_(?P<instrument>futek_direct|ur_only)_"
+    r"(?P<weight>\d+(?:\.\d+)?)g_(?:(?P<version>v\d+)_)?(?P<ts>\d{8}_\d{6})\.csv$"
+)
 
 
 # ── discovery + de-duplication ──────────────────────────────────────────
@@ -180,10 +189,17 @@ EXCLUDED_SESSIONS = {
 def discover(instrument):
     entries = []
     for csv_path in sorted(glob.glob(os.path.join(LOG_DIR, f"fzcal_{instrument}_*.csv"))):
-        m = FNAME_RE.search(os.path.basename(csv_path))
-        if not m:
-            continue
-        direction = m.group("direction")
+        fname = os.path.basename(csv_path)
+        m = FNAME_RE.search(fname)
+        if m:
+            direction = m.group("direction")
+        else:
+            m = FNAME_RE_NO_DIR.search(fname)
+            if not m:
+                continue
+            meta_path = csv_path.replace(".csv", "_meta.json")
+            with open(meta_path) as f:
+                direction = json.load(f)["axis"]
         ts = m.group("ts")
         if (instrument, direction, ts) in EXCLUDED_SESSIONS:
             continue
@@ -221,17 +237,17 @@ def dedupe_latest(entries):
     return kept
 
 
-# The futek_direct posz re-collection (v2, 20260715) fully supersedes the
-# original posz sessions: the one surviving v1 posz file with no v2
-# counterpart (5g) has a baseline fz reading ~1 N off from every v2
-# session's baseline (session-to-session UR sensor drift), which is small
-# next to the original 5-200g range but swamps the signal once pooled
-# with v2's wider 10-1156g range -- corrupting the fit instead of adding
-# data. Drop it; negz (no v2 collected) and ur_only are untouched.
-def keep_v2_only_posz(entries):
+# The futek_direct re-collection (v2, 20260715) fully supersedes the
+# original sessions for BOTH directions: any leftover v1-only weight
+# point (no v2 counterpart -- e.g. the original 5g posz/negz files) has a
+# baseline fz reading ~1 N off from every v2 session's baseline
+# (session-to-session UR sensor drift), which is small next to the
+# original 5-200g range but swamps the signal once pooled with v2's
+# wider 10-1156g range -- corrupting the fit instead of adding data. Drop
+# them; ur_only (no v2 collected there) is untouched.
+def keep_v2_only(entries):
     return [e for e in entries
-            if not (e["instrument"] == "futek_direct" and e["direction"] == "posz"
-                    and e["version"] != "v2")]
+            if not (e["instrument"] == "futek_direct" and e["version"] != "v2")]
 
 
 # ── per-session load ─────────────────────────────────────────────────────
@@ -401,7 +417,7 @@ def bland_altman(reference, measurement):
 
 
 def main():
-    futek_entries = dedupe_latest(keep_v2_only_posz(discover("futek_direct")))
+    futek_entries = dedupe_latest(keep_v2_only(discover("futek_direct")))
     ur_entries = dedupe_latest(discover("ur_only"))
 
     futek_sessions = sorted((load_session(e) for e in futek_entries),

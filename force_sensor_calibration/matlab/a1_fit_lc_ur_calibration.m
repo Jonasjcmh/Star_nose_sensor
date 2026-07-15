@@ -85,16 +85,17 @@ G = 9.80665;                                 % standard gravity, m/s^2
 % loaded point in Figure 1. Off by default (cleaner plot); flip to true
 % to bring the per-point annotations back.
 SHOW_POINT_LABELS = false;
-% 30/40/150/250/300/1156 g added by the v2 futek_direct posz re-collection
-% (fzcal_..._v2_...csv) -- real, distinct weight points, not noise around
-% the original 6, so they need their own entries or the nearest-weight
-% snap in discover_entries would wrongly bucket them (e.g. 30g -> 20g).
+% 30/40/150/250/300/1156 g added by the v2 futek_direct re-collection
+% (fzcal_..._v2_...csv, both directions) -- real, distinct weight points,
+% not noise around the original 6, so they need their own entries or the
+% nearest-weight snap in discover_entries would wrongly bucket them
+% (e.g. 30g -> 20g).
 STANDARD_WEIGHTS_G = [5 10 20 30 40 50 100 150 200 250 300 1156];
 
 %% ---- Step 0: discover + de-duplicate both instruments' sessions ----
 
 futek_entries = discover_entries(LOG_DIR, 'futek_direct', STANDARD_WEIGHTS_G);
-futek_entries = keep_v2_only_posz(futek_entries);
+futek_entries = keep_v2_only(futek_entries);
 futek_entries = dedupe_latest(futek_entries);
 
 ur_entries = discover_entries(LOG_DIR, 'ur_only', STANDARD_WEIGHTS_G);
@@ -437,7 +438,9 @@ fprintf('Saved -> %s\n', out4_path);
 
 function entries = discover_entries(log_dir, instrument, standard_weights_g)
 % DISCOVER_ENTRIES  Find fzcal_<instrument>_<direction>_<weight>g_<ts>.csv
-% files and parse direction/weight/timestamp out of each filename.
+% files and parse direction/weight/timestamp out of each filename. Also
+% matches fzcal_<instrument>_<weight>g_<ts>.csv (no direction token,
+% direction read from that file's meta.json "axis" field instead).
 %
 % Returns a struct array (one element per matching file) with fields:
 %   instrument, direction, weight_g, nominal_weight_g, ts, csv_path, meta_path
@@ -445,21 +448,36 @@ function entries = discover_entries(log_dir, instrument, standard_weights_g)
     files = dir(fullfile(log_dir, sprintf('fzcal_%s_*.csv', instrument)));
     expr = ['fzcal_' instrument '_(?<direction>posz|negz)_' ...
             '(?<weight>\d+(\.\d+)?)g_(?:(?<version>v\d+)_)?(?<ts>\d{8}_\d{6})\.csv$'];
+    % The 20260715 negz v2 re-collection drops the direction token from
+    % the filename entirely (fzcal_futek_direct_100g_v2_..._meta.json
+    % instead of fzcal_futek_direct_negz_100g_v2_...) -- direction is
+    % only recoverable from that session's own meta.json ("axis" field).
+    % Tried as a fallback when expr doesn't match.
+    expr_no_dir = ['fzcal_' instrument '_' ...
+            '(?<weight>\d+(\.\d+)?)g_(?:(?<version>v\d+)_)?(?<ts>\d{8}_\d{6})\.csv$'];
 
     entries_cell = {};
     for k = 1:numel(files)
         tok = regexp(files(k).name, expr, 'names');
-        if isempty(tok)
-            continue
+        if ~isempty(tok)
+            direction = tok.direction;
+        else
+            tok = regexp(files(k).name, expr_no_dir, 'names');
+            if isempty(tok)
+                continue
+            end
+            meta_path_probe = fullfile(files(k).folder, strrep(files(k).name, '.csv', '_meta.json'));
+            meta_probe = jsondecode(fileread(meta_path_probe));
+            direction = meta_probe.axis;
         end
-        if is_excluded_session(instrument, tok.direction, tok.ts)
+        if is_excluded_session(instrument, direction, tok.ts)
             continue
         end
         weight_g = str2double(tok.weight);
         [~, nearest_idx] = min(abs(standard_weights_g - weight_g));
 
         e.instrument = instrument;
-        e.direction = tok.direction;
+        e.direction = direction;
         e.weight_g = weight_g;
         e.nominal_weight_g = standard_weights_g(nearest_idx);
         e.ts = tok.ts;
@@ -500,15 +518,15 @@ function tf = is_excluded_session(instrument, direction, ts)
 end
 
 
-function kept = keep_v2_only_posz(entries)
-% KEEP_V2_ONLY_POSZ  The futek_direct posz re-collection (v2, 20260715)
-% fully supersedes the original posz sessions: the one surviving v1 posz
-% file with no v2 counterpart (5g) has a baseline fz reading ~1 N off
-% from every v2 session's baseline (session-to-session UR sensor drift),
-% which is small next to the original 5-200g range but swamps the signal
-% once pooled with v2's wider 10-1156g range -- corrupting the fit
-% instead of adding data. Drop it; negz (no v2 collected) and ur_only are
-% untouched.
+function kept = keep_v2_only(entries)
+% KEEP_V2_ONLY  The futek_direct re-collection (v2, 20260715) fully
+% supersedes the original sessions for BOTH directions: any leftover
+% v1-only weight point (no v2 counterpart -- e.g. the original 5g
+% posz/negz files) has a baseline fz reading ~1 N off from every v2
+% session's baseline (session-to-session UR sensor drift), which is
+% small next to the original 5-200g range but swamps the signal once
+% pooled with v2's wider 10-1156g range -- corrupting the fit instead of
+% adding data. Drop them; ur_only (no v2 collected there) is untouched.
 
     if isempty(entries)
         kept = entries;
@@ -516,8 +534,7 @@ function kept = keep_v2_only_posz(entries)
     end
     keep_mask = true(1, numel(entries));
     for i = 1:numel(entries)
-        if strcmp(entries(i).instrument, 'futek_direct') && strcmp(entries(i).direction, 'posz') ...
-                && ~strcmp(entries(i).version, 'v2')
+        if strcmp(entries(i).instrument, 'futek_direct') && ~strcmp(entries(i).version, 'v2')
             keep_mask(i) = false;
         end
     end

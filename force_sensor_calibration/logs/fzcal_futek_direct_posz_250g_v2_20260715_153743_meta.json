@@ -1,0 +1,16 @@
+{
+  "tip": "futek_direct",
+  "weight_g": 250.0,
+  "hw_tare_pos_g": 50.0,
+  "hw_tare_neg_g": 47.0,
+  "hw_tare_used_g": 50.0,
+  "tare_fz_N": 0.4903325,
+  "no_load_fz_mean_N": 4.396406146315496,
+  "ai0_tared": false,
+  "tilt_from_vertical_deg": 0.11242204197625377,
+  "target_rate_hz": 20.0,
+  "achieved_rate_hz": 13.023371005860048,
+  "dwell_s": 10.0,
+  "idle_s": 3.0,
+  "robot_ip": "177.22.22.2"
+}

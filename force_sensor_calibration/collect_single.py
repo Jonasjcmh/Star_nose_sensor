@@ -7,9 +7,15 @@ One easy command:
 
 It connects to the UR5, moves wrist 2 to +90 deg (the +z direction),
 checks the tool is vertical (and asks to fix it if it is off), then asks
-you for the weight, zeroes the force sensor, records a short no-load
-baseline, and holds while you place the weight and logs the samples. When
-the run is done it rotates wrist 2 back to -90 deg (the -z direction).
+you for the weight, records a short no-load baseline, and holds while you
+place the weight and logs the samples. When the run is done it rotates
+wrist 2 back to -90 deg (the -z direction).
+
+Tare: instead of a live zeroFtSensor zero, the UR force sensor is tared
+against the known hardware weight (fixture) — 50 g in the +z pose, 47 g in
+the -z pose (see --hw-tare-pos-g / --hw-tare-neg-g). This adds an fz_tared
+column = fz minus that known force. The load-cell analog input (ai0) is
+left as an absolute value (not tared).
 
 One run = one weight = one CSV. Run it again for the next weight.
 
@@ -42,6 +48,8 @@ except ImportError:
 
 CALIB_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_DIR = os.path.join(CALIB_DIR, "logs")
+
+G = 9.80665  # m/s^2, used to turn the hardware-tare weight (g) into a force (N)
 
 WRIST2_JOINT_IDX = 4  # [base, shoulder, elbow, wrist1, wrist2, wrist3]
 
@@ -152,7 +160,7 @@ def ensure_vertical(rtde_c, rtde_r, tilt_tol_deg):
 # ── One CSV row ────────────────────────────────────────────────────────
 CSV_FIELDS = ["timestamp", "datetime", "weight_g", "loaded",
               "tcp_x", "tcp_y", "tcp_z", "tcp_rx", "tcp_ry", "tcp_rz",
-              "fx", "fy", "fz", "tx", "ty", "tz", "ai0"]
+              "fx", "fy", "fz", "fz_tared", "tx", "ty", "tz", "ai0"]
 
 
 def _row(rtde_r, loaded, weight_g):
@@ -189,6 +197,18 @@ def ask_weight(cli_weight):
             print(f"  '{raw}' is not a number — try again.")
 
 
+def ask_tag(cli_tag):
+    """Optional short tag (e.g. 'v2') added to the standard file name.
+
+    Use --tag to pass it non-interactively; empty = no tag.
+    """
+    raw = cli_tag
+    if raw is None:
+        raw = input("\nOptional tag to add to the file name "
+                    "(e.g. v2), Enter to skip: ").strip()
+    return (raw or "").strip().replace(" ", "_")
+
+
 def collect_one(args):
     if rtde_control is None or rtde_receive is None:
         sys.exit("ur_rtde is not installed — "
@@ -208,6 +228,13 @@ def collect_one(args):
     tilt = ensure_vertical(rtde_c, rtde_r, args.tilt_tol_deg)
 
     weight = ask_weight(args.weight)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    tag = ask_tag(args.tag)
+    # Standard convention: fzcal_<tip>_posz_<weight>g[_<tag>]_<timestamp>
+    stem = f"fzcal_{args.tip}_posz_{weight:g}g"
+    if tag:
+        stem += f"_{tag}"
+    name = f"{stem}_{ts}"
 
     sample_dt = 1.0 / args.rate
     rows = []
@@ -218,10 +245,16 @@ def collect_one(args):
             rows.append(_row(rtde_r, loaded, weight_g))
             time.sleep(sample_dt)
 
+    # Collection is done in the +z pose (wrist 2 at +90 deg), so the tare is
+    # the known positive-direction hardware weight. ai0 (load cell) stays absolute.
+    tare_mass_g = args.hw_tare_pos_g
+
     try:
         input("\n[collect] Load cell mounted, NO weight applied. "
-              "Press Enter to zero the FT sensor...")
-        rtde_c.zeroFtSensor()
+              "Press Enter to record the no-load baseline "
+              f"(hardware-weight tare = {tare_mass_g:g} g)...")
+        # NOTE: no rtde_c.zeroFtSensor() here — instead of a live sensor zero we
+        # tare against the known hardware weight below, so runs are reproducible.
         time.sleep(1.0)
 
         print(f"[collect] Recording {args.idle_s:.1f}s no-load baseline...")
@@ -249,15 +282,26 @@ def collect_one(args):
     if len(rows) < 2:
         sys.exit("[collect] No data recorded")
 
+    # Hardware-weight tare for the UR force sensor (fz only — the loading axis).
+    # The fixture reads ~tare_mass_g on the FT sensor with no calibration weight;
+    # subtract that known force so fz_tared reflects the applied weight alone.
+    # Sign is taken from the no-load baseline so it matches the reading's polarity.
+    baseline_fz = [r["fz"] for r in rows if not r["loaded"]]
+    baseline_mean = sum(baseline_fz) / len(baseline_fz) if baseline_fz else 0.0
+    tare_sign = -1.0 if baseline_mean < 0 else 1.0
+    tare_fz = tare_sign * (tare_mass_g / 1000.0) * G
+    for r in rows:
+        r["fz_tared"] = r["fz"] - tare_fz
+    print(f"[collect] Hardware-weight tare: {tare_mass_g:g} g -> fz offset "
+          f"{tare_fz:+.4f} N (no-load baseline fz mean {baseline_mean:+.4f} N)")
+
     span = rows[-1]["timestamp"] - rows[0]["timestamp"]
     achieved_rate = (len(rows) - 1) / span if span > 0 else 0.0
     print(f"\n[collect] {len(rows)} rows over {span:.1f}s "
           f"-> achieved {achieved_rate:.1f} Hz (target {args.rate:.1f} Hz)")
 
     os.makedirs(LOG_DIR, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_path = os.path.join(
-        LOG_DIR, f"fzcal_{args.tip}_posz_{weight:g}g_{ts}.csv")
+    csv_path = os.path.join(LOG_DIR, f"{name}.csv")
     with open(csv_path, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
         w.writeheader()
@@ -269,6 +313,12 @@ def collect_one(args):
         json.dump({
             "tip": args.tip,
             "weight_g": weight,
+            "hw_tare_pos_g": args.hw_tare_pos_g,
+            "hw_tare_neg_g": args.hw_tare_neg_g,
+            "hw_tare_used_g": tare_mass_g,
+            "tare_fz_N": tare_fz,
+            "no_load_fz_mean_N": baseline_mean,
+            "ai0_tared": False,
             "tilt_from_vertical_deg": tilt,
             "target_rate_hz": args.rate,
             "achieved_rate_hz": achieved_rate,
@@ -287,13 +337,20 @@ def build_parser():
     ap.add_argument("--weight", type=float, default=None,
                     help="weight in grams (if omitted, you'll be prompted)")
     ap.add_argument("--tip", default="futek_direct",
-                    help="fixture label used for filenames")
+                    help="fixture label used in the filename")
+    ap.add_argument("--tag", default=None,
+                    help="optional tag added to the filename, e.g. v2 "
+                         "(if omitted, you'll be prompted)")
     ap.add_argument("--dwell", type=float, default=10.0,
                     help="hold time (s)")
     ap.add_argument("--idle-s", type=float, default=3.0,
                     help="no-load baseline duration before loading (s)")
     ap.add_argument("--rate", type=float, default=20.0,
                     help="target sample rate (Hz)")
+    ap.add_argument("--hw-tare-pos-g", type=float, default=50.0,
+                    help="hardware-weight tare (g) for the +z pose (this script)")
+    ap.add_argument("--hw-tare-neg-g", type=float, default=47.0,
+                    help="hardware-weight tare (g) for the -z pose (reference)")
     ap.add_argument("--tilt-tol-deg", type=float, default=0.5,
                     help="max allowed tool-axis tilt from vertical (deg)")
     ap.add_argument("--robot-ip", default=None,

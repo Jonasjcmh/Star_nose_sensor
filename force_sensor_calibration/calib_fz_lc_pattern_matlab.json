@@ -1,0 +1,52 @@
+{
+  "tip": "futek_direct",
+  "date": "2026-07-15",
+  "slope": 0.72627421377785517,
+  "offset": -0.14202249489596366,
+  "r_squared": 0.92748677717884442,
+  "rmse_n": 0.18295031098284736,
+  "fz_input": "fz_signed = AI0_SIGN[direction] * abs(fz_raw); AI0_SIGN = {posz: -1, negz: +1}",
+  "n_samples": 24,
+  "n_sessions": 12,
+  "loadcell_rate_n_per_v": 4.0929184425543577,
+  "loadcell_rate_v_per_n": 0.24432443842587492,
+  "note": "F_true includes hardware mass for both instruments: ur_only uses 43g posz / 37g negz; futek_direct uses 7g posz / 4g negz. Baseline is treated as a known non-zero load (hardware only), not a zero reference -- n_samples = sessions x 2 (baseline + loaded).",
+  "raw_unsigned_pooled": {
+    "slope": -0.26016374525502367,
+    "offset": -0.14338108912395484,
+    "r_squared": 0.0876574331239589,
+    "rmse_n": 0.64893846516504217,
+    "note": "fit on raw fz (no sign correction) -- pools push and pull into one line and fits neither well; kept for reference."
+  },
+  "cross_check": {
+    "tip": "ur_only",
+    "slope": -1.0771977727376068,
+    "offset": 0.43851741211879341,
+    "r_squared": 0.895207027113639,
+    "rmse_n": 0.18506424171103547,
+    "n_samples": 24,
+    "n_sessions": 12
+  },
+  "per_direction": {
+    "posz": {
+      "slope": 0.978242254769765,
+      "offset": -0.087853430256075712,
+      "r2": 0.96923529254747243,
+      "rmse": 0.098285543970126926,
+      "n": 12
+    },
+    "negz": {
+      "slope": -0.59685602796253479,
+      "offset": -0.038787912820884937,
+      "r2": 0.90001704015672912,
+      "rmse": 0.17922662471785406,
+      "n": 12
+    }
+  },
+  "bland_altman_pooled": {
+    "note": "sign-corrected pooled correction vs F_lc",
+    "bias_n": -4.6259292692714858E-17,
+    "loa_lower_n": -0.36629494581101518,
+    "loa_upper_n": 0.36629494581101507
+  }
+}

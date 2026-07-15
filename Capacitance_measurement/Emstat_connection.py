@@ -29,10 +29,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-import palmsens.instrument
-import palmsens.mscript
-import palmsens.serialport
-from palmsens.instrument import CommunicationTimeout
+import Capacitance_measurement.palmsens.instrument
+import Capacitance_measurement.palmsens.mscript
+import Capacitance_measurement.palmsens.serialport
+from Capacitance_measurement.palmsens.instrument import CommunicationTimeout
 
 # ══════════════════════════════════════════════════════
 #  CONFIG — only edit this block
@@ -186,14 +186,14 @@ input('\n>>> Close PSTrace if open. Clip in your RESISTOR, then press Enter...\n
 
 # Auto-detect port and baud rate if not set manually
 _port, _baud = (
-    palmsens.serialport.auto_detect_port()
+    Capacitance_measurement.palmsens.serialport.auto_detect_port()
     if DEVICE_PORT is None
     else (DEVICE_PORT, BAUD_RATE)
 )
 LOG.info('Using port: %s  baud: %d', _port, _baud)
 
-with palmsens.serialport.Serial(_port, _baud, timeout=1) as comm:
-    device = palmsens.instrument.Instrument(comm)
+with Capacitance_measurement.palmsens.serialport.Serial(_port, _baud, timeout=1) as comm:
+    device = Capacitance_measurement.palmsens.instrument.Instrument(comm)
 
     # Clear any hanging script from a previous run
     device.abort_and_sync()
@@ -228,7 +228,7 @@ with palmsens.serialport.Serial(_port, _baud, timeout=1) as comm:
             # parse_mscript_data_package() is from YOUR mscript.py
             # It decodes the hex-encoded variable string into SI-unit floats
             try:
-                pkg = palmsens.mscript.parse_mscript_data_package(line.rstrip('\n'))
+                pkg = Capacitance_measurement.palmsens.mscript.parse_mscript_data_package(line.rstrip('\n'))
                 v   = pkg[0].value   # Applied potential (V)
                 i   = pkg[1].value   # WE current (A)
 

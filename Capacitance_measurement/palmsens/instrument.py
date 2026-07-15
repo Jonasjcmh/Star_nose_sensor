@@ -46,7 +46,7 @@ import logging
 import time
 import re
 
-from palmsens.serialport import Serial
+from Capacitance_measurement.palmsens.serialport import Serial
 
 ERROR_PATTERN = re.compile(r'.*!([0-9A-Fa-f]{4})(:.*|\n)')
 LOG = logging.getLogger(__name__)

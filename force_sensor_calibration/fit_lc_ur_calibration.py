@@ -99,7 +99,11 @@ OUT_DIR = os.path.join(HERE, "plots")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 G = 9.80665  # m/s^2
-STANDARD_WEIGHTS_G = [5.0, 10.0, 20.0, 50.0, 100.0, 200.0]
+# 30/40/150/250/300/1156 g added by the v2 futek_direct posz re-collection
+# (fzcal_..._v2_...csv) -- real, distinct weight points, not noise around
+# the original 6, so they need their own entries or nearest_standard_weight
+# would wrongly bucket them (e.g. 30g -> 20g's group).
+STANDARD_WEIGHTS_G = [5.0, 10.0, 20.0, 30.0, 40.0, 50.0, 100.0, 150.0, 200.0, 250.0, 300.0, 1156.0]
 
 # ai0 sign convention (see plot_force_vs_ai0.py): +z (posz) pushes the
 # bridge voltage down, -z (negz) pulls it up. This is a hardware fact, not
@@ -153,7 +157,7 @@ matplotlib.rcParams.update({
 
 FNAME_RE = re.compile(
     r"fzcal_(?P<instrument>futek_direct|ur_only)_(?P<direction>posz|negz)_"
-    r"(?P<weight>\d+(?:\.\d+)?)g_(?P<ts>\d{8}_\d{6})\.csv$"
+    r"(?P<weight>\d+(?:\.\d+)?)g_(?:(?P<version>v\d+)_)?(?P<ts>\d{8}_\d{6})\.csv$"
 )
 
 
@@ -190,6 +194,7 @@ def discover(instrument):
             "weight_g": weight_g,
             "nominal_weight_g": nearest_standard_weight(weight_g),
             "ts": ts,
+            "version": m.group("version"),  # e.g. "v2", or None for un-tagged files
             "csv_path": csv_path,
             "meta_path": csv_path.replace(".csv", "_meta.json"),
         })
@@ -214,6 +219,19 @@ def dedupe_latest(entries):
                   f"(dropping {dropped})")
         kept.append(group[-1])
     return kept
+
+
+# The futek_direct posz re-collection (v2, 20260715) fully supersedes the
+# original posz sessions: the one surviving v1 posz file with no v2
+# counterpart (5g) has a baseline fz reading ~1 N off from every v2
+# session's baseline (session-to-session UR sensor drift), which is small
+# next to the original 5-200g range but swamps the signal once pooled
+# with v2's wider 10-1156g range -- corrupting the fit instead of adding
+# data. Drop it; negz (no v2 collected) and ur_only are untouched.
+def keep_v2_only_posz(entries):
+    return [e for e in entries
+            if not (e["instrument"] == "futek_direct" and e["direction"] == "posz"
+                    and e["version"] != "v2")]
 
 
 # ── per-session load ─────────────────────────────────────────────────────
@@ -383,7 +401,7 @@ def bland_altman(reference, measurement):
 
 
 def main():
-    futek_entries = dedupe_latest(discover("futek_direct"))
+    futek_entries = dedupe_latest(keep_v2_only_posz(discover("futek_direct")))
     ur_entries = dedupe_latest(discover("ur_only"))
 
     futek_sessions = sorted((load_session(e) for e in futek_entries),

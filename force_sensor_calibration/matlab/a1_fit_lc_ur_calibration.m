@@ -85,11 +85,16 @@ G = 9.80665;                                 % standard gravity, m/s^2
 % loaded point in Figure 1. Off by default (cleaner plot); flip to true
 % to bring the per-point annotations back.
 SHOW_POINT_LABELS = false;
-STANDARD_WEIGHTS_G = [5 10 20 50 100 200];   % the 6 calibration weights used
+% 30/40/150/250/300/1156 g added by the v2 futek_direct posz re-collection
+% (fzcal_..._v2_...csv) -- real, distinct weight points, not noise around
+% the original 6, so they need their own entries or the nearest-weight
+% snap in discover_entries would wrongly bucket them (e.g. 30g -> 20g).
+STANDARD_WEIGHTS_G = [5 10 20 30 40 50 100 150 200 250 300 1156];
 
 %% ---- Step 0: discover + de-duplicate both instruments' sessions ----
 
 futek_entries = discover_entries(LOG_DIR, 'futek_direct', STANDARD_WEIGHTS_G);
+futek_entries = keep_v2_only_posz(futek_entries);
 futek_entries = dedupe_latest(futek_entries);
 
 ur_entries = discover_entries(LOG_DIR, 'ur_only', STANDARD_WEIGHTS_G);
@@ -439,7 +444,7 @@ function entries = discover_entries(log_dir, instrument, standard_weights_g)
 
     files = dir(fullfile(log_dir, sprintf('fzcal_%s_*.csv', instrument)));
     expr = ['fzcal_' instrument '_(?<direction>posz|negz)_' ...
-            '(?<weight>\d+(\.\d+)?)g_(?<ts>\d{8}_\d{6})\.csv$'];
+            '(?<weight>\d+(\.\d+)?)g_(?:(?<version>v\d+)_)?(?<ts>\d{8}_\d{6})\.csv$'];
 
     entries_cell = {};
     for k = 1:numel(files)
@@ -458,6 +463,16 @@ function entries = discover_entries(log_dir, instrument, standard_weights_g)
         e.weight_g = weight_g;
         e.nominal_weight_g = standard_weights_g(nearest_idx);
         e.ts = tok.ts;
+        % regexp(...,'names') only creates a field for a named token that
+        % actually participated in THIS match -- un-tagged filenames (no
+        % "v2_" etc.) never get a .version field at all, so tok.version
+        % would error on them. isfield keeps every entry struct's field
+        % set identical, which [entries_cell{:}] below also requires.
+        if isfield(tok, 'version')
+            e.version = tok.version;
+        else
+            e.version = '';
+        end
         e.csv_path = fullfile(files(k).folder, files(k).name);
         e.meta_path = strrep(e.csv_path, '.csv', '_meta.json');
 
@@ -482,6 +497,31 @@ function tf = is_excluded_session(instrument, direction, ts)
 
     tf = strcmp(instrument, 'ur_only') && strcmp(direction, 'negz') && ...
          (strcmp(ts, '20260706_181552') || strcmp(ts, '20260706_181726'));
+end
+
+
+function kept = keep_v2_only_posz(entries)
+% KEEP_V2_ONLY_POSZ  The futek_direct posz re-collection (v2, 20260715)
+% fully supersedes the original posz sessions: the one surviving v1 posz
+% file with no v2 counterpart (5g) has a baseline fz reading ~1 N off
+% from every v2 session's baseline (session-to-session UR sensor drift),
+% which is small next to the original 5-200g range but swamps the signal
+% once pooled with v2's wider 10-1156g range -- corrupting the fit
+% instead of adding data. Drop it; negz (no v2 collected) and ur_only are
+% untouched.
+
+    if isempty(entries)
+        kept = entries;
+        return
+    end
+    keep_mask = true(1, numel(entries));
+    for i = 1:numel(entries)
+        if strcmp(entries(i).instrument, 'futek_direct') && strcmp(entries(i).direction, 'posz') ...
+                && ~strcmp(entries(i).version, 'v2')
+            keep_mask(i) = false;
+        end
+    end
+    kept = entries(keep_mask);
 end
 
 

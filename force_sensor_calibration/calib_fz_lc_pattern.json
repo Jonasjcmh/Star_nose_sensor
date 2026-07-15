@@ -1,27 +1,27 @@
 {
   "tip": "futek_direct",
   "date": "2026-07-15",
-  "slope": 0.7262742137778544,
-  "offset": -0.14202249489596183,
-  "r_squared": 0.9274867771788442,
-  "rmse_n": 0.18295031098284742,
+  "slope": 0.34610048192310827,
+  "offset": 0.19056381689582846,
+  "r_squared": 0.1520992279234522,
+  "rmse_n": 1.9190801572614435,
   "fz_input": "fz_signed = AI0_SIGN[direction] * abs(fz_raw); AI0_SIGN = {posz: -1, negz: +1}",
-  "n_samples": 24,
-  "n_sessions": 12,
-  "loadcell_rate_n_per_v": 4.092918442554354,
-  "loadcell_rate_v_per_n": 0.24432443842587512,
+  "n_samples": 34,
+  "n_sessions": 17,
+  "loadcell_rate_n_per_v": 4.128079527754917,
+  "loadcell_rate_v_per_n": 0.2422433950888191,
   "note": "F_true includes hardware mass for both instruments: ur_only uses EXTRA_HARDWARE_G_UR_ONLY (43g posz / 37g negz); futek_direct uses EXTRA_HARDWARE_G_FUTEK_DIRECT (7g posz / 4g negz). Baseline is treated as a known non-zero load (hardware only), not a zero reference -- n_samples = sessions x 2 (baseline + loaded).",
   "raw_unsigned_pooled": {
-    "slope": -0.2601637452550233,
-    "offset": -0.143381089123953,
-    "r_squared": 0.0876574331239588,
-    "rmse_n": 0.6489384651650414,
+    "slope": 0.26213699743416097,
+    "offset": -1.08608831859709,
+    "r_squared": 0.10873633975250974,
+    "rmse_n": 1.967540584176895,
     "note": "fit on raw fz (no sign correction) -- pools push and pull into one line and fits neither well; kept for reference."
   },
   "cross_check": {
     "tip": "ur_only",
-    "slope": -1.0771977727376072,
-    "offset": 0.438517412118793,
+    "slope": -1.0771977727376074,
+    "offset": 0.43851741211879325,
     "r_squared": 0.895207027113639,
     "rmse_n": 0.18506424171103544,
     "n_samples": 24,
@@ -29,24 +29,24 @@
   },
   "per_direction": {
     "posz": {
-      "slope": 0.9782422547697637,
-      "offset": -0.0878534302560742,
-      "r2": 0.9692352925474725,
-      "rmse": 0.09828554397012672,
-      "n": 12
+      "slope": 1.1252187367166866,
+      "offset": -4.837332081344168,
+      "r2": 0.9899268234545764,
+      "rmse": 0.2415767682950065,
+      "n": 22
     },
     "negz": {
-      "slope": -0.5968560279625339,
-      "offset": -0.03878791282088302,
-      "r2": 0.9000170401567281,
-      "rmse": 0.1792266247178548,
+      "slope": -0.6019834464406213,
+      "offset": -0.05408818843177621,
+      "r2": 0.900017040156728,
+      "rmse": 0.18076630910452446,
       "n": 12
     }
   },
   "bland_altman_pooled": {
     "note": "sign-corrected pooled correction vs F_lc",
-    "bias_n": 1.2027416100105862e-16,
-    "loa_lower_n": -0.3585826095263809,
-    "loa_upper_n": 0.3585826095263811
+    "bias_n": -5.224578939412501e-17,
+    "loa_lower_n": -3.7613971082324293,
+    "loa_upper_n": 3.7613971082324293
   }
 }

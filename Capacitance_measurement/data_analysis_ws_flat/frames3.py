@@ -22,16 +22,45 @@ class DepthColumnComparison:
         """
         depth_dataframes: dict mapping RAW depth_mm (e.g. 5.0, 6.0, 7.0, 8.0, 9.0)
                            -> the dataframe loaded from that depth's CSV file.
+                           NOTE: these dict keys must match the actual values in
+                           each dataframe's 'depth_mm' column -- they are used
+                           directly as a filter (df['depth_mm'] == raw_depth).
+                           If a key doesn't match what's really in that file,
+                           the analyzer for that depth silently gets zero rows.
         point: the sensor point number to analyze across all these depths.
         """
         self.point = point
         self.analyzers = {}   # raw_depth_mm -> TouchSensorAnalyzer (already computed)
 
+        empty_depths = []  # collect problems instead of failing deep inside a later plot call
+
         for raw_depth in sorted(depth_dataframes.keys()):
             df = depth_dataframes[raw_depth]
             analyzer = TouchSensorAnalyzer(df, point=point, depth_mm=raw_depth)
             analyzer.compute_baseline_subtraction()
+
+            if not analyzer.rounds:
+                # nothing matched (df['point'] == point) & (df['depth_mm'] == raw_depth)
+                # -- record what WAS actually available in this file so the mismatch
+                # is diagnosable instead of a bare pandas crash three calls later.
+                available_points = sorted(df['point'].unique().tolist())
+                available_depths = sorted(df['depth_mm'].unique().tolist())
+                empty_depths.append(
+                    f"  depth_files key={raw_depth}: point={point} not found, or "
+                    f"depth_mm={raw_depth} not in file. "
+                    f"File actually has points={available_points}, depth_mm values={available_depths}."
+                )
+
             self.analyzers[raw_depth] = analyzer
+
+        if empty_depths:
+            raise ValueError(
+                "No matching rows for point={} in the following depth_files entries:\n{}\n"
+                "Check that your depth_files dict keys match the real 'depth_mm' values "
+                "in each CSV -- they're currently used directly as a filter, so a key "
+                "that doesn't match the file's actual depth_mm silently produces zero rows."
+                .format(point, "\n".join(empty_depths))
+            )
 
     def __repr__(self):
         depths_actual = [a.depth_actual for a in self.analyzers.values()]
@@ -44,6 +73,17 @@ class DepthColumnComparison:
             frames = getattr(analyzer, corrected_attr)
             for sub in frames.values():
                 all_vals.append(sub[column])
+
+        if not all_vals:
+            # Should not normally get here since __init__ already checks for empty
+            # analyzers, but guard anyway so this never surfaces as a bare
+            # "No objects to concatenate" crash from inside pandas.
+            raise ValueError(
+                f"No data available across any depth/round for column='{column}' "
+                f"(attr='{corrected_attr}'). Check depth_files keys match actual "
+                f"depth_mm values, and that point={self.point} exists in every file."
+            )
+
         all_vals = pd.concat(all_vals)
         y_min, y_max = all_vals.min(), all_vals.max()
         margin = (y_max - y_min) * 0.1
@@ -60,7 +100,9 @@ class DepthColumnComparison:
         n = len(depths_sorted)
         rounds = sorted(next(iter(self.analyzers.values())).rounds)
 
-        fig, axes = plt.subplots(3, n, figsize=(3.4 * n, 9.5), sharex=False)
+        fig, axes = plt.subplots(3, n, figsize=(3.4 * n, 10.0), sharex=False)
+        if n == 1:
+            axes = axes.reshape(3, 1)  # keep 2D indexing consistent for a single depth
 
         ylim_c = self._shared_ylim_across_depths('Cp_smoothed', 'corrected_c')
         ylim_fz = self._shared_ylim_across_depths('fz_smoothed', 'corrected_f')
@@ -87,14 +129,14 @@ class DepthColumnComparison:
                 ax_fz.plot(sub_f['t0'], sub_f['fz_smoothed'], color=colors[i], lw=1.3)
                 ax_lc.plot(sub_f['t0'], sub_f['Force_smoothed'], color=colors[i], lw=1.3)
 
-                if col == 0:  # only collect legend handles once
+                if col == 0:  # only collect legend handles once -- same mapping in every column
                     legend_handles.append(line_c)
                     legend_labels.append(f'Iteration {r + 1}')
 
             ax_c.axhline(0, color='black', lw=0.5, ls=':')
             ax_c.set_ylim(ylim_c)
             ax_c.set_yticks([0, -0.04, -0.08])
-            ax_c.set_title(f'Depth {depth_actual:.0f}mm')
+            ax_c.set_title(f'Depth {depth_actual:.0f}mm', fontsize=10)
             ax_c.xaxis.set_major_locator(MaxNLocator(integer=True))
             if col == 0:
                 ax_c.set_ylabel('ΔC (pF)')
@@ -112,11 +154,16 @@ class DepthColumnComparison:
             if col == 0:
                 ax_lc.set_ylabel('ΔF, load_cell (N)\n[ground truth]')
 
+        # ---- ONE legend for the whole figure, drawn above the grid ----
+        # (same iteration->color mapping every column, so collected once above)
         fig.legend(legend_handles, legend_labels, loc='upper center',
-                   bbox_to_anchor=(0.5, 1.03), ncol=len(legend_labels), fontsize=9, title='Iteration')
+                   bbox_to_anchor=(0.5, 0.995), ncol=len(legend_labels),
+                   fontsize=9, title='Iteration', frameon=False)
 
-        fig.suptitle(f'P{self.point} — ΔC, ΔF(fz/UR), ΔF(load_cell) — iterations overlaid per depth', y=1.07)
-        plt.tight_layout()
+        fig.suptitle(f'P{self.point} — ΔC, ΔF(fz/UR), ΔF(load_cell) — iterations overlaid per depth',
+                     y=1.06)
+
+        plt.tight_layout(rect=[0, 0, 1, 0.92])
 
         if save_path:
             plt.savefig(save_path, dpi=150, bbox_inches='tight')
@@ -129,19 +176,43 @@ class DepthColumnComparison:
 if __name__ == '__main__':
     import os
 
-    # ---- EDIT THESE PATHS to your actual files ----
-    depth_files = {
-        5: '/home/divuthejo/Downloads/ramp_collector_20260630_180318_5mm.csv',
-        6: '/home/divuthejo/Downloads/ramp_collector_20260626_155329_6mm.csv',
-        7: '/home/divuthejo/Downloads/ramp_collector_20260626_171140_7mm.csv',
-        8: '/home/divuthejo/Downloads/ramp_collector_20260627_122027_8mm.csv',
-        9: '/home/divuthejo/Downloads/ramp_collector_20260630_103911_9mm.csv',   # actual 4mm
-    }
-    output_dir = '/home/divuthejo/Documents/data_analysis_ws/plots'
-    # -------------------------------------------------
+    # ---- EDIT THIS LIST to your actual files ----
+    # No more guessing keys: the real depth_mm value is read directly out of
+    # each CSV below, so a mismatched label can't silently produce zero rows
+    # anymore.
+    csv_paths = [
+        '/home/divuthejo/Star_nose_sensor/Capacitance_measurement/logs/ramp_collector_20260714_113352_flat_4.csv',
+        '/home/divuthejo/Star_nose_sensor/Capacitance_measurement/logs/ramp_collector_20260714_124706_flat_3.csv',
+        '/home/divuthejo/Star_nose_sensor/Capacitance_measurement/logs/ramp_collector_20260714_135538_flat_2.csv',
+        '/home/divuthejo/Star_nose_sensor/Capacitance_measurement/logs/ramp_collector_20260714_151051_flat_1.csv',
+        '/home/divuthejo/Star_nose_sensor/Capacitance_measurement/logs/ramp_collector_20260714_163437_flat_0.csv',
+    ]
+    output_dir = '/home/divuthejo/Star_nose_sensor/Capacitance_measurement/data_analysis_ws_flat/plots'
+    # -----------------------------------------------
 
     os.makedirs(output_dir, exist_ok=True)
-    depth_dataframes = {raw_depth: pd.read_csv(path) for raw_depth, path in depth_files.items()}
+
+    depth_dataframes = {}
+    for path in csv_paths:
+        df = pd.read_csv(path)
+        found_depths = df['depth_mm'].unique()
+
+        if len(found_depths) != 1:
+            # a file mixing multiple depth_mm values would silently corrupt the
+            # per-depth grouping below, so fail loudly here instead
+            raise ValueError(
+                f"{path} contains more than one depth_mm value: {sorted(found_depths.tolist())}. "
+                f"Expected exactly one depth per file."
+            )
+
+        raw_depth = found_depths[0]
+        if raw_depth in depth_dataframes:
+            raise ValueError(
+                f"depth_mm={raw_depth} appears in more than one file (duplicate found at "
+                f"{path}). Each depth should only be represented once."
+            )
+
+        depth_dataframes[raw_depth] = df
 
     # get all point numbers from any one of the loaded files
     all_points = sorted(next(iter(depth_dataframes.values()))['point'].unique())

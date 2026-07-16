@@ -20,6 +20,7 @@ class TouchSensorAnalyzer:
         'post':   'tab:gray',
     }
     DEPTH_OFFSET = 5  # raw depth_mm includes a 5mm offset; actual indentation = raw - 5
+    CAP_YLIM = (-0.09, 0.01)  # fixed ΔC range so every plot is directly comparable
     SAVGOL_POLYORDER = 3  # polynomial order fit within each phase block
     # separate smoothing window per phase (in samples) -- hold gets a bigger window
     # than locate/post since it's a longer region
@@ -169,7 +170,6 @@ class TouchSensorAnalyzer:
         fig, axes = plt.subplots(2, n, figsize=(3.4 * n, 6.5), sharex=False)
 
         # compute shared y-limits once, across all rounds
-        ylim_c = self._shared_ylim(self.corrected_c, 'Cp_corrected')
         ylim_f = self._shared_ylim(self.corrected_f, 'Force_corrected')
         force_ticks = self._integer_ticks_up_to(ylim_f[1])
 
@@ -187,7 +187,7 @@ class TouchSensorAnalyzer:
             ax_c.plot(sub_c['t0'], sub_c['Cp_smoothed'], color='black', lw=1.2, label='smoothed')
             ax_c.axhline(mean_c, color='red', lw=0.8, ls='--', label=f'mean ΔC={mean_c:.4f} pF')
             ax_c.axhline(0, color='black', lw=0.5, ls=':')
-            ax_c.set_ylim(ylim_c)
+            ax_c.set_ylim(self.CAP_YLIM)
             ax_c.set_yticks([0, -0.04, -0.08])
             ax_c.set_title(f'Iteration {r + 1}\nCo={co_val:.4f} pF')
             ax_c.legend(loc='upper right', fontsize=9)

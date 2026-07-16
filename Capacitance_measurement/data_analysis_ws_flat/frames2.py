@@ -21,6 +21,7 @@ class MultiDepthComparison:
     """
 
     DEPTH_COLORS = plt.cm.viridis  # colormap; sampled per depth in __init__
+    CAP_YLIM = (-0.09, 0.01)  # fixed ΔC range so every plot is directly comparable
 
     def __init__(self, depth_dataframes: dict, point: int):
         """
@@ -94,7 +95,6 @@ class MultiDepthComparison:
         if n == 1:
             axes = axes.reshape(2, 1)  # keep 2D indexing consistent for a single iteration
 
-        ylim_c = self._shared_ylim_across_depths('Cp_smoothed', 'corrected_c')
         ylim_f = self._shared_ylim_across_depths('Force_smoothed', 'corrected_f')
 
         legend_handles = []
@@ -120,7 +120,8 @@ class MultiDepthComparison:
                     legend_labels.append(f'{depth_actual:.0f}mm')
 
             ax_c.axhline(0, color='black', lw=0.5, ls=':')
-            ax_c.set_ylim(ylim_c)
+            ax_c.set_ylim(self.CAP_YLIM)
+            ax_c.set_yticks([0, -0.04, -0.08])
             ax_c.set_title(f'Iteration {r + 1}', fontsize=10)
             ax_c.xaxis.set_major_locator(MaxNLocator(integer=True))
             if col == 0:

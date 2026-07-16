@@ -17,6 +17,7 @@ class DepthColumnComparison:
     """
 
     ITERATION_COLORS = plt.cm.plasma  # colormap; sampled per iteration
+    CAP_YLIM = (-0.09, 0.01)  # fixed ΔC range so every plot is directly comparable
 
     def __init__(self, depth_dataframes: dict, point: int):
         """
@@ -62,7 +63,6 @@ class DepthColumnComparison:
 
         fig, axes = plt.subplots(3, n, figsize=(3.4 * n, 9.5), sharex=False)
 
-        ylim_c = self._shared_ylim_across_depths('Cp_smoothed', 'corrected_c')
         ylim_fz = self._shared_ylim_across_depths('fz_smoothed', 'corrected_f')
         ylim_lc = self._shared_ylim_across_depths('Force_smoothed', 'corrected_f')
 
@@ -92,7 +92,7 @@ class DepthColumnComparison:
                     legend_labels.append(f'Iteration {r + 1}')
 
             ax_c.axhline(0, color='black', lw=0.5, ls=':')
-            ax_c.set_ylim(ylim_c)
+            ax_c.set_ylim(self.CAP_YLIM)
             ax_c.set_yticks([0, -0.04, -0.08])
             ax_c.set_title(f'Depth {depth_actual:.0f}mm')
             ax_c.xaxis.set_major_locator(MaxNLocator(integer=True))

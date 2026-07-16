@@ -9,7 +9,7 @@
 %
 %   A. It searches ../logs/ for the futek_direct recordings belonging
 %      to the batch selected in DATASET_VERSION below ('v2' today).
-%   B. It shows you a table of EXACTLY which files it intends to use
+%   B. It shows you a list of EXACTLY which files it intends to use
 %      and then STOPS. Nothing is fitted until you type y and press
 %      Enter. If the list is not what you expected, type anything else
 %      and the script quits without touching anything.
@@ -63,46 +63,54 @@ HERE = fileparts(mfilename('fullpath'));   % .../Matlab calibration
 CALIB_DIR = fileparts(HERE);               % .../force_sensor_calibration
 LOG_DIR = fullfile(CALIB_DIR, 'logs');
 
-% Filenames look like either of these two forms:
-%   fzcal_futek_direct_posz_100g_v2_20260715_153459.csv   (direction in name)
-%   fzcal_futek_direct_100g_v2_20260715_160629.csv        (direction only in
-%                                                          the _meta.json)
-expr = ['fzcal_futek_direct_(?:(?<direction>posz|negz)_)?' ...
-        '(?<weight>\d+(\.\d+)?)g_(?:(?<version>v\d+)_)?(?<ts>\d{8}_\d{6})\.csv$'];
+% Recordings come with two filename forms, so two patterns are tried in
+% turn for every file. (Keep them separate: folding the direction into
+% one pattern as an optional group makes MATLAB's regexp reject the
+% whole filename.)
+%   form 1:  fzcal_futek_direct_posz_100g_v2_20260715_153459.csv
+%   form 2:  fzcal_futek_direct_100g_v2_20260715_160629.csv
+%            (no posz/negz in the name -- the direction then comes from
+%             the recording's own _meta.json file, "axis" field)
+expr_with_dir = ['fzcal_futek_direct_(?<direction>posz|negz)_' ...
+                 '(?<weight>\d+(\.\d+)?)g_(?:(?<version>v\d+)_)?(?<ts>\d{8}_\d{6})\.csv$'];
+expr_no_dir   = ['fzcal_futek_direct_' ...
+                 '(?<weight>\d+(\.\d+)?)g_(?:(?<version>v\d+)_)?(?<ts>\d{8}_\d{6})\.csv$'];
 
 files = dir(fullfile(LOG_DIR, 'fzcal_futek_direct_*.csv'));
 sessions_cell = {};
 for k = 1:numel(files)
-    tok = regexp(files(k).name, expr, 'names');
-    if isempty(tok)
-        continue
+    csv_path  = fullfile(files(k).folder, files(k).name);
+    meta_path = strrep(csv_path, '.csv', '_meta.json');
+
+    tok = regexp(files(k).name, expr_with_dir, 'names');
+    if ~isempty(tok)
+        direction = tok.direction;
+    else
+        tok = regexp(files(k).name, expr_no_dir, 'names');
+        if isempty(tok)
+            continue                     % not a calibration recording
+        end
+        meta = jsondecode(fileread(meta_path));
+        direction = meta.axis;
     end
 
     % Files without a version tag in the name are the original batch, v1.
-    % (regexp only creates a field for a token that matched, hence isfield.)
+    % (MATLAB's regexp only creates a field for a token that actually
+    % matched, hence the isfield guard.)
     if isfield(tok, 'version') && ~isempty(tok.version)
         file_version = tok.version;
     else
         file_version = 'v1';
     end
     if ~strcmp(file_version, DATASET_VERSION)
-        continue                          % not the batch we want -- skip
+        continue                         % not the batch we want -- skip
     end
 
-    s.csv_path  = fullfile(files(k).folder, files(k).name);
-    s.meta_path = strrep(s.csv_path, '.csv', '_meta.json');
-
-    % Direction: from the filename when present, otherwise from the
-    % recording's own meta file ("axis" field).
-    if isfield(tok, 'direction') && ~isempty(tok.direction)
-        s.direction = tok.direction;
-    else
-        meta = jsondecode(fileread(s.meta_path));
-        s.direction = meta.axis;
-    end
-
-    s.weight_g = str2double(tok.weight);
-    s.ts       = tok.ts;
+    s.csv_path  = csv_path;
+    s.meta_path = meta_path;
+    s.direction = direction;
+    s.weight_g  = str2double(tok.weight);
+    s.ts        = tok.ts;
     sessions_cell{end + 1} = s; %#ok<AGROW>
 end
 
@@ -124,30 +132,35 @@ keys = keys(order);
 [~, keep_idx] = unique(keys, 'last');      % last occurrence = newest
 sessions = sessions(sort(keep_idx));
 
+% Sort the list for display: posz first, then negz, lightest to heaviest.
+sort_keys = cell(1, numel(sessions));
+for i = 1:numel(sessions)
+    sort_keys{i} = sprintf('%s_%07d', sessions(i).direction, round(sessions(i).weight_g));
+end
+[~, order] = sort(sort_keys);
+sessions = sessions(order);
+
 %% ================= B. Show the plan, ask for confirmation =========
 
 n = numel(sessions);
-Direction = {sessions.direction}';
-Weight_g  = [sessions.weight_g]';
-Recorded  = cell(n, 1);
-File      = cell(n, 1);
-for i = 1:n
-    t = datetime(sessions(i).ts, 'InputFormat', 'yyyyMMdd_HHmmss');
-    t.Format = 'yyyy-MM-dd HH:mm:ss';
-    Recorded{i} = char(t);
-    [~, base_name, ext] = fileparts(sessions(i).csv_path);
-    File{i} = [base_name ext];
-end
-manifest = table(Direction, Weight_g, Recorded, File);
-manifest = sortrows(manifest, {'Direction', 'Weight_g'});
-
 fprintf('\nThese %d recordings (batch %s) will be used for Step 1:\n\n', ...
         n, DATASET_VERSION);
-disp(manifest);
-fprintf('posz (push): %d recordings, negz (pull): %d recordings\n', ...
-        sum(strcmp(Direction, 'posz')), sum(strcmp(Direction, 'negz')));
+fprintf('   #   direction   weight    recorded              file\n');
+fprintf('  ---  ---------   -------   -------------------   ----------------------------------------------\n');
+for i = 1:n
+    s = sessions(i);
+    ts = s.ts;                                    % '20260715_153459'
+    recorded = [ts(1:4) '-' ts(5:6) '-' ts(7:8) ' ' ts(10:11) ':' ts(12:13) ':' ts(14:15)];
+    [~, base_name, ext] = fileparts(s.csv_path);
+    fprintf('  %3d  %-9s   %5.0f g   %s   %s%s\n', ...
+            i, s.direction, s.weight_g, recorded, base_name, ext);
+end
+n_posz = sum(strcmp({sessions.direction}, 'posz'));
+fprintf('\n  posz (push): %d recordings, negz (pull): %d recordings\n', ...
+        n_posz, n - n_posz);
 
-reply = input('\nProceed with these datasets? Type y to continue, anything else to stop: ', 's');
+fprintf('\n');   % (input() prints its prompt literally, so the blank line goes here)
+reply = input('Proceed with these datasets? Type y to continue, anything else to stop: ', 's');
 if ~strcmpi(strtrim(reply), 'y')
     fprintf(['\nStopped -- nothing was fitted and nothing was saved.\n' ...
              'To change the selection: edit DATASET_VERSION at the top of this\n' ...
@@ -167,11 +180,10 @@ pt_dir    = cell(2 * n, 1);
 for i = 1:n
     s = sessions(i);
     meta = jsondecode(fileread(s.meta_path));
-    data = readtable(s.csv_path);
+    [loaded_col, ai0_col] = read_loaded_and_ai0(s.csv_path);
 
-    loaded_rows = data.loaded == 1;
-    ai0_baseline = mean(data.ai0(~loaded_rows));
-    ai0_loaded   = mean(data.ai0(loaded_rows));
+    ai0_baseline = mean(ai0_col(loaded_col == 0));
+    ai0_loaded   = mean(ai0_col(loaded_col == 1));
 
     sign_d   = AI0_SIGN.(s.direction);
     hw_g     = HARDWARE_G.(s.direction);
@@ -204,7 +216,7 @@ fprintf('=======================================================\n');
 %% ================= D. Figure + saved coefficients =================
 
 fig = figure('Color', 'w', 'Position', [100 100 720 520]);
-ax = axes(fig);
+ax = axes('Parent', fig);
 hold(ax, 'on');
 set(ax, 'FontName', 'Helvetica', 'FontSize', 10, 'Box', 'off');
 
@@ -212,10 +224,12 @@ set(ax, 'FontName', 'Helvetica', 'FontSize', 10, 'Box', 'off');
 % fit -- they are just visually redundant, all sitting near no-load).
 posz_pt = strcmp(pt_dir, 'posz') & is_loaded;
 negz_pt = strcmp(pt_dir, 'negz') & is_loaded;
-scatter(ax, ai0_pts(posz_pt), F_pts(posz_pt), 70, [0.85 0.33 0.10], 'o', ...
-        'filled', 'DisplayName', 'posz (push)');
-scatter(ax, ai0_pts(negz_pt), F_pts(negz_pt), 70, [0.00 0.45 0.74], 's', ...
-        'filled', 'DisplayName', 'negz (pull)');
+plot(ax, ai0_pts(posz_pt), F_pts(posz_pt), 'o', 'MarkerSize', 8, ...
+     'MarkerFaceColor', [0.85 0.33 0.10], 'MarkerEdgeColor', 'none', ...
+     'LineStyle', 'none', 'DisplayName', 'posz (push)');
+plot(ax, ai0_pts(negz_pt), F_pts(negz_pt), 's', 'MarkerSize', 8, ...
+     'MarkerFaceColor', [0.00 0.45 0.74], 'MarkerEdgeColor', 'none', ...
+     'LineStyle', 'none', 'DisplayName', 'negz (pull)');
 
 x_line = linspace(min(ai0_pts), max(ai0_pts), 100);
 plot(ax, x_line, slope * x_line + offset, 'k-', 'LineWidth', 1.5, ...
@@ -234,15 +248,21 @@ fprintf('\nSaved figure -> %s\n', png_path);
 
 % Save the numbers AND the confirmed file list, so the later
 % linearization steps can reuse exactly this dataset selection.
-out.dataset_version    = DATASET_VERSION;
-out.date               = datestr(now, 'yyyy-mm-dd');
-out.slope_n_per_v      = slope;
-out.offset_n           = offset;
+confirmed_files = cell(n, 1);
+for i = 1:n
+    [~, base_name, ext] = fileparts(sessions(i).csv_path);
+    confirmed_files{i} = [base_name ext];
+end
+
+out.dataset_version      = DATASET_VERSION;
+out.date                 = datestr(now, 'yyyy-mm-dd');
+out.slope_n_per_v        = slope;
+out.offset_n             = offset;
 out.sensitivity_mv_per_n = 1000 / slope;
-out.r_squared          = r2;
-out.rmse_n             = rmse;
-out.n_points           = numel(ai0_pts);
-out.confirmed_files    = File;
+out.r_squared            = r2;
+out.rmse_n               = rmse;
+out.n_points             = numel(ai0_pts);
+out.confirmed_files      = confirmed_files;
 
 json_path = fullfile(HERE, 'step1_loadcell_calibration.json');
 try
@@ -254,3 +274,6 @@ fid = fopen(json_path, 'w');
 fprintf(fid, '%s\n', json_text);
 fclose(fid);
 fprintf('Saved coefficients + confirmed file list -> %s\n', json_path);
+
+% (The small CSV-reading helper lives in read_loaded_and_ai0.m, next to
+% this script.)

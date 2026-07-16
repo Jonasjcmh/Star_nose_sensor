@@ -70,12 +70,22 @@ the weight:
         posz) or hook (4 g, negz).
 Both hardware masses were confirmed by whoever ran the collection.
 
-De-duplication ("use just the last one")
--------------------------------------------
-Files are grouped by (instrument, direction, nearest of {5,10,20,50,100,200} g);
-if a group has more than one file, only the chronologically last file is
-kept (with a couple of manual exclusions for mislabeled one-off attempts,
-see EXCLUDED_SESSIONS).
+Which datasets get used (fully automatic -- no code edits needed when
+new sessions are collected)
+-------------------------------------------------------------------------
+Filenames may carry a version tag (fzcal_..._v2_..., v3, ...); an
+un-tagged file is implicitly v1. Per instrument (futek_direct, ur_only
+tracked separately), only the HIGHEST version number present is trusted
+-- older batches are discarded wholesale, not merged weight-by-weight,
+because a whole collection batch shares one day's session-to-session
+baseline drift that isn't comparable across batches (see
+keep_latest_version). Within that latest batch, files are grouped by
+(instrument, direction, weight rounded to the nearest gram); if a group
+still has more than one file (e.g. a re-run within the same batch), only
+the chronologically last one is kept (plus a couple of manual exclusions
+for mislabeled one-off attempts, see EXCLUDED_SESSIONS). Run the script
+to see exactly which files were selected -- it always prints a
+[datasets] manifest before fitting anything.
 
 Usage:
     python fit_lc_ur_calibration.py
@@ -99,11 +109,6 @@ OUT_DIR = os.path.join(HERE, "plots")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 G = 9.80665  # m/s^2
-# 30/40/150/250/300/1156 g added by the v2 futek_direct posz re-collection
-# (fzcal_..._v2_...csv) -- real, distinct weight points, not noise around
-# the original 6, so they need their own entries or nearest_standard_weight
-# would wrongly bucket them (e.g. 30g -> 20g's group).
-STANDARD_WEIGHTS_G = [5.0, 10.0, 20.0, 30.0, 40.0, 50.0, 100.0, 150.0, 200.0, 250.0, 300.0, 1156.0]
 
 # ai0 sign convention (see plot_force_vs_ai0.py): +z (posz) pushes the
 # bridge voltage down, -z (negz) pulls it up. This is a hardware fact, not
@@ -171,8 +176,19 @@ FNAME_RE_NO_DIR = re.compile(
 
 
 # ── discovery + de-duplication ──────────────────────────────────────────
-def nearest_standard_weight(weight_g):
-    return min(STANDARD_WEIGHTS_G, key=lambda w: abs(w - weight_g))
+# Groups sessions targeting "the same" weight without a hand-maintained
+# list of expected weights (that list needed a code edit every time a new
+# nominal weight was collected -- see git history). Real weights are
+# clean grams already, so nearest-gram rounding groups repeat sessions of
+# the same target weight while keeping genuinely distinct weights (5g vs
+# 10g, or a newly-added 42g) apart automatically.
+def nominal_weight_g(weight_g):
+    return round(weight_g)
+
+
+def parse_version(version_str):
+    """Un-tagged filenames (no "_v2_" etc.) are implicitly version 1."""
+    return int(version_str[1:]) if version_str else 1
 
 
 # Manual exclusion, confirmed by whoever ran the collection: these two
@@ -208,7 +224,7 @@ def discover(instrument):
             "instrument": instrument,
             "direction": direction,
             "weight_g": weight_g,
-            "nominal_weight_g": nearest_standard_weight(weight_g),
+            "nominal_weight_g": nominal_weight_g(weight_g),
             "ts": ts,
             "version": m.group("version"),  # e.g. "v2", or None for un-tagged files
             "csv_path": csv_path,
@@ -237,17 +253,37 @@ def dedupe_latest(entries):
     return kept
 
 
-# The futek_direct re-collection (v2, 20260715) fully supersedes the
-# original sessions for BOTH directions: any leftover v1-only weight
-# point (no v2 counterpart -- e.g. the original 5g posz/negz files) has a
-# baseline fz reading ~1 N off from every v2 session's baseline
-# (session-to-session UR sensor drift), which is small next to the
-# original 5-200g range but swamps the signal once pooled with v2's
-# wider 10-1156g range -- corrupting the fit instead of adding data. Drop
-# them; ur_only (no v2 collected there) is untouched.
-def keep_v2_only(entries):
-    return [e for e in entries
-            if not (e["instrument"] == "futek_direct" and e["version"] != "v2")]
+# Each full re-collection (v1 implied, then v2, v3, ...) fully supersedes
+# the previous one, PER INSTRUMENT: a leftover session from an older
+# batch with no counterpart in the newest one (e.g. a v1-only weight, no
+# vN match) has its own baseline reading, which drifts ~1 N session-to-
+# session -- see the v2 fix that motivated this (git history) -- so
+# mixing an old batch's leftover into the newest batch corrupts the fit
+# instead of adding data. Keep only the highest version number present
+# for each instrument; hardcodes no specific version number, so the next
+# re-collection (v3, v4, ...) is picked up with no code change.
+def keep_latest_version(entries):
+    by_instrument = {}
+    for e in entries:
+        by_instrument.setdefault(e["instrument"], []).append(e)
+
+    kept = []
+    for instrument, group in by_instrument.items():
+        max_version = max(parse_version(e["version"]) for e in group)
+        kept.extend(e for e in group if parse_version(e["version"]) == max_version)
+    return kept
+
+
+def print_dataset_manifest(entries, label):
+    """Easy way to see exactly which files feed a given instrument's fit
+    -- always printed (unlike the [dedupe] lines, which only fire when a
+    group had more than one candidate), so a re-collection's effect on
+    what's in use is visible at a glance."""
+    print(f"\n[datasets] {label}: {len(entries)} file(s) in use")
+    for e in sorted(entries, key=lambda e: (e["direction"], e["nominal_weight_g"])):
+        version_label = e["version"] or "v1 (untagged)"
+        print(f"  {e['direction']:>4} {e['nominal_weight_g']:>6.0f}g  {version_label:<14} "
+              f"{os.path.basename(e['csv_path'])}")
 
 
 # ── per-session load ─────────────────────────────────────────────────────
@@ -417,8 +453,10 @@ def bland_altman(reference, measurement):
 
 
 def main():
-    futek_entries = dedupe_latest(keep_v2_only(discover("futek_direct")))
-    ur_entries = dedupe_latest(discover("ur_only"))
+    futek_entries = dedupe_latest(keep_latest_version(discover("futek_direct")))
+    ur_entries = dedupe_latest(keep_latest_version(discover("ur_only")))
+    print_dataset_manifest(futek_entries, "futek_direct")
+    print_dataset_manifest(ur_entries, "ur_only")
 
     futek_sessions = sorted((load_session(e) for e in futek_entries),
                              key=lambda s: (s["direction"], s["weight_g"]))

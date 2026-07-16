@@ -3,9 +3,18 @@
 % MATLAB port of fit_lc_ur_calibration.py.
 %
 % What this script does, step by step:
-%   1. Finds the calibration CSV logs in ../logs/ and, for cases where the
-%      same weight was measured more than once, keeps only the most
-%      recent attempt ("de-duplication").
+%   1. Finds the calibration CSV logs in ../logs/. Filenames may carry a
+%      version tag (fzcal_..._v2_..., v3, ...); an un-tagged file is
+%      implicitly v1. Per instrument, only the HIGHEST version number
+%      present is trusted -- older batches are discarded wholesale, not
+%      merged weight-by-weight, since a whole batch shares one day's
+%      session-to-session baseline drift that isn't comparable across
+%      batches (see keep_latest_version). Within that latest batch, if
+%      the same weight was measured more than once, keeps only the most
+%      recent attempt ("de-duplication"). No hand-maintained weight
+%      list and no hardcoded version number to edit when new sessions
+%      are collected -- print_dataset_manifest always prints exactly
+%      which files were selected.
 %   2. Loads each kept file (fz for both instruments; ai0 too for
 %      futek_direct).
 %   3. STEP 1 -- fits how the load cell's voltage changes with applied
@@ -85,21 +94,24 @@ G = 9.80665;                                 % standard gravity, m/s^2
 % loaded point in Figure 1. Off by default (cleaner plot); flip to true
 % to bring the per-point annotations back.
 SHOW_POINT_LABELS = false;
-% 30/40/150/250/300/1156 g added by the v2 futek_direct re-collection
-% (fzcal_..._v2_...csv, both directions) -- real, distinct weight points,
-% not noise around the original 6, so they need their own entries or the
-% nearest-weight snap in discover_entries would wrongly bucket them
-% (e.g. 30g -> 20g).
-STANDARD_WEIGHTS_G = [5 10 20 30 40 50 100 150 200 250 300 1156];
 
 %% ---- Step 0: discover + de-duplicate both instruments' sessions ----
+% No hand-maintained weight list and no hardcoded version number here --
+% see discover_entries and keep_latest_version below for how new
+% re-collections (new weights, new "v3"/"v4" batches, ...) get picked up
+% automatically. print_dataset_manifest always prints exactly which
+% files were selected, so this is also the "easy way to check" the
+% datasets in use.
 
-futek_entries = discover_entries(LOG_DIR, 'futek_direct', STANDARD_WEIGHTS_G);
-futek_entries = keep_v2_only(futek_entries);
+futek_entries = discover_entries(LOG_DIR, 'futek_direct');
+futek_entries = keep_latest_version(futek_entries);
 futek_entries = dedupe_latest(futek_entries);
+print_dataset_manifest(futek_entries, 'futek_direct');
 
-ur_entries = discover_entries(LOG_DIR, 'ur_only', STANDARD_WEIGHTS_G);
+ur_entries = discover_entries(LOG_DIR, 'ur_only');
+ur_entries = keep_latest_version(ur_entries);
 ur_entries = dedupe_latest(ur_entries);
+print_dataset_manifest(ur_entries, 'ur_only');
 
 %% ---- Step 0b: load every kept file ----
 
@@ -436,14 +448,20 @@ fprintf('Saved -> %s\n', out4_path);
 % "local functions", supported since R2016b). They are listed in the same
 % order the script calls them.
 
-function entries = discover_entries(log_dir, instrument, standard_weights_g)
+function entries = discover_entries(log_dir, instrument)
 % DISCOVER_ENTRIES  Find fzcal_<instrument>_<direction>_<weight>g_<ts>.csv
 % files and parse direction/weight/timestamp out of each filename. Also
 % matches fzcal_<instrument>_<weight>g_<ts>.csv (no direction token,
 % direction read from that file's meta.json "axis" field instead).
 %
+% nominal_weight_g groups repeat sessions of the same target weight by
+% rounding to the nearest gram -- no hand-maintained list of expected
+% weights to edit every time a new one is collected; real weights are
+% already clean grams, so this groups repeats while keeping genuinely
+% distinct weights apart automatically.
+%
 % Returns a struct array (one element per matching file) with fields:
-%   instrument, direction, weight_g, nominal_weight_g, ts, csv_path, meta_path
+%   instrument, direction, weight_g, nominal_weight_g, ts, version, csv_path, meta_path
 
     files = dir(fullfile(log_dir, sprintf('fzcal_%s_*.csv', instrument)));
     expr = ['fzcal_' instrument '_(?<direction>posz|negz)_' ...
@@ -474,12 +492,11 @@ function entries = discover_entries(log_dir, instrument, standard_weights_g)
             continue
         end
         weight_g = str2double(tok.weight);
-        [~, nearest_idx] = min(abs(standard_weights_g - weight_g));
 
         e.instrument = instrument;
         e.direction = direction;
         e.weight_g = weight_g;
-        e.nominal_weight_g = standard_weights_g(nearest_idx);
+        e.nominal_weight_g = round(weight_g);
         e.ts = tok.ts;
         % regexp(...,'names') only creates a field for a named token that
         % actually participated in THIS match -- un-tagged filenames (no
@@ -518,27 +535,71 @@ function tf = is_excluded_session(instrument, direction, ts)
 end
 
 
-function kept = keep_v2_only(entries)
-% KEEP_V2_ONLY  The futek_direct re-collection (v2, 20260715) fully
-% supersedes the original sessions for BOTH directions: any leftover
-% v1-only weight point (no v2 counterpart -- e.g. the original 5g
-% posz/negz files) has a baseline fz reading ~1 N off from every v2
-% session's baseline (session-to-session UR sensor drift), which is
-% small next to the original 5-200g range but swamps the signal once
-% pooled with v2's wider 10-1156g range -- corrupting the fit instead of
-% adding data. Drop them; ur_only (no v2 collected there) is untouched.
+function v = parse_version(version_str)
+% PARSE_VERSION  Un-tagged filenames (no "_v2_" etc.) are implicitly
+% version 1.
+
+    if isempty(version_str)
+        v = 1;
+    else
+        v = str2double(version_str(2:end));  % strip leading 'v'
+    end
+end
+
+
+function kept = keep_latest_version(entries)
+% KEEP_LATEST_VERSION  Each full re-collection (v1 implied, then v2, v3,
+% ...) fully supersedes the previous one, PER INSTRUMENT: a leftover
+% session from an older batch with no counterpart in the newest one
+% (e.g. a v1-only weight, no vN match) has its own baseline reading,
+% which drifts ~1 N session-to-session -- see the v2 fix that motivated
+% this (git history) -- so mixing an old batch's leftover into the
+% newest batch corrupts the fit instead of adding data. Keeps only the
+% highest version number present for each instrument; hardcodes no
+% specific version number, so the next re-collection (v3, v4, ...) is
+% picked up with no code change.
 
     if isempty(entries)
         kept = entries;
         return
     end
-    keep_mask = true(1, numel(entries));
-    for i = 1:numel(entries)
-        if strcmp(entries(i).instrument, 'futek_direct') && ~strcmp(entries(i).version, 'v2')
-            keep_mask(i) = false;
-        end
+    instruments = unique({entries.instrument});
+    kept_cell = cell(1, numel(instruments));
+    for i = 1:numel(instruments)
+        group = entries(strcmp({entries.instrument}, instruments{i}));
+        versions = arrayfun(@(e) parse_version(e.version), group);
+        kept_cell{i} = group(versions == max(versions));
     end
-    kept = entries(keep_mask);
+    kept = [kept_cell{:}];
+end
+
+
+function print_dataset_manifest(entries, label)
+% PRINT_DATASET_MANIFEST  Easy way to see exactly which files feed a
+% given instrument's fit -- always printed (unlike the [dedupe] lines,
+% which only fire when a group had more than one candidate), so a
+% re-collection's effect on what's in use is visible at a glance.
+
+    fprintf('\n[datasets] %s: %d file(s) in use\n', label, numel(entries));
+    if isempty(entries)
+        return
+    end
+    keys = cell(1, numel(entries));
+    for i = 1:numel(entries)
+        keys{i} = sprintf('%s_%08.2f', entries(i).direction, entries(i).nominal_weight_g);
+    end
+    [~, order] = sort(keys);
+    entries = entries(order);
+    for i = 1:numel(entries)
+        e = entries(i);
+        if isempty(e.version)
+            version_label = 'v1 (untagged)';
+        else
+            version_label = e.version;
+        end
+        [~, fname, ext] = fileparts(e.csv_path);
+        fprintf('  %4s %6.0fg  %-14s %s%s\n', e.direction, e.nominal_weight_g, version_label, fname, ext);
+    end
 end
 
 

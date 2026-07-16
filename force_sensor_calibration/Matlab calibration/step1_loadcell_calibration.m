@@ -63,54 +63,37 @@ HERE = fileparts(mfilename('fullpath'));   % .../Matlab calibration
 CALIB_DIR = fileparts(HERE);               % .../force_sensor_calibration
 LOG_DIR = fullfile(CALIB_DIR, 'logs');
 
-% Recordings come with two filename forms, so two patterns are tried in
-% turn for every file. (Keep them separate: folding the direction into
-% one pattern as an optional group makes MATLAB's regexp reject the
-% whole filename.)
-%   form 1:  fzcal_futek_direct_posz_100g_v2_20260715_153459.csv
-%   form 2:  fzcal_futek_direct_100g_v2_20260715_160629.csv
-%            (no posz/negz in the name -- the direction then comes from
-%             the recording's own _meta.json file, "axis" field)
-expr_with_dir = ['fzcal_futek_direct_(?<direction>posz|negz)_' ...
-                 '(?<weight>\d+(\.\d+)?)g_(?:(?<version>v\d+)_)?(?<ts>\d{8}_\d{6})\.csv$'];
-expr_no_dir   = ['fzcal_futek_direct_' ...
-                 '(?<weight>\d+(\.\d+)?)g_(?:(?<version>v\d+)_)?(?<ts>\d{8}_\d{6})\.csv$'];
+% Each filename is decoded by parse_recording_name.m (a small helper
+% next to this script). It handles both filename forms:
+%   fzcal_futek_direct_posz_100g_v2_20260715_153459.csv   (direction in name)
+%   fzcal_futek_direct_100g_v2_20260715_160629.csv        (no posz/negz in the
+%       name -- the direction then comes from the recording's own
+%       _meta.json file, "axis" field)
+% It deliberately uses plain string splitting, NOT regular expressions:
+% MATLAB's regexp engine silently fails to match optional tagged groups,
+% which twice made this discovery find zero recordings.
 
 files = dir(fullfile(LOG_DIR, 'fzcal_futek_direct_*.csv'));
 sessions_cell = {};
 for k = 1:numel(files)
-    csv_path  = fullfile(files(k).folder, files(k).name);
-    meta_path = strrep(csv_path, '.csv', '_meta.json');
-
-    tok = regexp(files(k).name, expr_with_dir, 'names');
-    if ~isempty(tok)
-        direction = tok.direction;
-    else
-        tok = regexp(files(k).name, expr_no_dir, 'names');
-        if isempty(tok)
-            continue                     % not a calibration recording
-        end
-        meta = jsondecode(fileread(meta_path));
-        direction = meta.axis;
+    info = parse_recording_name(files(k).name);
+    if isempty(info)
+        continue                         % not a calibration recording
     end
-
-    % Files without a version tag in the name are the original batch, v1.
-    % (MATLAB's regexp only creates a field for a token that actually
-    % matched, hence the isfield guard.)
-    if isfield(tok, 'version') && ~isempty(tok.version)
-        file_version = tok.version;
-    else
-        file_version = 'v1';
-    end
-    if ~strcmp(file_version, DATASET_VERSION)
+    if ~strcmp(info.version, DATASET_VERSION)
         continue                         % not the batch we want -- skip
     end
 
-    s.csv_path  = csv_path;
-    s.meta_path = meta_path;
-    s.direction = direction;
-    s.weight_g  = str2double(tok.weight);
-    s.ts        = tok.ts;
+    s.csv_path  = fullfile(files(k).folder, files(k).name);
+    s.meta_path = strrep(s.csv_path, '.csv', '_meta.json');
+    s.weight_g  = info.weight_g;
+    s.ts        = info.ts;
+    if ~isempty(info.direction)
+        s.direction = info.direction;
+    else
+        meta = jsondecode(fileread(s.meta_path));
+        s.direction = meta.axis;
+    end
     sessions_cell{end + 1} = s; %#ok<AGROW>
 end
 

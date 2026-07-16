@@ -463,53 +463,44 @@ function entries = discover_entries(log_dir, instrument)
 % Returns a struct array (one element per matching file) with fields:
 %   instrument, direction, weight_g, nominal_weight_g, ts, version, csv_path, meta_path
 
+    % Filenames are decoded by parse_fzcal_name (below) with plain string
+    % splitting, NOT regular expressions: MATLAB's regexp engine silently
+    % fails to match optional tagged groups like (?:(?<version>v\d+)_)?,
+    % which made every v-tagged file invisible to the previous
+    % regexp-based version of this function.
     files = dir(fullfile(log_dir, sprintf('fzcal_%s_*.csv', instrument)));
-    expr = ['fzcal_' instrument '_(?<direction>posz|negz)_' ...
-            '(?<weight>\d+(\.\d+)?)g_(?:(?<version>v\d+)_)?(?<ts>\d{8}_\d{6})\.csv$'];
-    % The 20260715 negz v2 re-collection drops the direction token from
-    % the filename entirely (fzcal_futek_direct_100g_v2_..._meta.json
-    % instead of fzcal_futek_direct_negz_100g_v2_...) -- direction is
-    % only recoverable from that session's own meta.json ("axis" field).
-    % Tried as a fallback when expr doesn't match.
-    expr_no_dir = ['fzcal_' instrument '_' ...
-            '(?<weight>\d+(\.\d+)?)g_(?:(?<version>v\d+)_)?(?<ts>\d{8}_\d{6})\.csv$'];
 
     entries_cell = {};
     for k = 1:numel(files)
-        tok = regexp(files(k).name, expr, 'names');
-        if ~isempty(tok)
-            direction = tok.direction;
-        else
-            tok = regexp(files(k).name, expr_no_dir, 'names');
-            if isempty(tok)
-                continue
-            end
-            meta_path_probe = fullfile(files(k).folder, strrep(files(k).name, '.csv', '_meta.json'));
-            meta_probe = jsondecode(fileread(meta_path_probe));
-            direction = meta_probe.axis;
-        end
-        if is_excluded_session(instrument, direction, tok.ts)
+        info = parse_fzcal_name(files(k).name, instrument);
+        if isempty(info)
             continue
         end
-        weight_g = str2double(tok.weight);
+
+        csv_path = fullfile(files(k).folder, files(k).name);
+        meta_path = strrep(csv_path, '.csv', '_meta.json');
+
+        % The 20260715 negz v2 re-collection drops the direction token
+        % from the filename entirely -- direction is then only
+        % recoverable from that session's own meta.json ("axis" field).
+        if ~isempty(info.direction)
+            direction = info.direction;
+        else
+            meta_probe = jsondecode(fileread(meta_path));
+            direction = meta_probe.axis;
+        end
+        if is_excluded_session(instrument, direction, info.ts)
+            continue
+        end
 
         e.instrument = instrument;
         e.direction = direction;
-        e.weight_g = weight_g;
-        e.nominal_weight_g = round(weight_g);
-        e.ts = tok.ts;
-        % regexp(...,'names') only creates a field for a named token that
-        % actually participated in THIS match -- un-tagged filenames (no
-        % "v2_" etc.) never get a .version field at all, so tok.version
-        % would error on them. isfield keeps every entry struct's field
-        % set identical, which [entries_cell{:}] below also requires.
-        if isfield(tok, 'version')
-            e.version = tok.version;
-        else
-            e.version = '';
-        end
-        e.csv_path = fullfile(files(k).folder, files(k).name);
-        e.meta_path = strrep(e.csv_path, '.csv', '_meta.json');
+        e.weight_g = info.weight_g;
+        e.nominal_weight_g = round(info.weight_g);
+        e.ts = info.ts;
+        e.version = info.version;          % '' for un-tagged (v1) files
+        e.csv_path = csv_path;
+        e.meta_path = meta_path;
 
         entries_cell{end + 1} = e; %#ok<AGROW>
     end
@@ -519,6 +510,69 @@ function entries = discover_entries(log_dir, instrument)
     else
         entries = [entries_cell{:}];
     end
+end
+
+
+function info = parse_fzcal_name(fname, instrument)
+% PARSE_FZCAL_NAME  Decode one recording filename with plain string
+% splitting (no regexp -- see the note in discover_entries). Accepted
+% forms, in the general shape fzcal_<instrument>_[dir_]<w>g_[vN_]<ts>.csv:
+%   fzcal_futek_direct_posz_100g_v2_20260715_153459.csv
+%   fzcal_futek_direct_100g_v2_20260715_160629.csv     (no direction token)
+%   fzcal_ur_only_negz_20g_20260706_180618.csv         (no version tag)
+%
+% Returns a struct with fields direction ('' when not in the name),
+% weight_g, version ('' when not in the name, meaning the original v1
+% batch), and ts -- or [] if the filename is not a recording.
+
+    info = [];
+    prefix = ['fzcal_' instrument '_'];
+    if length(fname) <= length(prefix) + 4 || ~strncmp(fname, prefix, length(prefix)) ...
+            || ~strcmpi(fname(end-3:end), '.csv')
+        return
+    end
+    parts = strsplit(fname(length(prefix)+1 : end-4), '_');
+
+    % 1) direction, if present in the name
+    direction = '';
+    if ~isempty(parts) && (strcmp(parts{1}, 'posz') || strcmp(parts{1}, 'negz'))
+        direction = parts{1};
+        parts(1) = [];
+    end
+
+    % 2) weight: '<number>g'
+    if isempty(parts)
+        return
+    end
+    w = parts{1};
+    if length(w) < 2 || w(end) ~= 'g'
+        return
+    end
+    weight_g = str2double(w(1:end-1));
+    if isnan(weight_g)
+        return
+    end
+    parts(1) = [];
+
+    % 3) version tag 'v<digits>', if present
+    version = '';
+    if ~isempty(parts) && length(parts{1}) >= 2 && parts{1}(1) == 'v' ...
+            && all(isstrprop(parts{1}(2:end), 'digit'))
+        version = parts{1};
+        parts(1) = [];
+    end
+
+    % 4) timestamp: 'YYYYMMDD' then 'HHMMSS'
+    if numel(parts) ~= 2 ...
+            || length(parts{1}) ~= 8 || ~all(isstrprop(parts{1}, 'digit')) ...
+            || length(parts{2}) ~= 6 || ~all(isstrprop(parts{2}, 'digit'))
+        return
+    end
+
+    info.direction = direction;
+    info.weight_g  = weight_g;
+    info.version   = version;
+    info.ts        = [parts{1} '_' parts{2}];
 end
 
 

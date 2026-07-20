@@ -57,6 +57,11 @@ VEL_PRESS  = 0.004   # m/s — fallback press speed (press/retract use a ramp ti
 ACCEL      = 0.3     # m/s²
 SAFE_HOME_Z = 30.0   # mm above surface at home
 
+# Base press depth (mm) added to every requested depth. The surface pose sits
+# ~5 mm above real contact, so depth label 0 must physically press 5 mm to make
+# contact; labels 1,2,3,4 then press 6,7,8,9 mm. Set to 0 to disable.
+BASE_DEPTH_MM = 5.0
+
 # ── FUTEK load cell ────────────────────────────────────────────────────────────
 AI0_ZERO_V       = 5.0
 LOADCELL_MAX_N   = 10.0 * 4.44822
@@ -364,14 +369,18 @@ def generate_plan(points, depths_mm, iterations):
 # ── Indentation ───────────────────────────────────────────────────────────────
 
 def do_indentation(rtde_c, pt, depth_mm, point_idx, iter_idx, lcr,
-                   locate_s, hold_s, post_s, ramp_s, rate_hz=100):
+                   locate_s, hold_s, post_s, ramp_s, rate_hz=100,
+                   base_depth_mm=BASE_DEPTH_MM):
     """One step-impulse indentation logged at rate_hz:
       locate → press(ramp_s) → hold → retract(ramp_s) → post.
     Press/retract speed & accel are derived so each takes ~ramp_s for any depth.
+    The physical press is depth_mm + base_depth_mm (the surface pose sits above
+    real contact); depth_mm stays the recorded label.
     """
+    press_depth_mm = depth_mm + base_depth_mm
     surface = _build_pose(pt, 0.0)
-    pressed = _build_pose(pt, -depth_mm)
-    v_press, a_press = vel_accel_for_ramp(depth_mm, ramp_s)
+    pressed = _build_pose(pt, -press_depth_mm)
+    v_press, a_press = vel_accel_for_ramp(press_depth_mm, ramp_s)
 
     # ── Locate ───────────────────────────────────────────────────────────────
     print(f'     → locate  (moving to surface P{pt:02d}) ...')
@@ -382,7 +391,8 @@ def do_indentation(rtde_c, pt, depth_mm, point_idx, iter_idx, lcr,
     print(f'     [locate]   LC={lc_m:.2f} N   Cp={cp_m:.2f} pF   (mean of last {n})')
 
     # ── Press (ramp_s) ─────────────────────────────────────────────────────────
-    print(f'     → press   (depth {depth_mm:.2f} mm, target ramp {ramp_s:.1f}s) ...')
+    print(f'     → press   (depth {depth_mm:.2f} mm → {press_depth_mm:.2f} mm physical, '
+          f'target ramp {ramp_s:.1f}s) ...')
     t_press = _move_logged(rtde_c, pressed, v_press, a_press,
                            pt, depth_mm, 'press', point_idx, iter_idx, lcr, rate_hz)
     print(f'     [press]    target ramp = {ramp_s:.1f}s   actual = {t_press:.2f}s')
@@ -521,6 +531,8 @@ def parse_args():
     p.add_argument('--depths',     type=str,   default='0,1,2,3,4',
                    help='Comma-separated indentation depths in mm [0,1,2,3,4]')
     p.add_argument('--iterations', type=int,   default=5, help='Repeats per depth [5]')
+    p.add_argument('--base-depth', type=float, default=BASE_DEPTH_MM,
+                   help=f'Base mm added to every depth (surface→contact offset) [{BASE_DEPTH_MM}]')
     p.add_argument('--ramp',       type=float, default=None, help='Ramp time s per press/retract [ask, default 2]')
     p.add_argument('--hold',       type=float, default=None, help='Hold dwell s at full depth [ask, default 5]')
     p.add_argument('--locate',     type=float, default=None, help='Locate dwell s at surface [ask, default 5]')
@@ -569,7 +581,8 @@ def main():
 
     points_str = ', then '.join(f'P{p:02d}' for p in points)
     print(f'\n  Points            : {points_str}')
-    print(f'  Depths (mm)       : {depths_mm}')
+    print(f'  Depths (mm)       : {depths_mm}  (+{args.base_depth:.1f} mm base = '
+          f'{[d + args.base_depth for d in depths_mm]} physical)')
     print(f'  Iterations/depth  : {iterations}')
     print(f'  Indentations      : {per_point_n}/point  ×  {len(points)} points  =  {total}')
     print(f'  Ramp (press/retr) : {ramp_s:.1f} s each')
@@ -652,7 +665,8 @@ def main():
             try:
                 do_indentation(rtde_c, pt, depth_mm, point_idx, iter_idx, lcr,
                                locate_s=locate_s, hold_s=hold_s, post_s=post_s,
-                               ramp_s=ramp_s, rate_hz=rate_hz)
+                               ramp_s=ramp_s, rate_hz=rate_hz,
+                               base_depth_mm=args.base_depth)
             except KeyboardInterrupt:
                 print('\n  Interrupted during indentation — saving partial dataset ...')
                 break

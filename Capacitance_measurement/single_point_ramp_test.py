@@ -6,7 +6,7 @@ directly (in whole seconds), instead of being a by-product of a fixed speed.
 You pick ONE point, a depth, and a ramp time (e.g. 1, 2, 3 s); the script
 derives the robot speed & acceleration so the press AND retract each take that
 ramp time — no matter what depth you choose. The hold ("pressing") time at full
-depth is fixed at 5 s by default and is NOT asked.
+depth is asked too (default 5 s if left blank).
 
 How the fixed ramp works
 ------------------------
@@ -26,7 +26,7 @@ What it does
 ------------
   1. Press ONE chosen point once (locate → press → hold → retract → post).
   2. Ramp time (press & retract) is a direct INPUT in seconds (e.g. 1/2/3).
-  3. Hold (pressing) dwell is FIXED at 5 s (default, not asked).
+  3. Hold (pressing) dwell is an INPUT in seconds (default 5 s if left blank).
   4. You still SPECIFY --locate and --post dwell times (seconds).
   5. After the cycle, plots are generated automatically (same as the original).
   6. Press depth is measured downward from the calibrated contact surface.
@@ -81,7 +81,7 @@ def _ai0_to_n(v):
 
 # ── Sensor points (mm, relative to reference pose) ───────────────────────────
 POINTS = {
-     1: ( -8.0, +14.0),   2: (  0.0, +14.0),   3: ( +8.0, +14.0),
+     1: ( -8.8, +13.2),   2: (  0.0, +14.0),   3: ( +8.0, +14.0),
      4: (-12.0,  +7.0),   5: ( -4.0,  +7.0),   6: ( +4.0,  +7.0),
      7: (+12.0,  +7.0),   8: (-16.0,   0.0),   9: ( -8.0,   0.0),
     10: (  0.0,   0.0),  11: ( +8.0,   0.0),  12: (+16.0,   0.0),
@@ -94,7 +94,7 @@ REFERENCE_POSE = [
     -0.03746 + 0.0005,
     -0.50066 + 0.0016,
      0.06054,
-    -2.35063, 2.08341, -0.00009,
+    -1.061, 2.898, -0.00009,   #-2.35063, 2.08341, -0.00009, 2.968
 ]
 
 # ── Calibration globals ────────────────────────────────────────────────────────
@@ -670,8 +670,8 @@ def parse_args():
                    help='Ramp time (s) for EACH press/retract move, e.g. 1/2/3 (default: ask)')
     p.add_argument('--locate',   type=float, default=None,
                    help='Dwell time (s) at the surface before pressing (default: ask)')
-    p.add_argument('--hold',     type=float, default=5.0,
-                   help='Pressing/hold time (s) at full depth (default: 5, not asked)')
+    p.add_argument('--hold',     type=float, default=None,
+                   help='Pressing/hold time (s) at full depth (default: ask, 5 if blank)')
     p.add_argument('--post',     type=float, default=None,
                    help='Dwell time (s) back at the surface after release (default: ask)')
     p.add_argument('--rate',     type=int,   default=100, help='Logging rate Hz (default: 100)')
@@ -700,8 +700,9 @@ def main():
     ramp_s = args.ramp if args.ramp is not None else float(_ask_int(
         '  Ramp time per press & retract (s) [2] > ', 2, 1, 30))
 
-    # Pressing/hold time at full depth is FIXED (not asked); default 5 s.
-    hold_s = args.hold
+    # Pressing/hold time at full depth — asked (default 5 s if left blank).
+    hold_s = args.hold if args.hold is not None else _ask_float(
+        '  Hold (pressing) time (s, at full depth) [5.0] > ', 5.0, 0.1, 300.0)
 
     locate_s = args.locate if args.locate is not None else _ask_float(
         '  Locate dwell (s, at surface before press) [5.0] > ', 5.0, 0.1, 120.0)

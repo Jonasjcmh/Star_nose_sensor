@@ -1,20 +1,20 @@
 """
-capacitance_two_point_iterations_collector.py — Star-Nose Sensor | Two-Point Depth-Sweep Collector
-====================================================================================================
+capacitance_two_point_iterations_collector.py — Star-Nose Sensor | Multi-Point Depth-Sweep Collector
+======================================================================================================
 A variant of capacitance_ramp_collector.py for a small, focused depth sweep on
-just TWO user-chosen points (instead of all 19), with the fixed-ramp
+N user-chosen points (instead of all 19), with the fixed-ramp
 trapezoidal press and tail-averaging of single_point_ramp_test.py.
 
 This script ONLY collects and saves data. Plotting/analysis is done separately.
 
 What it does
 ------------
-  • You pick TWO points (pad numbers 1–19) at the start.
-  • For the FIRST point: for each depth in DEPTHS_MM (default 0,1,2,3,4 mm),
+  • You pick however many points (pad numbers 1–19) you want at the start.
+  • For each point in turn: for each depth in DEPTHS_MM (default 0,1,2,3,4 mm),
     run ITERATIONS (default 5) repeat indentations at that depth — so all
     depths × iterations for that point happen back-to-back, in order.
   • Then the script pauses so you can re-wire the LCR-6100 probes to the
-    SECOND point, and repeats the same depth × iteration sweep there.
+    NEXT point, and repeats the same depth × iteration sweep there.
   • Each indentation: locate → press(ramp_s) → hold → retract(ramp_s) → post,
     with press/retract speed & accel derived so each move takes ~ramp_s
     seconds regardless of depth (trapezoidal profile).
@@ -29,7 +29,7 @@ Fixed-ramp motion (per move of distance d, in time ramp_s, accel fraction f):
 Usage
 -----
   python capacitance_two_point_iterations_collector.py
-  python capacitance_two_point_iterations_collector.py --point1 5 --point2 12 \
+  python capacitance_two_point_iterations_collector.py --points 5,12,9 \
          --depths 0,1,2,3,4 --iterations 5 --ramp 2 --hold 5 --locate 5 --post 5
 """
 
@@ -484,15 +484,40 @@ def _ask_point(prompt):
 def _parse_depths(raw):
     return [float(x) for x in raw.split(',') if x.strip() != '']
 
+def _parse_points(raw):
+    pts = []
+    for x in raw.split(','):
+        x = x.strip()
+        if x == '':
+            continue
+        val = int(x)
+        if val not in POINTS:
+            raise ValueError(f'{val} is not a valid pad number, 1–19')
+        pts.append(val)
+    return pts
+
+def _ask_points():
+    n = _ask_int('  How many points? [2] > ', 2, 1, len(POINTS))
+    points = []
+    for i in range(n):
+        while True:
+            pt = _ask_point(f'  Point {i + 1}/{n} [1–19] > ')
+            if pt in points:
+                print(f'  P{pt:02d} already selected — pick a different point')
+                continue
+            break
+        points.append(pt)
+    return points
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def parse_args():
     p = argparse.ArgumentParser(
-        description='Two-point depth-sweep capacitance collector (data only)',
+        description='Multi-point depth-sweep capacitance collector (data only)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__)
-    p.add_argument('--point1',     type=int,   default=None, help='First point 1–19 [ask]')
-    p.add_argument('--point2',     type=int,   default=None, help='Second point 1–19 [ask]')
+    p.add_argument('--points',     type=str,   default=None,
+                   help='Comma-separated pad numbers 1–19, e.g. 5,12,9 [ask]')
     p.add_argument('--depths',     type=str,   default='0,1,2,3,4',
                    help='Comma-separated indentation depths in mm [0,1,2,3,4]')
     p.add_argument('--iterations', type=int,   default=5, help='Repeats per depth [5]')
@@ -508,13 +533,14 @@ def main():
     args = parse_args()
 
     print('=' * 65)
-    print('  Two-Point Depth-Sweep Capacitance Collector — Star-Nose Sensor')
+    print('  Multi-Point Depth-Sweep Capacitance Collector — Star-Nose Sensor')
     print('=' * 65)
 
     print_sensor_map()
-    pt1 = args.point1 if args.point1 in POINTS else _ask_point('  First point  [1–19] > ')
-    pt2 = args.point2 if args.point2 in POINTS else _ask_point('  Second point [1–19] > ')
-    points = [pt1, pt2]
+    if args.points:
+        points = _parse_points(args.points)
+    else:
+        points = _ask_points()
 
     depths_mm  = _parse_depths(args.depths)
     iterations = args.iterations
@@ -541,7 +567,8 @@ def main():
     per_point_n   = len(depths_mm) * iterations
     total         = per_point_n * len(points)
 
-    print(f'\n  Points            : P{pt1:02d}, then P{pt2:02d}')
+    points_str = ', then '.join(f'P{p:02d}' for p in points)
+    print(f'\n  Points            : {points_str}')
     print(f'  Depths (mm)       : {depths_mm}')
     print(f'  Iterations/depth  : {iterations}')
     print(f'  Indentations      : {per_point_n}/point  ×  {len(points)} points  =  {total}')

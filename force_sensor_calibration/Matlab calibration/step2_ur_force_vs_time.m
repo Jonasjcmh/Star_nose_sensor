@@ -8,9 +8,14 @@
 %   F_from_ai0  load cell voltage run through step1's fit
 %   F_from_ur   UR wrist fz, sign-corrected to match the other two
 %
+% Every plot uses the same time and force axis limits (the widest range
+% found across all recordings), so magnitudes are directly comparable
+% from one weight to the next.
+%
 % Run step1_loadcell_calibration.m first -- this reads its saved
-% calibration and confirmed file list. Figures are shown one at a time;
-% press Enter in the command window to move to the next one.
+% calibration and confirmed file list. Figures are shown one at a time
+% (Enter advances, nothing is closed for you) and saved as .png, .fig
+% and .svg in step2_plots/.
 
 clear; clc; close all;
 
@@ -40,10 +45,12 @@ end
 fprintf('F_from_ai0 = %.4f * ai0 + (%.4f)\n', slope, offset);
 fprintf('%d confirmed recordings\n\n', numel(confirmed_files));
 
-OUT_DIR = fullfile(HERE, 'step2_plots');
-if ~exist(OUT_DIR, 'dir')
-    mkdir(OUT_DIR);
-end
+%% ---- Pass 1: load every recording's measurement window, track the widest range ----
+
+recs = struct([]);
+t_max = 0;
+f_min = Inf;
+f_max = -Inf;
 
 for i = 1:numel(confirmed_files)
     fname = confirmed_files{i};
@@ -81,30 +88,67 @@ for i = 1:numel(confirmed_files)
     hw_g     = HARDWARE_G.(direction);
     cos_tilt = cos(deg2rad(meta.tilt_from_vertical_deg));
 
-    F_expected = sign_d * ((hw_g + info.weight_g) / 1000) * G * cos_tilt;
-    F_from_ai0 = slope * ai0 + offset;
-    F_from_ur  = sign_d * abs(fz);
+    r.fname      = fname;
+    r.direction  = direction;
+    r.weight_g   = info.weight_g;
+    r.ts         = info.ts;
+    r.t          = t;
+    r.F_expected = sign_d * ((hw_g + info.weight_g) / 1000) * G * cos_tilt;
+    r.F_from_ai0 = slope * ai0 + offset;
+    r.F_from_ur  = sign_d * abs(fz);
+
+    if isempty(recs)
+        recs = r;
+    else
+        recs(end + 1) = r; %#ok<AGROW>
+    end
+
+    t_max = max(t_max, t(end));
+    f_min = min([f_min; r.F_expected; r.F_from_ai0; r.F_from_ur]);
+    f_max = max([f_max; r.F_expected; r.F_from_ai0; r.F_from_ur]);
+end
+
+f_margin = 0.05 * (f_max - f_min);
+y_limits = [f_min - f_margin, f_max + f_margin];
+x_limits = [0, t_max];
+
+fprintf('shared axes: time [0, %.2f] s, force [%.2f, %.2f] N\n\n', t_max, y_limits(1), y_limits(2));
+
+%% ---- Pass 2: one figure per recording, same axes every time ----
+
+OUT_DIR = fullfile(HERE, 'step2_plots');
+if ~exist(OUT_DIR, 'dir')
+    mkdir(OUT_DIR);
+end
+
+for i = 1:numel(recs)
+    r = recs(i);
 
     fprintf('%2d/%d  %-5s %6.0fg  bias(ai0)=%+.4f N  bias(ur)=%+.4f N  -- %s\n', ...
-            i, numel(confirmed_files), direction, info.weight_g, ...
-            mean(F_from_ai0) - F_expected, mean(F_from_ur) - F_expected, fname);
+            i, numel(recs), r.direction, r.weight_g, ...
+            mean(r.F_from_ai0) - r.F_expected, mean(r.F_from_ur) - r.F_expected, r.fname);
 
     fig = figure('Color', 'w', 'Position', [100 100 760 480]);
     hold on
-    plot([t(1) t(end)], [F_expected F_expected], 'k--', 'LineWidth', 1.5);
-    plot(t, F_from_ai0, '-', 'Color', [0.85 0.33 0.10], 'LineWidth', 1.3);
-    plot(t, F_from_ur, '-', 'Color', [0.00 0.45 0.74], 'LineWidth', 1.3);
+    plot([r.t(1) r.t(end)], [r.F_expected r.F_expected], 'k--', 'LineWidth', 1.5);
+    plot(r.t, r.F_from_ai0, '-', 'Color', [0.85 0.33 0.10], 'LineWidth', 1.3);
+    plot(r.t, r.F_from_ur, '-', 'Color', [0.00 0.45 0.74], 'LineWidth', 1.3);
     set(gca, 'FontName', 'Helvetica', 'FontSize', 10, 'Box', 'off');
+    xlim(x_limits);
+    ylim(y_limits);
     legend({'F_{expected}', 'F_{from ai0}', 'F_{from UR fz}'}, 'Location', 'best');
     xlabel('time since start of measurement (s)');
     ylabel('force (N)');
-    title(sprintf('%s   %.0f g   %s', direction, info.weight_g, strrep(info.ts, '_', ' ')));
+    title(sprintf('%s   %.0f g   %s', r.direction, r.weight_g, strrep(r.ts, '_', ' ')));
     grid off
 
-    [~, base_name] = fileparts(fname);
-    print(fig, fullfile(OUT_DIR, [base_name '_step2.png']), '-dpng', '-r150');
+    [~, base_name] = fileparts(r.fname);
+    out_base = fullfile(OUT_DIR, [base_name '_step2']);
+    print(fig, [out_base '.png'], '-dpng', '-r150');
+    print(fig, [out_base '.svg'], '-dsvg');
+    savefig(fig, [out_base '.fig']);
 
-    if i < numel(confirmed_files)
+    if i < numel(recs)
         input('Press Enter for the next figure... ', 's');
     end
 end

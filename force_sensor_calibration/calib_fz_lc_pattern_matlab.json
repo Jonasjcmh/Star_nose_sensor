@@ -1,21 +1,21 @@
 {
   "tip": "futek_direct",
-  "date": "2026-07-15",
-  "slope": 0.72627421377785517,
-  "offset": -0.14202249489596366,
-  "r_squared": 0.92748677717884442,
-  "rmse_n": 0.18295031098284736,
+  "date": "2026-07-21",
+  "slope": 0.2451192191896677,
+  "offset": -0.55132124372602154,
+  "r_squared": 0.34792418280596982,
+  "rmse_n": 2.1307777994372024,
   "fz_input": "fz_signed = AI0_SIGN[direction] * abs(fz_raw); AI0_SIGN = {posz: -1, negz: +1}",
-  "n_samples": 24,
-  "n_sessions": 12,
-  "loadcell_rate_n_per_v": 4.0929184425543577,
-  "loadcell_rate_v_per_n": 0.24432443842587492,
+  "n_samples": 44,
+  "n_sessions": 22,
+  "loadcell_rate_n_per_v": 4.1139510547707872,
+  "loadcell_rate_v_per_n": 0.24307532751035998,
   "note": "F_true includes hardware mass for both instruments: ur_only uses 43g posz / 37g negz; futek_direct uses 7g posz / 4g negz. Baseline is treated as a known non-zero load (hardware only), not a zero reference -- n_samples = sessions x 2 (baseline + loaded).",
   "raw_unsigned_pooled": {
-    "slope": -0.26016374525502367,
-    "offset": -0.14338108912395484,
-    "r_squared": 0.0876574331239589,
-    "rmse_n": 0.64893846516504217,
+    "slope": -0.1759503047208186,
+    "offset": -0.44637114314009346,
+    "r_squared": 0.17381895383591273,
+    "rmse_n": 2.3984282437529143,
     "note": "fit on raw fz (no sign correction) -- pools push and pull into one line and fits neither well; kept for reference."
   },
   "cross_check": {
@@ -29,24 +29,24 @@
   },
   "per_direction": {
     "posz": {
-      "slope": 0.978242254769765,
-      "offset": -0.087853430256075712,
-      "r2": 0.96923529254747243,
-      "rmse": 0.098285543970126926,
-      "n": 12
+      "slope": 1.1213676426628894,
+      "offset": -4.8367336546792883,
+      "r2": 0.98992682345457639,
+      "rmse": 0.24074996473623261,
+      "n": 22
     },
     "negz": {
-      "slope": -0.59685602796253479,
-      "offset": -0.038787912820884937,
-      "r2": 0.90001704015672912,
-      "rmse": 0.17922662471785406,
-      "n": 12
+      "slope": -0.90114022818603179,
+      "offset": -6.3389807135036982,
+      "r2": 0.96648236627405248,
+      "rmse": 0.44014699336104729,
+      "n": 22
     }
   },
   "bland_altman_pooled": {
     "note": "sign-corrected pooled correction vs F_lc",
-    "bias_n": -4.6259292692714858E-17,
-    "loa_lower_n": -0.36629494581101518,
-    "loa_upper_n": 0.36629494581101507
+    "bias_n": -1.6148698540002277E-16,
+    "loa_lower_n": -4.2246072988644583,
+    "loa_upper_n": 4.2246072988644583
   }
 }

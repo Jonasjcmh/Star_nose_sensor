@@ -1,0 +1,109 @@
+Interdome_touch — origin & design notes
+========================================
+Created: 2026-07-23
+Author of request: Jonathan (repo owner)
+
+ORIGINAL REQUEST (verbatim)
+---------------------------
+"I want to create a new folder called Interdome_touch, inside of this folder
+I want to generate a script similar to main from Integration_2 where I will
+start the robot control and the capacitive sensor, and the futek sensor (for
+futek sensor use the calibration json file from force sensor calibration and
+confirm the coeficients with me), the idea is that we robot will let me
+choose the calibration of the tcp from Integration_2 folder I need to
+visualize the available calibrations (json files) and choose from the list,
+then we will cover automatically all the points of the json file calib
+points supposed rigid transformed.json with the ur robot, they are pushing
+points for it we will use same schema of pushing as capacitance dataset
+collector long hold (times for positioning, ramp down, holding, ramp up,
+releasing), the test must be for 5 depths, with a n number of iterations
+that should be choose on the interface, and then of course we will create
+the csv file with all the position and sensors data collection. Also
+generate an script to analyze the data and reconstruct the points and the
+trajectory, and visualize the positions that are been touch in the
+hexagonal schematic and the intensity measured by the capacitive sensor and
+for the futek sensor, additionally, include a txt file with this prompt of
+explanation for future understanding."
+
+WHAT WAS BUILT
+--------------
+main.py
+    Combines, in one session, the three data sources:
+      1. UR5 robot control (RTDE) — position, TCP force/torque, AI0
+      2. Integration_2/sensor.py — the 19-cell capacitive skin sensor
+      3. The FUTEK load cell (read via the robot's AI0 analog input)
+    At startup it lists every calib_*.json in Integration_2/ (the TCP
+    calibration profiles) and lets you pick one interactively, exactly like
+    Integration_2/main.py and capacitance_dataset_collector_long_hold.py do.
+    The 19 pressing points are NOT the old hardcoded grid — they are read
+    directly from
+        Integration_2/calib_points_supposed_rigid_transformed.json
+    (the rigid rotation+translation fit of the nominal grid onto the actual
+    robot-calibrated positions), per the request to "cover automatically all
+    the points of ... calib points supposed rigid transformed.json".
+    Each indentation reuses the exact 5-phase step-impulse schema from
+    Capacitance_measurement/capacitance_dataset_collector_long_hold.py:
+        locate (positioning) -> press (ramp down) -> hold (holding)
+        -> retract (ramp up) -> post (releasing)
+    with hold_s_eff = max(hold_floor, ramp_time * hold_mult), so the dwell
+    at depth is never shorter than the press/retract ramp itself.
+    The test matrix is 5 depths (interactive or --depths) x N iterations
+    (interactive or --iterations, "chosen on the interface") x 19 points,
+    each iteration visiting all 19 points in a random order.
+    Output: logs/interdome_<timestamp>.csv (position + all sensor data) and
+    a companion logs/interdome_<timestamp>_meta.json recording the depths,
+    iterations, seed, calibration profile, points source, and FUTEK
+    coefficients used for that run.
+
+analyze_interdome.py
+    Reads a CSV (+ its meta.json) produced by main.py and reconstructs:
+      - the UR5 trajectory (XY path over the sensor grid + TCP height vs
+        time, colored by phase)
+      - the 19-cell hexagonal schematic (same geometry/rotation approach as
+        Integration_2/plot_rigid.py, view-rotated upright about the anchor
+        point), colored by capacitive sensor intensity (each point's own
+        expected cell, hold-phase mean) and separately by FUTEK force
+        (hold-phase mean) — one grid per depth plus an all-depths summary.
+    Figures are saved under Interdome_touch/plots/.
+
+PROMPT_EXPLANATION.txt (this file)
+    The original request, kept for future readers per the explicit ask.
+
+KEY DESIGN DECISION — FUTEK CALIBRATION (confirmed with the user 2026-07-23)
+-----------------------------------------------------------------------------
+force_sensor_calibration/ contains TWO different calibrations that are easy
+to confuse:
+
+  1. Direct AI0(V) -> force(N) fit — the one USED here.
+     Source: force_sensor_calibration/Matlab calibration/
+             step1_loadcell_calibration.json
+       F_futek_N = slope_n_per_v * ai0 + offset_n
+       slope_n_per_v = 4.113951054770791
+       offset_n      = -19.28418747084478
+       R^2 = 0.999964   RMSE = 0.0158 N   (n=44 samples, fzcal_futek_direct_* v2)
+
+  2. UR F/T-sensor correction fit — NOT used here.
+     Source: force_sensor_calibration/calib_fz_lc_pattern.json
+       fz_corrected = 0.2451192191896677 * fz_signed + (-0.5513212437260172)
+       fz_signed = AI0_SIGN[direction] * abs(fz_raw)   (fz_raw = robot's own
+       TCP Fz from the F/T sensor, NOT the AI0 voltage)
+     This formula exists to recover a load-cell-equivalent force from the
+     ROBOT's own force/torque sensor for rigs that do NOT have a physical
+     FUTEK load cell wired up. R^2 is much lower (~0.35 pooled) than the
+     direct AI0 fit.
+
+  Since Interdome_touch's rig physically wires the FUTEK to AI0 (same as
+  the futek_direct calibration runs), calibration #1 is the accurate,
+  directly-applicable choice and is what main.py implements
+  (see FUTEK_SLOPE_N_PER_V / FUTEK_OFFSET_N near the top of main.py).
+
+HOW TO RUN
+----------
+  cd Interdome_touch
+  python3 main.py
+      -> pick a TCP calibration, enter iterations/depths (or pass
+         --iterations / --depths), confirm, and the robot runs the full
+         5-depth x N-iteration x 19-point sweep.
+
+  python3 analyze_interdome.py logs/interdome_<timestamp>.csv
+      -> writes trajectory + hex-schematic figures to plots/.

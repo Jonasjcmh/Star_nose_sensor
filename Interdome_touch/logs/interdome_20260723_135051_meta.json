@@ -1,0 +1,91 @@
+{
+  "timestamp": "20260723_135051",
+  "csv_file": "interdome_20260723_135051.csv",
+  "depths_mm": [
+    1.0,
+    2.0,
+    3.0,
+    4.0,
+    5.0
+  ],
+  "iterations": 2,
+  "points_per_iter": 19,
+  "total_indentations": 190,
+  "rate_hz": 100,
+  "hold_floor_s": 1.0,
+  "hold_mult": 1.0,
+  "hold_s_per_depth": {
+    "1.0": 1.0,
+    "2.0": 1.0,
+    "3.0": 1.0,
+    "4.0": 1.0133333333333334,
+    "5.0": 1.2633333333333334
+  },
+  "ramp_s_per_depth": {
+    "1.0": 0.2633333333333333,
+    "2.0": 0.5133333333333333,
+    "3.0": 0.7633333333333333,
+    "4.0": 1.0133333333333334,
+    "5.0": 1.2633333333333334
+  },
+  "seed": 80627,
+  "sensor_enabled": true,
+  "robot_ip": "177.22.22.2",
+  "calibration_tip": "short_6mm",
+  "calibration_offset_mm": {
+    "x": -3.3,
+    "y": 2.4,
+    "z": -15.9
+  },
+  "points_source": "/home/cao/Documents/Star_muse_sensor/Star_nose_sensor/Integration_2/calib_points_supposed_rigid_transformed.json",
+  "points_meta": {
+    "anchor_point": 10,
+    "rotation_deg": 7.6561,
+    "rotation_matrix": [
+      [
+        0.9910855719601483,
+        -0.1332268330796233
+      ],
+      [
+        0.1332268330796234,
+        0.9910855719601481
+      ]
+    ],
+    "translation_mm": {
+      "x_mm": -2.9,
+      "y_mm": 2.3
+    },
+    "residual_mm": {
+      "mean": 0.3071,
+      "max": 0.7061
+    }
+  },
+  "ur5_to_sensor": {
+    "1": 24,
+    "2": 12,
+    "3": 0,
+    "4": 37,
+    "5": 25,
+    "6": 13,
+    "7": 1,
+    "8": 50,
+    "9": 38,
+    "10": 26,
+    "11": 14,
+    "12": 2,
+    "13": 51,
+    "14": 39,
+    "15": 27,
+    "16": 15,
+    "17": 52,
+    "18": 40,
+    "19": 28
+  },
+  "futek_calibration": {
+    "formula": "F_futek_N = slope_n_per_v * ai0 + offset_n",
+    "slope_n_per_v": 4.113951054770791,
+    "offset_n": -19.28418747084478,
+    "source": "force_sensor_calibration/Matlab calibration/step1_loadcell_calibration.json",
+    "confirmed_with_user": "2026-07-23"
+  }
+}

@@ -38,14 +38,14 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import RegularPolygon
 
-BASE_DIR = "/home/divuthejo/Star_nose_sensor/Integration_2"
+BASE_DIR = "/home/cao/Documents/Star_muse_sensor/Star_nose_sensor/Integration_2"
 
-RIGID_JSON      = os.path.join(BASE_DIR, "calib_points_supposed_rigid_transformed.json")
-MOCAP_JSON      = os.path.join(BASE_DIR, "calib_points_short_6mm.json")
-HORIZONTAL_JSON = os.path.join(BASE_DIR, "horizontal_midpoints_rigid.json")
-DIAGONAL_JSON   = os.path.join(BASE_DIR, "diagonal_midpoints_rigid.json")
-TRIANGLE_JSON   = os.path.join(BASE_DIR, "triangle_centroids_rigid.json")
-OUT_PNG         = os.path.join(BASE_DIR, "calibration_points_plot_rigid.svg")
+RIGID_JSON      = os.path.join(BASE_DIR, "calib_points_supposed_rigid_transformed_new_hollow_2.json")
+MOCAP_JSON      = os.path.join(BASE_DIR, "calib_points_short_new_hollow_2.json")
+HORIZONTAL_JSON = os.path.join(BASE_DIR, "horizontal_midpoints_rigid_new_hollow_2.json")
+DIAGONAL_JSON   = os.path.join(BASE_DIR, "diagonal_midpoints_rigid_new_hollow_2.json")
+TRIANGLE_JSON   = os.path.join(BASE_DIR, "triangle_centroids_rigid_new_hollow_2.json")
+OUT_PNG         = os.path.join(BASE_DIR, "calibration_points_plot_rigid_new_hollow_2.svg")
 
 HEX_RADIUS = 8.0 / math.sqrt(3)   # ~4.6188 mm
 ANCHOR = 10   # pivot point for the view-rotation (matches the anchor used in the fit)

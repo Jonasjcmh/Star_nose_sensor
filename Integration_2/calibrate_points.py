@@ -46,6 +46,7 @@ only the global X/Y/Z offset from calib.json.
 """
 
 import argparse
+import glob
 import json
 import os
 import sys
@@ -84,10 +85,10 @@ INDENT_MM       = 10.0
 SAFE_Z_MM       = 20.0
 
 REFERENCE_POSE = [
-    -0.03746 + 0.0005,
-    -0.50066 + 0.0016,
-     0.06054,
-    -2.35063, 2.08341, -0.00009,
+    -0.03664,
+    -0.49831,
+     0.06071,
+    2.346, -2.094, -0.00009
 ]
 
 POINTS = {
@@ -145,20 +146,165 @@ def load_point_offsets(tip=None):
     return {}, {}
 
 
-def save_results(global_calib, per_point_offsets, scan_results, tip=None):
+def save_results(global_calib, per_point_offsets, scan_results, out_path):
     gx, gy, gz = global_calib
-    f_path = calib_pts_file(tip)
+
+    # Full record for every point = theoretical grid position + global offset
+    # + per-point deviation, expressed both as mm and as an absolute robot pose.
+    points_full = {}
+    for pt in range(1, 20):
+        dx, dy = per_point_offsets.get(pt, (0.0, 0.0))
+        tx, ty = POINTS[pt]
+        pose = build_pose(pt, global_calib, dx, dy, 0.0)   # surface, calibrated
+        points_full[str(pt)] = {
+            "theoretical_mm": [tx, ty],                       # nominal grid XY
+            "deviation_mm":   [round(dx, 4), round(dy, 4)],   # calibration nudge
+            "offset_mm":      [round(tx + gx + dx, 4),        # XY offset from ref pose
+                               round(ty + gy + dy, 4)],
+            "pose":           [round(v, 6) for v in pose],    # absolute UR5 pose
+        }
+
     data = {
         "global": {"x_mm": gx, "y_mm": gy, "z_mm": gz},
-        "per_point": {
+        "reference_pose": REFERENCE_POSE,
+        "per_point": {                                        # kept for ur5_control
             str(pt): {"dx_mm": round(dx, 4), "dy_mm": round(dy, 4)}
             for pt, (dx, dy) in sorted(per_point_offsets.items())
         },
+        "points": points_full,                                # full per-point record
         "scan_results": scan_results,
     }
-    with open(f_path, "w") as f:
+    with open(out_path, "w") as f:
         json.dump(data, f, indent=2)
-    print(f"\n[calib] Saved → {f_path}")
+    print(f"\n[calib] Saved full {len(points_full)}-point file → {out_path}")
+
+
+# ── Interactive calibration selection / naming ────────────────────────────────
+def discover_global_calibs():
+    """Find every global-offset file (calib_<name>.json / calib.json).
+
+    The per-point companions (calib_points*.json) are NOT starting points,
+    so they are excluded. Returns a list of dicts sorted with the default first.
+    """
+    def _read(path):
+        try:
+            with open(path) as f:
+                d = json.load(f)
+            return (d.get("x_mm", 0.0), d.get("y_mm", 0.0), d.get("z_mm", 0.0))
+        except Exception:
+            return None
+
+    profiles = []
+    for path in sorted(glob.glob(os.path.join(CALIB_DIR, "calib_*.json"))):
+        name = os.path.basename(path)
+        if name == "calib_points.json" or name.startswith("calib_points_"):
+            continue
+        base = name[len("calib_"):-len(".json")]      # calib_short_6mm.json -> short_6mm
+        pts = os.path.join(CALIB_DIR, f"calib_points_{base}.json")
+        profiles.append({
+            "base": base, "path": path, "offset": _read(path),
+            "points_file": pts if os.path.exists(pts) else None,
+        })
+
+    default = os.path.join(CALIB_DIR, "calib.json")
+    if os.path.exists(default):
+        dp = os.path.join(CALIB_DIR, "calib_points.json")
+        profiles.insert(0, {
+            "base": None, "path": default, "offset": _read(default),
+            "points_file": dp if os.path.exists(dp) else None,
+        })
+    return profiles
+
+
+def choose_starting_calib():
+    """Ask which calibration file to use as the global X/Y/Z starting point.
+
+    Returns (global_calib, base_label, points_file_or_None). Per-point
+    deviations are then built on top of this global offset.
+    """
+    profiles = discover_global_calibs()
+    print("\n" + "=" * 62)
+    print("  CHOOSE STARTING CALIBRATION  (global X/Y/Z base)")
+    print("=" * 62)
+    if not profiles:
+        print("  No calib_*.json files found — using zero global offset.")
+        return (0.0, 0.0, 0.0), None, None
+    for i, p in enumerate(profiles, 1):
+        o = p["offset"]
+        o_txt = (f"X={o[0]:+.2f} Y={o[1]:+.2f} Z={o[2]:+.2f} mm"
+                 if o else "unreadable")
+        pts = "  [+ per-point]" if p["points_file"] else ""
+        print(f"  {i:2d}) {os.path.basename(p['path']):<30s} {o_txt}{pts}")
+    print("   0) zero offset  (no global calibration)")
+    print("=" * 62)
+    while True:
+        try:
+            raw = input(f"Select starting calibration [0-{len(profiles)}] > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n[calib] Aborted.")
+            sys.exit(1)
+        if raw == "0":
+            print("[calib] Using zero global offset.")
+            return (0.0, 0.0, 0.0), None, None
+        if raw.isdigit() and 1 <= int(raw) <= len(profiles):
+            p = profiles[int(raw) - 1]
+            g = p["offset"] or (0.0, 0.0, 0.0)
+            print(f"[calib] Base global: X={g[0]:+.3f} Y={g[1]:+.3f} Z={g[2]:+.3f} mm "
+                  f"(from {os.path.basename(p['path'])})")
+            return g, p["base"], p["points_file"]
+        print("  Invalid choice, try again.")
+
+
+def load_existing_deviations(points_file):
+    """Load the per-point deviations from the chosen calibration file.
+
+    These are the base deviations we build on during this session — always
+    loaded (no prompt) so calibration starts from the chosen file's values.
+    """
+    if not points_file or not os.path.exists(points_file):
+        return {}, {}
+    try:
+        with open(points_file) as f:
+            d = json.load(f)
+        offsets = {int(k): (v.get("dx_mm", 0.0), v.get("dy_mm", 0.0))
+                   for k, v in d.get("per_point", {}).items()}
+        print(f"[calib] Loaded {len(offsets)} per-point deviation(s) from "
+              f"{os.path.basename(points_file)}")
+        return offsets, d.get("scan_results", {})
+    except Exception as e:
+        print(f"[calib] Could not read {os.path.basename(points_file)}: {e}")
+        return {}, {}
+
+
+def prompt_save(global_calib, per_point_offsets, scan_results, default_name):
+    """Ask for the output calibration-points filename, then save to it.
+
+    Returns the base name (no extension) so the caller can reuse it, e.g.
+    for a matching deviation-map PNG.
+    """
+    print("\n" + "=" * 62)
+    print("  SAVE CALIBRATION POINTS")
+    print("=" * 62)
+    while True:
+        try:
+            name = input(f"  Output file name [{default_name}] > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            name = ""
+        if not name:
+            name = default_name
+        name = os.path.basename(name)              # ignore any directory part
+        if not name.endswith(".json"):
+            name += ".json"
+        out_path = os.path.join(CALIB_DIR, name)
+        if os.path.exists(out_path):
+            try:
+                ow = input(f"  {name} exists — overwrite? [y/N] > ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                ow = "n"
+            if ow != "y":
+                continue
+        save_results(global_calib, per_point_offsets, scan_results, out_path)
+        return name[:-len(".json")]
 
 # ── Pose builder ──────────────────────────────────────────────────────────────
 def build_pose(pt, global_calib, extra_dx=0.0, extra_dy=0.0, extra_z=0.0):
@@ -843,23 +989,32 @@ def parse_args():
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     args = parse_args()
-
     tip = args.tip
-    global_calib = load_global_calib(tip)
-    per_point_offsets, scan_results = load_point_offsets(tip)
 
-    if tip:
-        print(f"[calib] Tip profile  : {tip}")
-        print(f"[calib] Global file  : calib_{tip}.json")
-        print(f"[calib] Points file  : calib_points_{tip}.json")
-
-    # ── Map-only mode ─────────────────────────────────────────────────────────
+    # ── Map-only mode (loads from --tip or default) ───────────────────────────
     if args.map or args.save_map:
+        global_calib = load_global_calib(tip)
+        per_point_offsets, scan_results = load_point_offsets(tip)
         save_path = args.save_map or None
         show_deviation_map(per_point_offsets, scan_results, save_path=save_path)
         if args.map and not args.save_map:
             input("[map] Press Enter to close and exit ...")
         return
+
+    # ── Choose the starting calibration (global X/Y/Z base) ───────────────────
+    if tip:
+        # Explicit --tip keeps the old non-interactive behaviour.
+        global_calib = load_global_calib(tip)
+        per_point_offsets, scan_results = load_point_offsets(tip)
+        base_label = tip
+        print(f"[calib] Tip profile  : {tip}")
+        print(f"[calib] Global file  : calib_{tip}.json")
+    else:
+        global_calib, base_label, base_points_file = choose_starting_calib()
+        per_point_offsets, scan_results = load_existing_deviations(base_points_file)
+
+    default_out = (f"calib_points_{base_label}.json"
+                   if base_label else "calib_points.json")
 
     # ── Determine target points ───────────────────────────────────────────────
     if args.point:
@@ -926,9 +1081,8 @@ def main():
             target_points, rtde_c, rtde_r,
             global_calib, per_point_offsets, scan_results, sensor_mod)
         print_summary(scan_results, per_point_offsets)
-        save_results(global_calib, per_point_offsets, scan_results, tip)
-        map_suffix = f"_{tip}" if tip else ""
-        map_path = os.path.join(CALIB_DIR, f"deviation_map{map_suffix}.png")
+        saved_base = prompt_save(global_calib, per_point_offsets, scan_results, default_out)
+        map_path = os.path.join(CALIB_DIR, f"deviation_map_{saved_base}.png")
         show_deviation_map(per_point_offsets, scan_results, save_path=map_path)
         print("[calib] Scan complete.")
 
@@ -955,12 +1109,12 @@ def main():
                 global_calib, per_point_offsets, scan_results, sensor_mod)
 
             if cont is None:
-                save_results(global_calib, per_point_offsets, scan_results, tip)
+                prompt_save(global_calib, per_point_offsets, scan_results, default_out)
                 show_deviation_map(per_point_offsets, scan_results)
                 break
         else:
             print_summary(scan_results, per_point_offsets)
-            save_results(global_calib, per_point_offsets, scan_results, tip)
+            prompt_save(global_calib, per_point_offsets, scan_results, default_out)
             show_deviation_map(per_point_offsets, scan_results)
             print("\n[calib] All done!")
 

@@ -41,13 +41,13 @@ matplotlib.use("Agg")   # headless-safe; swap to TkAgg if you want an interactiv
 import matplotlib.pyplot as plt
 
 # ── Paths (edit if your files live elsewhere) ─────────────────────────────────
-BASE_DIR = "/home/divuthejo/Star_nose_sensor/Integration_2"
+BASE_DIR = "/home/cao/Documents/Star_muse_sensor/Star_nose_sensor/Integration_2"
 
 HORIZONTAL_JSON = os.path.join(BASE_DIR, "horizontal_midpoints.json")
 DIAGONAL_JSON   = os.path.join(BASE_DIR, "diagonal_midpoints.json")
 TRIANGLE_JSON   = os.path.join(BASE_DIR, "triangle_centroids.json")
-MOCAP_JSON      = os.path.join(BASE_DIR, "calib_points_short_20july.json")
-OUT_SVG         = os.path.join(BASE_DIR, "calibration_points_plot_calib1.svg")
+MOCAP_JSON      = os.path.join(BASE_DIR, "calib_points_short_new_setup_hollow_2.json")
+OUT_SVG         = os.path.join(BASE_DIR, "calibration_points_plot_new_hollow_v2.svg")
 
 # Original 19 points (physical sensor numbering, verified against chip photo)
 POINTS = {

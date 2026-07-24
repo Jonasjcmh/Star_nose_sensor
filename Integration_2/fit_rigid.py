@@ -61,7 +61,7 @@ more constrained problem), but point 10 will match exactly, which is
 the actual requirement here.
 
 Uses the ORIGINAL arbitrary P1-P19 numbering throughout (matches
-calib_points_short_6mm.json).
+calib_points_short_new_hollow_2.json).
 
 Output:
     calib_points_supposed_rigid_transformed.json
@@ -74,9 +74,9 @@ import math
 
 import numpy as np
 
-BASE_DIR = "/home/divuthejo/Star_nose_sensor/Integration_2"
-MOCAP_JSON = os.path.join(BASE_DIR, "calib_points_short_6mm.json")
-OUT_JSON = os.path.join(BASE_DIR, "calib_points_supposed_rigid_transformed.json")
+BASE_DIR = "/home/cao/Documents/Star_muse_sensor/Star_nose_sensor/Integration_2"
+MOCAP_JSON = os.path.join(BASE_DIR, "calib_points_short_new_hollow_2.json")
+OUT_JSON = os.path.join(BASE_DIR, "calib_points_supposed_rigid_transformed_new_hollow_2.json")
 
 ANCHOR = 10   # point forced to match exactly
 

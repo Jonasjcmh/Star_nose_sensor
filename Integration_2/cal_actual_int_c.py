@@ -1,24 +1,30 @@
 """
-caliberate_triangle_centroids_rigid.py
-Computes triangle centroids using the RIGID-TRANSFORMED points.
+cal_actual_int_c.py
+Computes triangle centroids using the ACTUAL (robot-calibrated) points —
+NO rigid transformation applied.
 
-Same topology-vs-coordinates split as the other two "_rigid" scripts:
-triangle triples are found from the ORIGINAL undistorted grid (where
-adjacency detection is reliable), then centroids are computed using
-the rigid-transformed coordinates for those same triples.
-────────────────────────────────────────────────────────────────────
+Untransformed counterpart of cal_rigid_int_c.py. Triangle triples are found from
+the ORIGINAL undistorted grid (where adjacency detection is reliable), then
+centroids are computed from the ACTUAL calibrated coordinates:
+
+    actual[pid] = nominal[pid] + global offset + per-point (dx, dy)
+
+Usage:
+  python3 cal_actual_int_c.py
+  python3 cal_actual_int_c.py --input calib_points_short_<tip>.json --output triangle_centroids_actual_<tip>.json
 """
 
+import argparse
 import json
 import os
 import itertools
 
 BASE_DIR = "/home/cao/Documents/Star_muse_sensor/Star_nose_sensor/Integration_2"
-INPUT_JSON = os.path.join(BASE_DIR, "calib_points_supposed_rigid_transformed_new_hollow_2.json")
-OUT_PATH   = os.path.join(BASE_DIR, "triangle_centroids_rigid_new_hollow_2.json")
+DEFAULT_INPUT  = os.path.join(BASE_DIR, "calib_points_short_new_hollow_2.json")
+DEFAULT_OUTPUT = os.path.join(BASE_DIR, "triangle_centroids_actual_new_hollow_2.json")
 
-# Original (untransformed) nominal points — used ONLY to determine
-# topology (which triples form triangles), never for coordinates.
+# Original (untransformed) nominal points — used to determine topology (which
+# triples form triangles) and as the base for actual coordinates.
 POINTS = {
      1: ( -8.0, +14.0),   2: (  0.0, +14.0),   3: ( +8.0, +14.0),
      4: (-12.0,  +7.0),   5: ( -4.0,  +7.0),   6: ( +4.0,  +7.0),
@@ -30,10 +36,32 @@ POINTS = {
 }
 
 
-def load_transformed_points(path):
+def load_actual_points(path):
+    """actual[pid] = nominal[pid] + global offset + per-point offset (with
+    fallbacks to points[pid].offset_mm / x_mm,y_mm)."""
     with open(path) as f:
         data = json.load(f)
-    return {int(pid): (d["x_mm"], d["y_mm"]) for pid, d in data["points"].items()}
+    g = data.get("global", {})
+    gx, gy = g.get("x_mm", 0.0), g.get("y_mm", 0.0)
+    coords = {}
+    per_point = data.get("per_point")
+    points    = data.get("points")
+    if per_point:
+        for key, off in per_point.items():
+            pid = int(key)
+            if pid not in POINTS:
+                continue
+            nx, ny = POINTS[pid]
+            coords[pid] = (nx + gx + off.get("dx_mm", 0.0),
+                           ny + gy + off.get("dy_mm", 0.0))
+    elif points:
+        for key, v in points.items():
+            pid = int(key)
+            if "offset_mm" in v:
+                coords[pid] = tuple(v["offset_mm"])
+            elif "x_mm" in v:
+                coords[pid] = (v["x_mm"], v["y_mm"])
+    return coords
 
 
 def _dist(a, b):
@@ -74,14 +102,19 @@ def find_triangles(points):
 
 
 def main():
-    transformed = load_transformed_points(INPUT_JSON)
+    ap = argparse.ArgumentParser(description="Triangle centroids for ACTUAL (untransformed) points")
+    ap.add_argument("--input",  default=DEFAULT_INPUT,  help="actual calib_points_*.json")
+    ap.add_argument("--output", default=DEFAULT_OUTPUT, help="output json path")
+    args = ap.parse_args()
+
+    actual    = load_actual_points(args.input)
     triangles = find_triangles(POINTS)
 
     centroids = {}
     for (a, b, c) in triangles:
-        (xa, ya) = transformed[a]
-        (xb, yb) = transformed[b]
-        (xc, yc) = transformed[c]
+        (xa, ya) = actual[a]
+        (xb, yb) = actual[b]
+        (xc, yc) = actual[c]
         label = f"T{a}_{b}_{c}"
         centroids[label] = {
             "vertices": [a, b, c],
@@ -89,6 +122,7 @@ def main():
             "y_mm": round((ya + yb + yc) / 3.0, 4),
         }
 
+    print(f"Source (actual points): {os.path.basename(args.input)}")
     print(f"{'Label':<10} {'Vertices':<12} {'x_mm':>8} {'y_mm':>8}")
     print("-" * 42)
     for label, d in centroids.items():
@@ -98,9 +132,9 @@ def main():
 
     print(f"\nTotal triangle-centroid points: {len(centroids)}  (expected 24)")
 
-    with open(OUT_PATH, "w") as f:
+    with open(args.output, "w") as f:
         json.dump(centroids, f, indent=2)
-    print(f"Saved -> {OUT_PATH}")
+    print(f"Saved -> {args.output}")
 
 
 if __name__ == "__main__":

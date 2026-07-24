@@ -28,9 +28,9 @@ using the rotated+translated coordinates.
 import json
 import os
 
-BASE_DIR = "/home/divuthejo/Star_nose_sensor/Integration_2"
-INPUT_JSON = os.path.join(BASE_DIR, "calib_points_supposed_rigid_transformed.json")
-OUT_PATH   = os.path.join(BASE_DIR, "horizontal_midpoints_rigid.json")
+BASE_DIR = "/home/cao/Documents/Star_muse_sensor/Star_nose_sensor/Integration_2"
+INPUT_JSON = os.path.join(BASE_DIR, "calib_points_supposed_rigid_transformed_new_hollow_2.json")
+OUT_PATH   = os.path.join(BASE_DIR, "horizontal_midpoints_rigid_new_hollow_2.json")
 
 # Original (untransformed) nominal points — used ONLY to determine
 # topology (which IDs are horizontal neighbors), never for coordinates.

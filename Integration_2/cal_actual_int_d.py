@@ -1,32 +1,40 @@
 """
-cal_actual_int_d.py
-Computes diagonal edge-midpoints using the ACTUAL (robot-calibrated) points —
-NO rigid transformation applied.
+caliberate_diagonal_midpoints_actual.py
+Computes diagonal edge-midpoints using PURE GEOMETRY on the ACTUAL
+(measured, robot-calibrated) point positions -- no reference to the
+theoretical grid's topology at all.
 
-Untransformed counterpart of cal_rigid_int_d.py. Diagonal-neighbor ID pairs are
-determined from the ORIGINAL undistorted grid (where the neighbor threshold and
-same-y/different-y distinction work correctly), then midpoints are computed from
-the ACTUAL calibrated coordinates:
+Same neighbor-detection + angle-clustering approach as
+caliberate_horizontal_midpoints_actual.py (see that file's docstring
+for the full explanation). The 42 real lattice edges split into 3
+angular clusters, 60 degrees apart; the one with exactly 14 edges is
+horizontal (handled by the other script), and the remaining TWO
+clusters (14 + 14 = 28) are the diagonal edges, handled here.
 
-    actual[pid] = nominal[pid] + global offset + per-point (dx, dy)
+CALCULATIONS use the calibration file's own (ORIGINAL) point
+numbering. LABELS are converted to HARDWARE numbering for human
+readability -- see caliberate_horizontal_midpoints_actual.py's
+docstring for details. This conversion never touches coordinates or
+the point-finding math.
 
-Usage:
-  python3 cal_actual_int_d.py
-  python3 cal_actual_int_d.py --input calib_points_short_<tip>.json --output diagonal_midpoints_actual_<tip>.json
+Output: diagonal_midpoints_actual_<TAG>.json
+────────────────────────────────────────────────────────────────────
 """
 
-import argparse
 import json
 import os
 import itertools
+import math
 
-BASE_DIR = "/home/cao/Documents/Star_muse_sensor/Star_nose_sensor/Integration_2"
-DEFAULT_INPUT  = os.path.join(BASE_DIR, "calib_points_short_new_hollow_2.json")
-DEFAULT_OUTPUT = os.path.join(BASE_DIR, "diagonal_midpoints_actual_new_hollow_2.json")
+BASE_DIR = "/home/divuthejo/Star_nose_sensor/Integration_2"
 
-# Original (untransformed) nominal points — used to determine topology (which
-# IDs are diagonal neighbors) and as the base for actual coordinates.
-POINTS = {
+CALIB_SOURCE_FILE = os.path.join(BASE_DIR, "calib_points_short_new_hollow_2.json")
+TAG = "new_hollow_2"
+
+OUT_PATH = os.path.join(BASE_DIR, f"diagonal_midpoints_actual_{TAG}.json")
+
+# ── Label conversion ONLY (never used for coordinates/math) ──────────────────
+ORIGINAL_POINTS = {
      1: ( -8.0, +14.0),   2: (  0.0, +14.0),   3: ( +8.0, +14.0),
      4: (-12.0,  +7.0),   5: ( -4.0,  +7.0),   6: ( +4.0,  +7.0),
      7: (+12.0,  +7.0),   8: (-16.0,   0.0),   9: ( -8.0,   0.0),
@@ -35,34 +43,30 @@ POINTS = {
     16: (+12.0,  -7.0),  17: ( -8.0, -14.0),  18: (  0.0, -14.0),
     19: ( +8.0, -14.0),
 }
+HARDWARE_POINTS = {
+     1: (  -8.0,  -14.0),   2: ( -12.0,   -7.0),   3: ( -16.0,   +0.0),
+     4: (  +0.0,  -14.0),   5: (  -4.0,   -7.0),   6: (  -8.0,   +0.0),
+     7: ( -12.0,   +7.0),   8: (  +8.0,  -14.0),   9: (  +4.0,   -7.0),
+    10: (  +0.0,   +0.0),  11: (  -4.0,   +7.0),  12: (  -8.0,  +14.0),
+    13: ( +12.0,   -7.0),  14: (  +8.0,   +0.0),  15: (  +4.0,   +7.0),
+    16: (  +0.0,  +14.0),  17: ( +16.0,   +0.0),  18: ( +12.0,   +7.0),
+    19: (  +8.0,  +14.0),
+}
+_COORD_TO_HW_ID = {v: k for k, v in HARDWARE_POINTS.items()}
+ORIGINAL_TO_HARDWARE_ID = {
+    orig_id: _COORD_TO_HW_ID[coord] for orig_id, coord in ORIGINAL_POINTS.items()
+}
 
 
 def load_actual_points(path):
-    """actual[pid] = nominal[pid] + global offset + per-point offset (with
-    fallbacks to points[pid].offset_mm / x_mm,y_mm)."""
     with open(path) as f:
         data = json.load(f)
-    g = data.get("global", {})
-    gx, gy = g.get("x_mm", 0.0), g.get("y_mm", 0.0)
-    coords = {}
-    per_point = data.get("per_point")
-    points    = data.get("points")
-    if per_point:
-        for key, off in per_point.items():
-            pid = int(key)
-            if pid not in POINTS:
-                continue
-            nx, ny = POINTS[pid]
-            coords[pid] = (nx + gx + off.get("dx_mm", 0.0),
-                           ny + gy + off.get("dy_mm", 0.0))
-    elif points:
-        for key, v in points.items():
-            pid = int(key)
-            if "offset_mm" in v:
-                coords[pid] = tuple(v["offset_mm"])
-            elif "x_mm" in v:
-                coords[pid] = (v["x_mm"], v["y_mm"])
-    return coords
+    actual = {}
+    for key, d in data["points"].items():
+        pid = int(key)
+        ax, ay = d["offset_mm"]
+        actual[pid] = (ax, ay)
+    return actual
 
 
 def _dist(a, b):
@@ -80,53 +84,85 @@ def find_neighbor_threshold(points, gap_factor=1.3):
     return dists[-1]
 
 
-def find_diagonal_pairs(points):
-    """Diagonal-neighbor ID pairs, determined from the ORIGINAL grid."""
+def find_all_neighbor_edges(points):
     threshold = find_neighbor_threshold(points)
     ids = list(points.keys())
-    pairs = []
+    edges = []
     for i, j in itertools.combinations(ids, 2):
-        xi, yi = points[i]
-        xj, yj = points[j]
-        if yi == yj:
-            continue   # same row -> horizontal, not this script's job
         if _dist(points[i], points[j]) <= threshold:
-            pairs.append(tuple(sorted((i, j))))
-    return sorted(set(pairs))
+            edges.append(tuple(sorted((i, j))))
+    return sorted(set(edges))
+
+
+def edge_angle_deg(points, edge):
+    i, j = edge
+    (x1, y1), (x2, y2) = points[i], points[j]
+    return math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180
+
+
+def cluster_edges_by_angle(points, edges, n_clusters=3):
+    angled = sorted(((edge_angle_deg(points, e), e) for e in edges), key=lambda t: t[0])
+    angles_only = [a for a, e in angled]
+    gaps = [(angles_only[i + 1] - angles_only[i], i) for i in range(len(angles_only) - 1)]
+    gaps.sort(key=lambda t: -t[0])
+    split_indices = sorted(i for _, i in gaps[:n_clusters - 1])
+    clusters = []
+    start = 0
+    for idx in split_indices:
+        clusters.append([e for a, e in angled[start:idx + 1]])
+        start = idx + 1
+    clusters.append([e for a, e in angled[start:]])
+    return clusters
+
+
+def find_diagonal_edges(points):
+    """The two non-14-edge... actually: the two clusters that AREN'T
+    the horizontal (14-edge) one. Their union is the 28 diagonal edges."""
+    all_edges = find_all_neighbor_edges(points)
+    clusters = cluster_edges_by_angle(points, all_edges, n_clusters=3)
+    diagonal = []
+    horizontal_found = False
+    for c in clusters:
+        if len(c) == 14 and not horizontal_found:
+            horizontal_found = True   # skip exactly one 14-edge cluster (horizontal)
+            continue
+        diagonal.extend(c)
+    if not horizontal_found:
+        raise ValueError(
+            f"Expected one 14-edge (horizontal) cluster, got sizes "
+            f"{[len(c) for c in clusters]}"
+        )
+    return diagonal
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Diagonal midpoints for ACTUAL (untransformed) points")
-    ap.add_argument("--input",  default=DEFAULT_INPUT,  help="actual calib_points_*.json")
-    ap.add_argument("--output", default=DEFAULT_OUTPUT, help="output json path")
-    args = ap.parse_args()
-
-    actual = load_actual_points(args.input)
-    pairs  = find_diagonal_pairs(POINTS)
+    actual = load_actual_points(CALIB_SOURCE_FILE)
+    diag_edges = find_diagonal_edges(actual)
 
     mids = {}
-    for id_a, id_b in pairs:
-        xa, ya = actual[id_a]
-        xb, yb = actual[id_b]
-        label = f"D{id_a}_{id_b}"
+    for (a, b) in diag_edges:
+        xa, ya = actual[a]
+        xb, yb = actual[b]
+        hw_a = ORIGINAL_TO_HARDWARE_ID[a]
+        hw_b = ORIGINAL_TO_HARDWARE_ID[b]
+        label = f"D{hw_a}_{hw_b}"
         mids[label] = {
-            "between": [id_a, id_b],
+            "between": [hw_a, hw_b],
             "x_mm": round((xa + xb) / 2.0, 4),
             "y_mm": round((ya + yb) / 2.0, 4),
         }
 
-    print(f"Source (actual points): {os.path.basename(args.input)}")
     print(f"{'Label':<8} {'Between':<10} {'x_mm':>8} {'y_mm':>8}")
     print("-" * 38)
     for label, d in mids.items():
-        between_str = f"P{d['between'][0]}-P{d['between'][1]}"
+        between_str = f"{d['between'][0]}-{d['between'][1]}"
         print(f"{label:<8} {between_str:<10} {d['x_mm']:>8.2f} {d['y_mm']:>8.2f}")
 
     print(f"\nTotal diagonal intermediate points: {len(mids)}  (expected 28)")
 
-    with open(args.output, "w") as f:
+    with open(OUT_PATH, "w") as f:
         json.dump(mids, f, indent=2)
-    print(f"Saved -> {args.output}")
+    print(f"Saved -> {OUT_PATH}")
 
 
 if __name__ == "__main__":

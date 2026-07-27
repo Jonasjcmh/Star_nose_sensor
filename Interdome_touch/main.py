@@ -196,6 +196,10 @@ CALIB_X_MM = CALIB_Y_MM = CALIB_Z_MM = 0.0
 CALIB_TIP         = '(none)'
 CALIB_POINTS_PATH = None
 
+# When True, auto-confirm the y/N prompts (calibration confirm + proceed-to-test)
+# so a run needs no interactive confirmation. Set from --yes/-y in main().
+AUTO_YES = False
+
 def list_calib_points_files():
     """[(name, path), ...] for every per-point calibration file
     (calib_points_*.json / calib_points.json) in Integration_2."""
@@ -253,6 +257,9 @@ def select_calibration_points():
     CALIB_POINTS_PATH = path
     print(f'\n  [calib] Selected "{name}"  ({os.path.basename(path)})')
 
+    if AUTO_YES:
+        print('\n  Correct tip mounted? Confirm this calibration? [y/N] > y  (auto --yes)')
+        return
     try:
         ans = input('\n  Correct tip mounted? Confirm this calibration? [y/N] > ').strip().lower()
     except (EOFError, KeyboardInterrupt):
@@ -767,9 +774,9 @@ def _ask_depths(prompt, default_list):
         except ValueError:
             print('  Could not parse — enter numbers only, e.g. 1,2,3 or 1 2 3')
             continue                      # re-prompt, do NOT silently use default
-        if vals and all(0.0 < v <= 20.0 for v in vals):
+        if vals and all(0.0 <= v <= 20.0 for v in vals):
             return vals
-        print('  Enter one or more depths in mm (e.g. 1,2,3), each between 0 and 20')
+        print('  Enter one or more depths in mm (e.g. 0,1,2,3), each between 0 and 20')
 
 def parse_args():
     p = argparse.ArgumentParser(
@@ -796,6 +803,9 @@ def parse_args():
     p.add_argument('--extra-variant', default=None, dest='extra_variant',
                    help="Force the intermediate-point variant (skips the prompt): e.g. "
                         "'actual_new_hollow_2', 'rigid', 'translated', 'plain', or 'none'")
+    p.add_argument('-y', '--yes', action='store_true',
+                   help='Auto-confirm all y/N prompts (calibration confirm + '
+                        'proceed-to-test) so the run needs no interaction')
     p.add_argument('--no-mapping', action='store_true',
                    help='Skip the startup mapping routine (1-press-per-point verification)')
     p.add_argument('--mapping-depth', type=float, default=None, dest='mapping_depth',
@@ -808,9 +818,10 @@ def parse_args():
 def main():
     args = parse_args()
 
-    global SURFACE_STANDOFF_MM
+    global SURFACE_STANDOFF_MM, AUTO_YES
     if args.standoff is not None:
         SURFACE_STANDOFF_MM = args.standoff
+    AUTO_YES = args.yes
 
     print('=' * 70)
     print('  Interdome_touch — Star-Nose Sensor + UR5 + FUTEK (long-hold schema)')
@@ -960,10 +971,14 @@ def main():
                 rtde_c.moveL(_home_pose(), VEL_TRAVEL, ACCEL)
             except Exception:
                 pass
-        try:
-            ans = input('\n  Proceed to the full test? [y/N] > ').strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            ans = 'n'
+        if AUTO_YES:
+            print('\n  Proceed to the full test? [y/N] > y  (auto --yes)')
+            ans = 'y'
+        else:
+            try:
+                ans = input('\n  Proceed to the full test? [y/N] > ').strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                ans = 'n'
         if ans != 'y':
             print('  Aborted after mapping — no test data collected.')
             _ft_stop.set()

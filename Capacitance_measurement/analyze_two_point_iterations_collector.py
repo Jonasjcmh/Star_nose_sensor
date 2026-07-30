@@ -94,10 +94,12 @@ POINTS_XY = {
 # ── Data loading ────────────────────────────────────────────────────────────────
 
 def newest_csv():
-    files = sorted(glob.glob(os.path.join(LOG_DIR, 'two_point_iterations_*.csv')))
+    files = glob.glob(os.path.join(LOG_DIR, 'two_point_iterations_*.csv'))
     if not files:
         raise SystemExit(f'[error] No two_point_iterations_*.csv found in {LOG_DIR}')
-    return files[-1]
+    # Pick by modification time, not filename — point-labelled names (e.g.
+    # P10_P03_P14 vs P19) do NOT sort chronologically.
+    return max(files, key=os.path.getmtime)
 
 def _f(v, default=float('nan')):
     try:

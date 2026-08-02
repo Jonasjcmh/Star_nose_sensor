@@ -21,7 +21,7 @@ ROBOT_IP        = "177.22.22.2"
 VELOCITY_TRAVEL = 0.05
 VELOCITY_PRESS  = 0.01
 ACCELERATION    = 0.3
-DEFAULT_INDENT  = 6.0   # mm
+DEFAULT_INDENT  = 8.0   # mm
 DWELL_S         = 2.0   # hold longer so we can read sensor
 
 REFERENCE_POSE = [

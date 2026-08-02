@@ -43,13 +43,13 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import RegularPolygon
 
 # ── Paths (edit if your files live elsewhere) ─────────────────────────────────
-BASE_DIR = "/home/divuthejo/Star_nose_sensor/Integration_2"
+BASE_DIR = "/home/cao/Documents/Star_muse_sensor/Star_nose_sensor/Integration_2"
 
 HORIZONTAL_JSON = os.path.join(BASE_DIR, "horizontal_midpoints.json")
 DIAGONAL_JSON   = os.path.join(BASE_DIR, "diagonal_midpoints.json")
 TRIANGLE_JSON   = os.path.join(BASE_DIR, "triangle_centroids.json")
-MOCAP_JSON      = os.path.join(BASE_DIR, "calib_points_short_6mm.json")
-OUT_PNG         = os.path.join(BASE_DIR, "calibration_points_plot4.svg")
+MOCAP_JSON      = os.path.join(BASE_DIR, "calib_points_short_new_hollow_2.json")
+OUT_PNG         = os.path.join(BASE_DIR, "calibration_points_plotnew_hollow_2.svg")
 
 # Hexagon circumradius for drawing the 19 unit-cell outlines.
 # Derived from same-row point spacing (8mm) so adjacent hexagons tile

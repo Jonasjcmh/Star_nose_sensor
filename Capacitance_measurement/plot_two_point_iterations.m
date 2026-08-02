@@ -21,10 +21,12 @@
 % taken as its absolute value (module) so it always reads as a positive
 % response magnitude, regardless of push/pull sign.
 %
-% Axis limits and tick positions are set MANUALLY below (AXIS_* variables)
-% -- nothing is auto-computed from the data. Edit those numbers directly
-% to change what every figure shows; they are used for every dataset and
-% every depth column alike. Font is Helvetica throughout.
+% Axis limits (AXIS_LIMITS) and tick positions (AXIS_TICKS) are set
+% MANUALLY per dataset in the two tables below -- nothing is auto-computed
+% from the data. Each of the 6 point+surface figures gets its own fixed
+% dC/dC-over-C0/force/time limits AND its own exact tick values (all 5
+% depth columns within one figure still share that figure's limits/ticks).
+% Font is Helvetica throughout.
 %
 % Each subplot overlays the 5 repeated iterations recorded at that depth,
 % one color per iteration. Time is reset to 0 at the start of each
@@ -51,17 +53,38 @@ DATASETS = {
 DEPTHS_MM = [0 1 2 3 4];     % one column per depth
 ITERS     = [0 1 2 3 4];     % 5 repeats per depth
 FONT_NAME = 'Helvetica';
+TITLE_FONT_SIZE = 20;        % subplot titles + axis labels ("0 mm", "dC (pF)", "time (s)", ...)
+TICK_FONT_SIZE  = 16;        % axis tick numbers
 
-% ================= MANUAL AXIS SCALE -- edit these directly =================
-% Same limits/ticks are used for every dataset and every depth column.
-DC_YLIM   = [-0.45  0.30];             % capacitance change dC (pF)
-DC_YTICK  = [-0.45 -0.20  0.05  0.30];
-PCT_YLIM  = [-25  20];                 % normalised change dC/C0 (%)
-PCT_YTICK = [-25  -10    5    20];
-F_YLIM    = [0  7];                    % force module |F - F0| (N)
-F_YTICK   = [0  2.33  4.67  7];
-T_XLIM    = [0  15];                   % time (s)
-T_XTICK   = [0  5  10  15];
+% ================= MANUAL AXIS LIMITS -- edit these directly ================
+% One row per dataset (same order as DATASETS above) -- each of the 6
+% figures gets its OWN fixed limits.
+%
+%                label         DC_YLIM (pF)     PCT_YLIM (%)   F_YLIM (N)   T_XLIM (s)
+AXIS_LIMITS = {
+    'P08_hollow', [-0.06   0.015], [-3    0.5],   [0  3.0],    [0  15]
+    'P19_hollow', [-0.06   0.015], [-3    0.5],   [0  3.0],    [0  15]
+    'P08_solid',  [-0.06   0.015], [-3    0.5],   [0  8.0],    [0  15]
+    'P19_solid',  [-0.06   0.015], [-6    0.5],   [0  8.0],    [0  15]
+    'P08_flat',   [-0.08   0.015], [-6    0.5],   [0  6.0],    [0  15]
+    'P19_flat',   [-0.08   0.015], [-6    0.5],   [0  6.0],    [0  15]
+};
+% ==============================================================================
+
+% ================= MANUAL AXIS TICKS -- edit these directly =================
+% One row per dataset (same order as DATASETS/AXIS_LIMITS above). Type
+% exactly the numbers you want to see on each axis -- any count, they do
+% not need to be evenly spaced or match the other rows.
+%
+%                label         DC_YTICK (pF)              PCT_YTICK (%)      F_YTICK (N)     T_XTICK (s)
+AXIS_TICKS = {
+    'P08_hollow', [-0.06 -0.04 -0.02 0],          [-3 -2 -1 0],      [0 1 2 3],      [0 5 10 15]
+    'P19_hollow', [-0.06 -0.04 -0.02 0],          [-3 -2 -1 0],      [0 1 2 3],      [0 5 10 15]
+    'P08_solid',  [-0.06 -0.04 -0.02 0],          [-3 -2 -1 0],    [0 2 4 6 8],      [0 5 10 15]
+    'P19_solid',  [-0.06 -0.04 -0.02 0],          [-6 -4 -2 0],    [0 2 4 6 8],      [0 5 10 15]
+    'P08_flat',   [-0.08 -0.06 -0.04 -0.02 0],    [-6 -4 -2 0],      [0 2 4 6],      [0 5 10 15]
+    'P19_flat',   [-0.08 -0.06 -0.04 -0.02 0],    [-6 -4 -2 0],      [0 2 4 6],      [0 5 10 15]
+};
 % ==============================================================================
 
 % Force linearization from force_sensor_calibration/Matlab calibration/
@@ -154,6 +177,16 @@ for d = 1:size(DATASETS, 1)
         end
     end
 
+    % this dataset's own fixed limits + ticks, from the tables above
+    DC_YLIM  = AXIS_LIMITS{d, 2};
+    PCT_YLIM = AXIS_LIMITS{d, 3};
+    F_YLIM   = AXIS_LIMITS{d, 4};
+    T_XLIM   = AXIS_LIMITS{d, 5};
+    DC_YTICK  = AXIS_TICKS{d, 2};
+    PCT_YTICK = AXIS_TICKS{d, 3};
+    F_YTICK   = AXIS_TICKS{d, 4};
+    T_XTICK   = AXIS_TICKS{d, 5};
+
     %% ---- figure set 1: dC (pF) + force, one scale shared across this dataset's 5 depths ----
     fig1 = figure('Color', 'w', 'Position', [50 50 1700 600]);
 
@@ -168,16 +201,22 @@ for d = 1:size(DATASETS, 1)
             rows = cols_rows & iter_col == ITERS(k);
             plot(ax1, t_col(rows), dC_col(rows), '-', 'Color', ITER_COLORS(k, :), 'LineWidth', 1.1);
         end
-        title(ax1, sprintf('%.0f mm', depth_mm));
+        title(ax1, sprintf('%.0f mm', depth_mm), 'FontName', FONT_NAME, 'FontSize', TITLE_FONT_SIZE);
 
         ylim(ax1, DC_YLIM);
         set(ax1, 'YTick', DC_YTICK, 'YTickLabel', fmt_ticks(DC_YTICK));
         xlim(ax1, T_XLIM);
         set(ax1, 'XTick', T_XTICK, 'XTickLabel', fmt_ticks(T_XTICK));
 
-        set(ax1, 'FontName', FONT_NAME, 'FontSize', 9, 'Box', 'off');
+        set(ax1, 'FontName', FONT_NAME, 'FontSize', TICK_FONT_SIZE, 'Box', 'off');
+        axis(ax1, 'square');
+        
+        xlabel(ax1, 'time (s)', 'FontName', FONT_NAME, 'FontSize', TITLE_FONT_SIZE);
+        set(ax1, 'FontName', FONT_NAME, 'FontSize', TICK_FONT_SIZE, 'Box', 'off');
+        axis(ax1, 'square');
+
         if c == 1
-            ylabel(ax1, 'dC = Cp - C0 (pF)');
+            ylabel(ax1, 'dC = Cp - C0 (pF)', 'FontName', FONT_NAME, 'FontSize', TITLE_FONT_SIZE);
             legend(ax1, {'iter 1', 'iter 2', 'iter 3', 'iter 4', 'iter 5'}, ...
                    'Location', 'best', 'FontSize', 7, 'FontName', FONT_NAME);
         end
@@ -195,10 +234,11 @@ for d = 1:size(DATASETS, 1)
         xlim(ax2, T_XLIM);
         set(ax2, 'XTick', T_XTICK, 'XTickLabel', fmt_ticks(T_XTICK));
 
-        xlabel(ax2, 'time (s)');
-        set(ax2, 'FontName', FONT_NAME, 'FontSize', 9, 'Box', 'off');
+        xlabel(ax2, 'time (s)', 'FontName', FONT_NAME, 'FontSize', TITLE_FONT_SIZE);
+        set(ax2, 'FontName', FONT_NAME, 'FontSize', TICK_FONT_SIZE, 'Box', 'off');
+        axis(ax2, 'square');
         if c == 1
-            ylabel(ax2, '|F - F0| (N)');
+            ylabel(ax2, '|F - F0| (N)', 'FontName', FONT_NAME, 'FontSize', TITLE_FONT_SIZE);
         end
     end
 
@@ -229,16 +269,22 @@ for d = 1:size(DATASETS, 1)
             rows = cols_rows & iter_col == ITERS(k);
             plot(ax1, t_col(rows), pct_col(rows), '-', 'Color', ITER_COLORS(k, :), 'LineWidth', 1.1);
         end
-        title(ax1, sprintf('%.0f mm', depth_mm));
+        title(ax1, sprintf('%.0f mm', depth_mm), 'FontName', FONT_NAME, 'FontSize', TITLE_FONT_SIZE);
 
         ylim(ax1, PCT_YLIM);
         set(ax1, 'YTick', PCT_YTICK, 'YTickLabel', fmt_ticks(PCT_YTICK));
         xlim(ax1, T_XLIM);
         set(ax1, 'XTick', T_XTICK, 'XTickLabel', fmt_ticks(T_XTICK));
 
-        set(ax1, 'FontName', FONT_NAME, 'FontSize', 9, 'Box', 'off');
+        set(ax1, 'FontName', FONT_NAME, 'FontSize', TICK_FONT_SIZE, 'Box', 'off');
+        
+        
+        xlabel(ax1, 'time (s)', 'FontName', FONT_NAME, 'FontSize', TITLE_FONT_SIZE);
+        set(ax1, 'FontName', FONT_NAME, 'FontSize', TICK_FONT_SIZE, 'Box', 'off');
+        axis(ax1, 'square');
+
         if c == 1
-            ylabel(ax1, 'dC / C0 (%)');
+            ylabel(ax1, 'dC / C0 (%)', 'FontName', FONT_NAME, 'FontSize', TITLE_FONT_SIZE);
             legend(ax1, {'iter 1', 'iter 2', 'iter 3', 'iter 4', 'iter 5'}, ...
                    'Location', 'best', 'FontSize', 7, 'FontName', FONT_NAME);
         end
@@ -256,10 +302,11 @@ for d = 1:size(DATASETS, 1)
         xlim(ax2, T_XLIM);
         set(ax2, 'XTick', T_XTICK, 'XTickLabel', fmt_ticks(T_XTICK));
 
-        xlabel(ax2, 'time (s)');
-        set(ax2, 'FontName', FONT_NAME, 'FontSize', 9, 'Box', 'off');
+        xlabel(ax2, 'time (s)', 'FontName', FONT_NAME, 'FontSize', TITLE_FONT_SIZE);
+        set(ax2, 'FontName', FONT_NAME, 'FontSize', TICK_FONT_SIZE, 'Box', 'off');
+        axis(ax2, 'square');
         if c == 1
-            ylabel(ax2, '|F - F0| (N)');
+            ylabel(ax2, '|F - F0| (N)', 'FontName', FONT_NAME, 'FontSize', TITLE_FONT_SIZE);
         end
     end
 

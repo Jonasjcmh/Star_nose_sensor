@@ -25,10 +25,10 @@ import json
 import os
 import itertools
 
-BASE_DIR = "/home/divuthejo/Star_nose_sensor/Integration_2"
+BASE_DIR = "/home/cao/Documents/Star_muse_sensor/Star_nose_sensor/Integration_2"
 
-CALIB_SOURCE_FILE = os.path.join(BASE_DIR, "calib_points_short_new_hollow_2.json")
-TAG = "new_hollow_2"
+CALIB_SOURCE_FILE = os.path.join(BASE_DIR, "calib_points_short_hollow_dome.json")
+TAG = "hollow_dome"
 
 OUT_PATH = os.path.join(BASE_DIR, f"triangle_centroids_actual_{TAG}.json")
 

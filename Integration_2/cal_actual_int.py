@@ -49,11 +49,11 @@ import os
 import itertools
 import math
 
-BASE_DIR = "/home/divuthejo/Star_nose_sensor/Integration_2"
+BASE_DIR = "/home/cao/Documents/Star_muse_sensor/Star_nose_sensor/Integration_2"
 
 # EDIT THIS if your calibration file isn't named calib_points_new.json:
-CALIB_SOURCE_FILE = os.path.join(BASE_DIR, "calib_points_short_new_hollow_2.json")
-TAG = "new_hollow_2"   # EDIT to match your calibration filename's tag
+CALIB_SOURCE_FILE = os.path.join(BASE_DIR, "calib_points_short_hollow_dome.json")
+TAG = "hollow_dome"   # EDIT to match your calibration filename's tag
 
 OUT_PATH = os.path.join(BASE_DIR, f"horizontal_midpoints_actual_{TAG}.json")
 

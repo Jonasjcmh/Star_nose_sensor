@@ -28,8 +28,8 @@ import math
 
 BASE_DIR = "/home/cao/Documents/Star_muse_sensor/Star_nose_sensor/Integration_2"
 
-CALIB_SOURCE_FILE = os.path.join(BASE_DIR, "calib_points_short_hollow_dome.json")
-TAG = "hollow_dome"
+CALIB_SOURCE_FILE = os.path.join(BASE_DIR, "calib_points_short_new_hollow_dome.json")
+TAG = "new_hollow_dome"
 
 OUT_PATH = os.path.join(BASE_DIR, f"diagonal_midpoints_actual_{TAG}.json")
 

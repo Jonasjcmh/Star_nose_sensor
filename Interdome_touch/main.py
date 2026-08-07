@@ -537,9 +537,20 @@ def _build_pose(pid, extra_z_mm=0.0):
 def _home_pose():
     return _build_pose(ANCHOR_POINT, SAFE_HOME_Z)
 
-# ── Dataset log ────────────────────────────────────────────────────────────────
-_log_rows = []
-_log_lock = threading.Lock()
+# ── Dataset log (STREAMING) ─────────────────────────────────────────────────────
+# Rows are written straight to the CSV as they are produced and only a tiny
+# buffer is kept in RAM. This keeps memory flat (O(1)) for arbitrarily long runs
+# — the previous design accumulated EVERY row in a Python list for the whole
+# session and rewrote the entire file on each autosave, which exhausted RAM on
+# long runs (30 iter x 85 pts x 6 depths ≈ 5M rows) and got the process
+# OOM-killed mid-collection. Streaming also means a crash loses at most the last
+# unflushed rows instead of everything since the last full rewrite.
+_log_lock        = threading.Lock()
+_log_file        = None   # open CSV file handle for the current run
+_log_writer      = None   # csv.DictWriter bound to _log_file
+_log_count       = 0      # total rows written so far this run
+_log_since_flush = 0      # rows written since the last fsync
+_LOG_FLUSH_EVERY = 500    # fsync to disk every N rows (~5 s at 100 Hz)
 
 FIELDNAMES = (
     ['timestamp', 'datetime',
@@ -587,8 +598,17 @@ def _log_row(sensor_mod, pt, depth_mm, depth_idx, phase, iteration):
     for i, v in enumerate(vals):
         row[f'cell_{i + 1}'] = round(float(v), 4)
 
+    global _log_count, _log_since_flush
     with _log_lock:
-        _log_rows.append(row)
+        if _log_writer is None:
+            return                       # dataset not open yet (should not happen)
+        _log_writer.writerow(row)
+        _log_count       += 1
+        _log_since_flush += 1
+        if _log_since_flush >= _LOG_FLUSH_EVERY:
+            _log_file.flush()
+            os.fsync(_log_file.fileno())
+            _log_since_flush = 0
 
 def _log_timed(sensor_mod, pt, depth_mm, depth_idx, phase, iteration, rate_hz, duration_s):
     interval = 1.0 / rate_hz
@@ -600,19 +620,40 @@ def _log_timed(sensor_mod, pt, depth_mm, depth_idx, phase, iteration, rate_hz, d
         if rem > 0:
             time.sleep(rem)
 
-def save_dataset(path):
-    with _log_lock:
-        rows = list(_log_rows)
-    if not rows:
-        print('[log] Nothing to save.')
-        return None
+def open_dataset(path):
+    """Open the CSV for streaming and write the header. Call once before the run."""
+    global _log_file, _log_writer, _log_count, _log_since_flush
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', newline='') as f:
-        w = csv.DictWriter(f, fieldnames=FIELDNAMES)
-        w.writeheader()
-        w.writerows(rows)
-    print(f'[log] Saved {len(rows)} rows -> {path}')
+    with _log_lock:
+        _log_file        = open(path, 'w', newline='')
+        _log_writer      = csv.DictWriter(_log_file, fieldnames=FIELDNAMES)
+        _log_writer.writeheader()
+        _log_file.flush()
+        _log_count       = 0
+        _log_since_flush = 0
     return path
+
+def flush_dataset():
+    """Force the buffered rows to disk (used by the periodic autosave)."""
+    with _log_lock:
+        if _log_file is not None:
+            _log_file.flush()
+            os.fsync(_log_file.fileno())
+    return _log_count
+
+def close_dataset():
+    """Flush and close the CSV. Safe to call multiple times."""
+    global _log_file, _log_writer
+    with _log_lock:
+        if _log_file is not None:
+            try:
+                _log_file.flush()
+                os.fsync(_log_file.fileno())
+            finally:
+                _log_file.close()
+            _log_file   = None
+            _log_writer = None
+    return _log_count
 
 # ── Sampling plan ────────────────────────────────────────────────────────────
 def generate_plan(depths_mm, n_iterations, seed=None):
@@ -681,7 +722,7 @@ def do_indentation(rtde_c, sensor_mod, pt, depth_mm, depth_idx, iteration,
     _log_timed(sensor_mod, pt, depth_mm, depth_idx, 'post', iteration, rate_hz, hold_s)
 
     with _log_lock:
-        n_rows = len(_log_rows)
+        n_rows = _log_count
     print(f'     rows so far: {n_rows}')
 
 # ── Mapping routine ───────────────────────────────────────────────────────────
@@ -1046,10 +1087,15 @@ def main():
         json.dump(meta, f, indent=2)
     print(f'\n[meta] Wrote run metadata -> {meta_path}')
 
+    # Open the CSV for streaming NOW so every row is written to disk as it is
+    # produced (constant memory, crash-resilient) instead of buffered in RAM.
+    open_dataset(csv_path)
+
     # ── Main collection loop ───────────────────────────────────────────────────
-    completed  = 0
-    total      = len(plan)
-    start_time = time.time()
+    completed        = 0
+    total            = len(plan)
+    start_time       = time.time()
+    consecutive_errs = 0
 
     try:
         for step, (depth_idx, depth, it, pt) in enumerate(plan):
@@ -1085,6 +1131,15 @@ def main():
                     rtde_c.moveL(_home_pose(), VEL_TRAVEL, ACCEL)
                 except Exception:
                     pass
+                # Guard against a dropped robot connection turning into an
+                # infinite error-spinning loop: bail out after 10 in a row.
+                consecutive_errs += 1
+                if consecutive_errs >= 10:
+                    print('  [error] 10 consecutive failures — aborting run '
+                          '(robot connection lost?). Partial data is saved.')
+                    break
+            else:
+                consecutive_errs = 0
 
             completed += 1
             elapsed = time.time() - start_time
@@ -1095,8 +1150,8 @@ def main():
                   f'Est. remaining: {remain / 60:.1f} min')
 
             if completed % 10 == 0:
-                print('  [autosave]')
-                save_dataset(csv_path)
+                n = flush_dataset()
+                print(f'  [autosave] {n} rows on disk -> {os.path.basename(csv_path)}')
 
     except KeyboardInterrupt:
         print('\n  Interrupted')
@@ -1110,9 +1165,11 @@ def main():
         except Exception:
             pass
 
-        path = save_dataset(csv_path)
+        n = close_dataset()
+        path = csv_path if n else None
         print(f'\n  Completed {completed}/{total} indentations.')
         if path:
+            print(f'  [log] Saved {n} rows -> {path}')
             print(f'  Dataset saved to : {path}')
             print(f'  Metadata saved to: {meta_path}')
             print(f'\n  Analyse with:')

@@ -51,6 +51,14 @@ DEFAULT_POINTS_JSON = os.path.join(
 HEX_RADIUS   = 8.0 / math.sqrt(3)   # ~4.6188 mm, matches plot_rigid.py
 ANCHOR_POINT = 10
 
+PHASE_COLORS = {
+    'locate': '#1f77b4', 'press': '#d62728', 'hold': '#2ca02c',
+    'retract': '#ff7f0e', 'post': '#9467bd',
+}
+# Sample-count breakdown: press = down ramp, retract = up ramp
+SAMPLE_PHASES = ['press', 'hold', 'retract']
+PHASE_LABELS  = {'press': 'down ramp (press)', 'hold': 'hold', 'retract': 'up ramp (retract)'}
+
 # Point -> raw sensor cell (must match main.py / Integration_2/ur5_control.py)
 UR5_TO_SENSOR = {
     1: 24,  2: 12,  3: 0,
@@ -134,10 +142,7 @@ def view_upright(points, rotation_deg, anchor):
 def plot_trajectory(df, points, out_path):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6.5))
 
-    phase_colors = {
-        'locate': '#1f77b4', 'press': '#d62728', 'hold': '#2ca02c',
-        'retract': '#ff7f0e', 'post': '#9467bd',
-    }
+    phase_colors = PHASE_COLORS
 
     # ── Left: XY path over the sensor grid ────────────────────────────────────
     for pid, (x, y) in points.items():
@@ -195,7 +200,7 @@ def point_stats(df, points, depths_mm, value_fn, phase='hold'):
         d_rows = hold[np.isclose(hold['depth_mm'], depth)]
         per_pt = {}
         for pt in points:
-            pt_rows = d_rows[d_rows['point'] == pt]
+            pt_rows = d_rows[d_rows['point'] == f'P{pt:02d}']
             per_pt[pt] = value_fn(pt_rows, pt) if len(pt_rows) else float('nan')
         out[depth] = per_pt
     return out
@@ -210,6 +215,78 @@ def futek_value_fn(rows, pt):
     if 'futek_force_N' not in rows:
         return float('nan')
     return float(rows['futek_force_N'].mean())
+
+# ── Sample counts (per type / per label, split by phase) ──────────────────────
+def sample_counts(df, group_col):
+    """rows=group_col values, columns=SAMPLE_PHASES (+ 'total'), values=row counts.
+    Only press/hold/retract rows count as 'samples' (locate/post are excluded).
+    Returns None if group_col isn't present (older logs lack 'point_kind')."""
+    if group_col not in df.columns:
+        return None
+    sub = df[df['phase'].isin(SAMPLE_PHASES)]
+    tbl = sub.groupby([group_col, 'phase']).size().unstack('phase', fill_value=0)
+    for ph in SAMPLE_PHASES:
+        if ph not in tbl.columns:
+            tbl[ph] = 0
+    tbl = tbl[SAMPLE_PHASES].sort_index()
+    tbl['total'] = tbl[SAMPLE_PHASES].sum(axis=1)
+    return tbl
+
+def print_sample_counts(df):
+    print()
+    print('=' * 70)
+    print('  SAMPLE COUNTS (press=down ramp, hold, retract=up ramp)')
+    print('=' * 70)
+    for title, col in [('depth (depth_mm)', 'depth_mm'),
+                        ('type (point_kind)', 'point_kind'), ('label (point)', 'point')]:
+        tbl = sample_counts(df, col)
+        if tbl is None:
+            print(f'\n  -- per {title} -- (column not present in this log, skipped)')
+            continue
+        print(f'\n  -- per {title} --')
+        header = f'  {"":<14}' + ''.join(f'{PHASE_LABELS[p]:>18}' for p in SAMPLE_PHASES) + f'{"total":>10}'
+        print(header)
+        for idx, row in tbl.iterrows():
+            print(f'  {str(idx):<14}' + ''.join(f'{int(row[p]):>18}' for p in SAMPLE_PHASES)
+                  + f'{int(row["total"]):>10}')
+    print('=' * 70)
+
+def plot_sample_counts(df, out_path):
+    panels = [
+        ('depth_mm',   'Samples per depth (mm)',         1, 0, 9),
+        ('point_kind', 'Samples per type (point_kind)',  1, 0, 9),
+        ('point',      'Samples per label (point)',      3, 90, 6.5),
+    ]
+    tables = [(col, title, w, rot, fs, sample_counts(df, col)) for col, title, w, rot, fs in panels]
+    tables = [t for t in tables if t[-1] is not None]
+    if not tables:
+        print(f'  [warn] no "point"/"point_kind" columns found — skipping {out_path}')
+        return
+
+    width_ratios = [t[2] for t in tables]
+    fig, axes = plt.subplots(1, len(tables), figsize=(20 * sum(width_ratios) / 4, 7),
+                              gridspec_kw={'width_ratios': width_ratios})
+    axes = np.atleast_1d(axes)
+
+    for ax, (_col, title, _w, rot, fs, tbl) in zip(axes, tables):
+        x = np.arange(len(tbl.index))
+        width = 0.25
+        for i, ph in enumerate(SAMPLE_PHASES):
+            ax.bar(x + (i - 1) * width, tbl[ph], width,
+                   label=PHASE_LABELS[ph], color=PHASE_COLORS[ph])
+        ax.set_xticks(x)
+        ax.set_xticklabels(tbl.index, rotation=rot, fontsize=fs)
+        ax.set_ylabel('sample count (log scale)')
+        ax.set_yscale('log')
+        ax.set_title(title, fontsize=10, fontweight='bold')
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.2, axis='y')
+
+    fig.suptitle('Interdome_touch — sample counts by phase', fontsize=13, fontweight='bold')
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    print(f'  saved: {out_path}')
 
 # ── Hexagonal schematic plotting ──────────────────────────────────────────────
 def plot_hex_grid(ax, points, values, cmap, norm, title):
@@ -327,20 +404,24 @@ def main():
     # 1) Trajectory
     plot_trajectory(df, points, os.path.join(PLOTS_DIR, f'{base}_trajectory.png'))
 
-    # 2) Hex schematic — capacitive sensor
+    # 2) Sample counts — per type (point_kind) and per label (point), by phase
+    plot_sample_counts(df, os.path.join(PLOTS_DIR, f'{base}_sample_counts.png'))
+
+    # 3) Hex schematic — capacitive sensor
     cap_stats = point_stats(df, points, depths_mm, capacitive_value_fn, phase='hold')
     plot_hex_by_depth(
         cap_stats, points, os.path.join(PLOTS_DIR, f'{base}_hex_capacitive.png'),
         suptitle='Interdome_touch — capacitive sensor intensity (own cell, hold-phase mean)',
         unit_label='normalized capacitive value (0-1)', cmap_name='viridis')
 
-    # 3) Hex schematic — FUTEK force
+    # 4) Hex schematic — FUTEK force
     futek_stats = point_stats(df, points, depths_mm, futek_value_fn, phase='hold')
     plot_hex_by_depth(
         futek_stats, points, os.path.join(PLOTS_DIR, f'{base}_hex_futek.png'),
         suptitle='Interdome_touch — FUTEK load cell force (hold-phase mean)',
         unit_label='force (N)', cmap_name='plasma')
 
+    print_sample_counts(df)
     print_summary(df, cap_stats, futek_stats, depths_mm)
     print(f'\nFigures saved in: {PLOTS_DIR}/')
 

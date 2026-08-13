@@ -4,18 +4,24 @@ visualizer_2d.py
 Reads sensor data from shared file when running as subprocess.
 
 ────────────────────────────────────────────────────────────────────
-NUMBERING: HARDWARE throughout. FIXED two things that must be kept in
-sync (a mismatch between them would silently show the right reading
-at the wrong drawn position, or vice versa):
-    - POINTS_MM was ordered for the OLD original numbering (index i
-      drew ORIGINAL point i+1's coordinates).
-    - UR5_TO_IDX was still the OLD original-numbering sensor lookup.
-Both fixed together to the correct hardware-numbered versions.
+NUMBERING: everything (POINTS_MM, RAW_CELLS, POINT_LABELS, and the
+`values` array from sensor.py) shares ONE order: a1, a2, a3, b1, b2,
+b3, b4, c1..c5, d2..d5, e3..e5. Index i in any of those lists means
+the same physical point in all of them -- values[i] IS the reading at
+POINT_LABELS[i]/POINTS_MM[i]/RAW_CELLS[i]. No permutation needed to
+go between them.
 
-LABELS: points are now labeled with hex-grid coordinates (a1, a2, a3,
-... e5) instead of P1..P19, and the per-point raw-cell readout is now
-a simple sequential number (S0..S18, same order as the labels) instead
-of the physical MUCA board cell index. See POINT_LABELS below.
+GEOMETRY: points sit on a rhombic/hex lattice formed by two families
+of diagonal lines on the physical sensor grid -- letters a..e running
+down-and-to-the-right as they increase, numbers 1..5 running up-and-
+-to-the-right as they increase (per hand-drawn reference grid). Valid
+label combos are a1-3, b1-4, c1-5, d2-5, e3-5, which traces out a
+hexagon.
+
+Hardware point numbers (1-19, from ur5_control) happen to be the same
+sequence as this label order (P1=a1, P2=a2, ... P19=e5), so
+UR5_TO_IDX is a simple identity mapping. Must stay in sync with the
+identical _UR5_TO_IDX in sensor.py.
 ────────────────────────────────────────────────────────────────────
 """
 import sys
@@ -45,33 +51,37 @@ except ImportError:
     HAS_UR5 = False
 
 N = 19
-# HARDWARE numbering: index i corresponds to hardware point (i+1).
+# POSITION order: index i corresponds to hex label POINT_LABELS[i]
+# (a1,a2,a3,b1,...,e5) directly.
+#
+# Derived from letter axis u=(4,-7) [down-right, a->e] and number
+# axis v=(4,7) [up-right, 1->5], i.e. pos = i_letter*u + n_number*v,
+# recentered so c3 sits at (0,0). This reproduces the same hexagon
+# footprint/spacing as before, just correctly oriented per the
+# hand-drawn reference grid.
 POINTS_MM = [
-    ( -8, -14), (-12,  -7), (-16,   0),
-    (  0, -14), ( -4,  -7), ( -8,   0), (-12,   7),
-    (  8, -14), (  4,  -7), (  0,   0), ( -4,   7), ( -8,  14),
-    ( 12,  -7), (  8,   0), (  4,   7), (  0,  14),
-    ( 16,   0), ( 12,   7), (  8,  14),
+    (-16,   0), (-12,   7), ( -8,  14),           # a1, a2, a3
+    (-12,  -7), ( -8,   0), ( -4,   7), (  0,  14), # b1, b2, b3, b4
+    ( -8, -14), ( -4,  -7), (  0,   0), (  4,   7), (  8,  14), # c1..c5
+    (  0, -14), (  4,  -7), (  8,   0), ( 12,   7), # d2, d3, d4, d5
+    (  8, -14), ( 12,  -7), ( 16,   0),            # e3, e4, e5
 ]
-# Raw MUCA board channel for each point, kept only for reference to the
-# real hardware wiring -- REORDERED (channel numbers unchanged, just
-# their order in this list) to match sensor.py's USED_CELLS, which is
-# now already in hardware/hex-position order. Not used for display.
-RAW_CELLS = [52,51,50,40,39,38,37,28,27,26,25,24,15,14,13,12,2,1,0]
-# Hardware point (i+1) -> index in the 19-element sensor array. Now a
-# trivial identity mapping, since sensor.py's USED_CELLS was reordered
-# so the array it produces is already in hardware/hex-position order.
-# Kept explicit (rather than assuming values[i] == point i+1 everywhere)
-# so nothing breaks if that ordering ever changes again on the sensor
-# side without this file being updated to match.
-UR5_TO_IDX  = {n: n - 1 for n in range(1, 20)}
-POS_TO_SENSOR = [UR5_TO_IDX[i+1] for i in range(19)]
+# Raw MUCA board channel for each point, in the same order as
+# POINTS_MM above. Kept for reference to the real hardware wiring;
+# not used for display (the on-screen number is just the position
+# index, i.e. S0 at a1, S1 at a2, ...). Must stay in sync with
+# USED_CELLS in sensor.py.
+RAW_CELLS = [0,1,2, 12,13,14,15, 24,25,26,27,28, 37,38,39,40, 50,51,52]
 
-# Hex-grid labels (column letter + row number) for each HARDWARE point,
-# in the same order as POINTS_MM above (index i -> hardware point i+1).
-# This matches the 3-4-5-4-3 diamond layout: columns a..e, offset rows.
-# Since POS_TO_SENSOR is now identity, POINT_LABELS[i] also directly
-# labels values[i] -- no separate sensor-array-order table needed.
+# Hardware point number (1-19) -> index in the 19-element sensor array.
+# Identity mapping, since hardware point order is the same sequence as
+# POINT_LABELS below (P1=a1, P2=a2, ... P19=e5). Must stay in sync
+# with _UR5_TO_IDX in sensor.py.
+UR5_TO_IDX = {n: n - 1 for n in range(1, 20)}
+
+# Hex-grid labels (column letter + row number), in the same order as
+# POINTS_MM/RAW_CELLS above -- index i -> label POINT_LABELS[i] ->
+# value at values[i]. All three share one single order.
 POINT_LABELS = [
     'a1', 'a2', 'a3',
     'b1', 'b2', 'b3', 'b4',
@@ -79,14 +89,21 @@ POINT_LABELS = [
     'd2', 'd3', 'd4', 'd5',
     'e3', 'e4', 'e5',
 ]
-SENSOR_TO_LABEL = POINT_LABELS  # kept as an alias for readability below
+
+# `values` (from sensor.py) is already in this same POINTS_MM/
+# POINT_LABELS order (see sensor.py's USED_CELLS), so values[i] IS the
+# reading for POINT_LABELS[i] directly -- no permutation needed to go
+# from array index to label. SENSOR_TO_LABEL is just an alias kept for
+# readability at the two call sites below.
+SENSOR_TO_LABEL = POINT_LABELS
 
 def _point_label(pt):
-    """Convert a 1-based hardware point number (from ur5_control) to
-    its hex-grid label. Falls back to str(pt) if it isn't a plain int."""
+    """Convert a 1-based HARDWARE point number (from ur5_control) to
+    its hex-grid label via UR5_TO_IDX. Falls back to str(pt) if it
+    isn't a recognized point number."""
     try:
-        idx = int(pt) - 1
-        if 0 <= idx < len(POINT_LABELS):
+        idx = UR5_TO_IDX.get(int(pt))
+        if idx is not None:
             return POINT_LABELS[idx]
     except (TypeError, ValueError):
         pass
@@ -366,8 +383,9 @@ def main():
             try:
                 cx  = HEX_CX + xmm * SX
                 cy  = HEX_CY - ymm * SY
-                si  = POS_TO_SENSOR[i]
-                v   = float(values[si]) if si < len(values) else 0.0
+                # values is already in POINTS_MM order -- see the
+                # POINTS_MM comment above -- so no permutation here.
+                v   = float(values[i]) if i < len(values) else 0.0
                 col = lerp_color(v)
                 pts = hex_pts(cx, cy, HEX_R)
 
@@ -383,7 +401,7 @@ def main():
                 if show_labels:
                     blit(screen, POINT_LABELS[i],
                          font_sm, tc, cx, cy-14, 'center')
-                    blit(screen, f"S{i}",
+                    blit(screen, f"S{RAW_CELLS[i]}",
                          font_sm, mc, cx, cy, 'center')
 
                 if show_values and v > 0.02:
@@ -437,18 +455,15 @@ def main():
         blit(screen, "Cell intensity", font_sm, MUTED, 682, sy)
         sy += 16
 
-        # NOTE: `values` here is in sensor-array order (si), same order
-        # as sensor.py's _values / POINT_LABELS via SENSOR_TO_LABEL --
-        # NOT the same order as POINTS_MM/POS_TO_SENSOR used above for
-        # the hex map. SENSOR_TO_LABEL[si] gives the correct point for
-        # each si so the label always matches the value shown.
+        # `values` is in POINTS_MM/POINT_LABELS order (see the comment
+        # up top), so si here IS the same index used for the hex map.
         for si in range(N):
             try:
                 v    = float(values[si]) if si < len(values) else 0.0
                 col  = lerp_color(v)
                 fill = int(v * 138)
 
-                label = SENSOR_TO_LABEL[si] or f"S{si}"
+                label = SENSOR_TO_LABEL[si]
                 blit(screen, label, font_sm, MUTED, 678, sy+1)
                 pygame.draw.rect(screen, (38,38,52),
                                 (710, sy, 138, 9), border_radius=3)

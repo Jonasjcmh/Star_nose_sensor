@@ -11,33 +11,13 @@ import os
 SERIAL_PORT     = '/dev/ttyACM0'
 SERIAL_RATE     = 115200
 SKIN_CELLS      = 252
-# Which of the 252 raw MUCA-board channels feeds each of our 19 used
-# points -- REORDERED (physical channel numbers unchanged, only the
-# order they're listed/read into _values) so that index i now lines
-# up directly with hex position POINT_LABELS[i] below, with NO
-# permutation table needed anywhere else. i.e. _values[0] IS a1/S0,
-# _values[1] IS a2/S1, etc, for real -- not just a display relabel.
 USED_CELLS      = [
-    52, 51, 50,             # a1, a2, a3
-    40, 39, 38, 37,         # b1, b2, b3, b4
-    28, 27, 26, 25, 24,     # c1, c2, c3, c4, c5
-    15, 14, 13, 12,         # d2, d3, d4, d5
-     2,  1,  0,             # e3, e4, e5
+     52, 51, 50,
+     40, 39, 38, 37,
+     28, 27, 26, 25, 24,
+    15, 14, 13, 12,
+    2, 1, 0,
 ]
-
-# Hex-grid position labels (column letter + row number), matching the
-# physical layout of the pad (3-4-5-4-3 diamond, columns a..e).
-# Index i here lines up with USED_CELLS[i] above, _values[i], AND
-# POINTS_MM / POINT_LABELS in visualizer_2d.py -- one single order,
-# used everywhere now.
-POINT_LABELS    = [
-    'a1', 'a2', 'a3',
-    'b1', 'b2', 'b3', 'b4',
-    'c1', 'c2', 'c3', 'c4', 'c5',
-    'd2', 'd3', 'd4', 'd5',
-    'e3', 'e4', 'e5',
-]
-
 SENSITIVITY     = 30.0   ##30
 GAMMA           = 0.5    ##0.5
 READ_TIMEOUT    = 2.0
@@ -73,12 +53,7 @@ def get_raw():
     with _lock:
         return list(_raw_values)
 
-# Hardware point number (1-19) -> index in the 19-element sensor array.
-# Now a trivial point-1 mapping, since USED_CELLS above was reordered
-# so the array is already in hardware/hex-position order. Kept as an
-# explicit dict (rather than inlining `point_number - 1`) so this stays
-# the one place to touch if that ever needs to change again.
-_UR5_TO_IDX = {n: n - 1 for n in range(1, 20)}
+_UR5_TO_IDX = {1:16,2:12,3:7,4:17,5:13,6:8,7:3,8:18,9:14,10:9,11:4,12:0,13:15,14:10,15:5,16:1,17:11,18:6,19:2}
 
 def get_value_for_ur5_point(point_number):
     idx = _UR5_TO_IDX.get(point_number, -1)
@@ -92,15 +67,6 @@ def get_value_for_raw_cell(raw_cell):
         with _lock:
             return _values[idx]
     return 0.0
-
-def get_value_for_label(label):
-    """Get value by hex-grid label, e.g. 'a1', 'c3'."""
-    try:
-        idx = POINT_LABELS.index(label)
-    except ValueError:
-        return 0.0
-    with _lock:
-        return _values[idx]
 
 def is_ready():
     return _is_ready

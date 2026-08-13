@@ -2,6 +2,21 @@
 visualizer_2d.py
 2D sensor visualizer — works both standalone and from main.py subprocess.
 Reads sensor data from shared file when running as subprocess.
+
+────────────────────────────────────────────────────────────────────
+NUMBERING: HARDWARE throughout. FIXED two things that must be kept in
+sync (a mismatch between them would silently show the right reading
+at the wrong drawn position, or vice versa):
+    - POINTS_MM was ordered for the OLD original numbering (index i
+      drew ORIGINAL point i+1's coordinates).
+    - UR5_TO_IDX was still the OLD original-numbering sensor lookup.
+Both fixed together to the correct hardware-numbered versions.
+
+LABELS: points are now labeled with hex-grid coordinates (a1, a2, a3,
+... e5) instead of P1..P19, and the per-point raw-cell readout is now
+a simple sequential number (S0..S18, same order as the labels) instead
+of the physical MUCA board cell index. See POINT_LABELS below.
+────────────────────────────────────────────────────────────────────
 """
 import sys
 import os
@@ -30,17 +45,52 @@ except ImportError:
     HAS_UR5 = False
 
 N = 19
+# HARDWARE numbering: index i corresponds to hardware point (i+1).
 POINTS_MM = [
-    (-8,  +14), ( 0, +14), (+8, +14),
-    (-12,  +7), (-4,  +7), (+4,  +7), (+12, +7),
-    (-16,   0), (-8,   0), ( 0,   0), (+8,   0), (+16, 0),
-    (-12,  -7), (-4,  -7), (+4,  -7), (+12, -7),
-    (-8,  -14), ( 0, -14), (+8, -14),
+    ( -8, -14), (-12,  -7), (-16,   0),
+    (  0, -14), ( -4,  -7), ( -8,   0), (-12,   7),
+    (  8, -14), (  4,  -7), (  0,   0), ( -4,   7), ( -8,  14),
+    ( 12,  -7), (  8,   0), (  4,   7), (  0,  14),
+    ( 16,   0), ( 12,   7), (  8,  14),
 ]
-RAW_CELLS = [2,15,28,1,14,27,40,0,13,26,39,52,12,25,38,51,24,37,50]
-# Maps hex grid position i (= physical point i+1) → sensor array index
-UR5_TO_IDX  = {1:16,2:12,3:7,4:17,5:13,6:8,7:3,8:18,9:14,10:9,11:4,12:0,13:15,14:10,15:5,16:1,17:11,18:6,19:2}
+# Raw MUCA board channel for each point, kept only for reference to the
+# real hardware wiring -- REORDERED (channel numbers unchanged, just
+# their order in this list) to match sensor.py's USED_CELLS, which is
+# now already in hardware/hex-position order. Not used for display.
+RAW_CELLS = [52,51,50,40,39,38,37,28,27,26,25,24,15,14,13,12,2,1,0]
+# Hardware point (i+1) -> index in the 19-element sensor array. Now a
+# trivial identity mapping, since sensor.py's USED_CELLS was reordered
+# so the array it produces is already in hardware/hex-position order.
+# Kept explicit (rather than assuming values[i] == point i+1 everywhere)
+# so nothing breaks if that ordering ever changes again on the sensor
+# side without this file being updated to match.
+UR5_TO_IDX  = {n: n - 1 for n in range(1, 20)}
 POS_TO_SENSOR = [UR5_TO_IDX[i+1] for i in range(19)]
+
+# Hex-grid labels (column letter + row number) for each HARDWARE point,
+# in the same order as POINTS_MM above (index i -> hardware point i+1).
+# This matches the 3-4-5-4-3 diamond layout: columns a..e, offset rows.
+# Since POS_TO_SENSOR is now identity, POINT_LABELS[i] also directly
+# labels values[i] -- no separate sensor-array-order table needed.
+POINT_LABELS = [
+    'a1', 'a2', 'a3',
+    'b1', 'b2', 'b3', 'b4',
+    'c1', 'c2', 'c3', 'c4', 'c5',
+    'd2', 'd3', 'd4', 'd5',
+    'e3', 'e4', 'e5',
+]
+SENSOR_TO_LABEL = POINT_LABELS  # kept as an alias for readability below
+
+def _point_label(pt):
+    """Convert a 1-based hardware point number (from ur5_control) to
+    its hex-grid label. Falls back to str(pt) if it isn't a plain int."""
+    try:
+        idx = int(pt) - 1
+        if 0 <= idx < len(POINT_LABELS):
+            return POINT_LABELS[idx]
+    except (TypeError, ValueError):
+        pass
+    return str(pt)
 
 W, H    = 920, 680
 FPS     = 25
@@ -331,9 +381,9 @@ def main():
                 mc = (180,180,180) if v > 0.4 else MUTED
 
                 if show_labels:
-                    blit(screen, f"P{i+1}",
+                    blit(screen, POINT_LABELS[i],
                          font_sm, tc, cx, cy-14, 'center')
-                    blit(screen, f"S{RAW_CELLS[si]}",
+                    blit(screen, f"S{i}",
                          font_sm, mc, cx, cy, 'center')
 
                 if show_values and v > 0.02:
@@ -367,7 +417,7 @@ def main():
              GREEN if active > 0 else MUTED),
             ("Peak",   f"{maxv:.3f}",
              lerp_color(maxv) if maxv > 0.01 else MUTED),
-            ("UR5",    f"P{pt}", TEXT),
+            ("UR5",    _point_label(pt), TEXT),
             ("Robot",
              "PRESSING" if press else "idle",
              RED if press else MUTED),
@@ -387,13 +437,19 @@ def main():
         blit(screen, "Cell intensity", font_sm, MUTED, 682, sy)
         sy += 16
 
-        for i in range(N):
+        # NOTE: `values` here is in sensor-array order (si), same order
+        # as sensor.py's _values / POINT_LABELS via SENSOR_TO_LABEL --
+        # NOT the same order as POINTS_MM/POS_TO_SENSOR used above for
+        # the hex map. SENSOR_TO_LABEL[si] gives the correct point for
+        # each si so the label always matches the value shown.
+        for si in range(N):
             try:
-                v    = float(values[i]) if i < len(values) else 0.0
+                v    = float(values[si]) if si < len(values) else 0.0
                 col  = lerp_color(v)
                 fill = int(v * 138)
 
-                blit(screen, f"P{i+1:2d}", font_sm, MUTED, 678, sy+1)
+                label = SENSOR_TO_LABEL[si] or f"S{si}"
+                blit(screen, label, font_sm, MUTED, 678, sy+1)
                 pygame.draw.rect(screen, (38,38,52),
                                 (710, sy, 138, 9), border_radius=3)
                 if fill > 1:

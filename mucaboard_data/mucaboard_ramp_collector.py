@@ -4,7 +4,8 @@ mucaboard_ramp_collector.py — Star-Nose Sensor | Muca-Board Ramp Collector
 Data-collection PROCESS mirrors Integration_2/main.py (muca sensor board →
 data_logger.py schema → analyze_session.py), but the press WORKFLOW is the one
 from Capacitance_measurement/capacitance_ramp_collector.py (depth sweep, N
-iterations, all 19 points visited once per round in random order, each
+iterations, the chosen points (all 19 by default) visited once per round in
+random order, each
 indentation locate → press → hold → retract → post with a fixed-time ramp).
 
 Why this shape
@@ -25,9 +26,18 @@ Why this shape
 
 Usage
 -----
-  python mucaboard_ramp_collector.py
+  python mucaboard_ramp_collector.py                       # all 19 points
+  python mucaboard_ramp_collector.py --points 5,12,9       # just these 3 pads
   python mucaboard_ramp_collector.py --depths 1,2,3 --iters 5 --ramp 2 \
          --hold 5 --locate 5 --post 5 --prefix ecoflex_domes --analyze
+
+Point selection
+---------------
+  By default every round visits all 19 pads once in a random order. Pass
+  --points (or answer the interactive prompt with a count) to restrict the
+  sweep to a chosen subset — each round then visits just those pads, still in
+  a random per-round order. The muca board reads all 19 pads at once, so no
+  re-wiring pause is needed when only a subset is pressed.
 """
 
 import os
@@ -336,11 +346,12 @@ def _home_pose():
 
 # ── Plan ───────────────────────────────────────────────────────────────────────
 
-def generate_plan(depths, n_iters, seed=None):
-    """For each depth: n_iters rounds; each round visits all 19 points once in a
-    random order. Returns list of (depth_mm, round_idx, sample_idx, point)."""
+def generate_plan(depths, n_iters, points, seed=None):
+    """For each depth: n_iters rounds; each round visits every point in `points`
+    once in a random order. Returns list of (depth_mm, round_idx, sample_idx,
+    point). `points` may be all 19 pads or a chosen subset."""
     rng = random.Random(seed)
-    pts = list(POINTS.keys())
+    pts = list(points)
     plan = []
     for depth in depths:
         per_point_count = {p: 0 for p in pts}
@@ -352,11 +363,13 @@ def generate_plan(depths, n_iters, seed=None):
                 per_point_count[pt] += 1
     return plan
 
-def print_plan_summary(plan, depths, n_iters):
-    print(f'\n  Plan: {len(depths)} depth(s) × {n_iters} rounds × 19 points '
+def print_plan_summary(plan, depths, n_iters, points):
+    n_pts = len(points)
+    print(f'\n  Plan: {len(depths)} depth(s) × {n_iters} rounds × {n_pts} point(s) '
           f'= {len(plan)} indentations')
     print(f'  Depths (mm): {", ".join(f"{d:g}" for d in depths)}')
-    head = '  '.join(f'P{p:02d}' for _, _, _, p in plan[:19])
+    print(f'  Points: {", ".join(f"P{p:02d}" for p in points)}')
+    head = '  '.join(f'P{p:02d}' for _, _, _, p in plan[:n_pts])
     print(f'  First round order: {head}')
 
 # ── Indentation (workflow of the capacitance ramp collector) ──────────────────
@@ -447,6 +460,62 @@ def _ask_float(prompt, default, minimum, maximum):
                 return default
             print('  Please enter a number')
 
+def _ask_point(prompt):
+    while True:
+        try:
+            raw = input(prompt).strip()
+            val = int(raw)
+            if val in POINTS:
+                return val
+            print('  Must be a valid pad number, 1–19')
+        except (ValueError, EOFError, KeyboardInterrupt):
+            print('  Please enter a number, 1–19')
+
+def _parse_points(raw):
+    """Parse '5,12,9' → [5,12,9]. The literal 'all' (or '') → all 19 pads.
+    Raises ValueError on an out-of-range / non-integer pad."""
+    raw = raw.strip()
+    if raw == '' or raw.lower() == 'all':
+        return list(POINTS.keys())
+    pts = []
+    for x in raw.replace(',', ' ').split():
+        val = int(x)
+        if val not in POINTS:
+            raise ValueError(f'{val} is not a valid pad number, 1–19')
+        if val not in pts:
+            pts.append(val)
+    return pts
+
+def _ask_points():
+    """Ask for a subset of pads, or 'all'. ENTER / 'all' → every pad; a count
+    N → prompt for N distinct pads. Returns an ordered list of pad numbers."""
+    while True:
+        try:
+            raw = input('  How many points? Enter a count 1–19, or "all" '
+                        '[all] > ').strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return list(POINTS.keys())
+        if raw == '' or raw == 'all':
+            return list(POINTS.keys())
+        try:
+            n = int(raw)
+        except ValueError:
+            print('  Enter a number 1–19, or "all"')
+            continue
+        if not 1 <= n <= len(POINTS):
+            print(f'  Must be between 1 and {len(POINTS)}')
+            continue
+        points = []
+        for i in range(n):
+            while True:
+                pt = _ask_point(f'  Point {i + 1}/{n} [1–19] > ')
+                if pt in points:
+                    print(f'  P{pt:02d} already selected — pick a different point')
+                    continue
+                break
+            points.append(pt)
+        return points
+
 def _parse_depths(raw):
     out = []
     for tok in raw.replace(',', ' ').split():
@@ -479,6 +548,8 @@ def parse_args():
         description='Muca-board ramp collector — main.py process, capacitance workflow',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__)
+    p.add_argument('--points',  type=str,   default=None,
+                   help='Pads to press, comma separated e.g. 5,12,9 or "all" [ask, default all 19]')
     p.add_argument('--depths',  type=str,   default=None, help='Depths mm, comma separated [ask, default 2]')
     p.add_argument('--iters',   type=int,   default=None, help='Iterations (rounds) per depth [ask, default 5]')
     p.add_argument('--ramp',    type=float, default=None, help='Ramp time s per press/retract [ask, default 2]')
@@ -507,6 +578,15 @@ def main():
     print('  (data process ← main.py · press workflow ← capacitance ramp collector)')
     print('=' * 70)
 
+    print_sensor_map()
+    if args.points is not None:
+        try:
+            points = _parse_points(args.points)
+        except ValueError as e:
+            print(f'[main] Bad --points: {e}'); sys.exit(1)
+    else:
+        points = _ask_points()
+
     depths = _parse_depths(args.depths) if args.depths else _ask_depths([2.0])
     if not depths:
         print('[main] No valid depths — aborting.'); sys.exit(1)
@@ -529,9 +609,11 @@ def main():
         hold_s = min_hold
 
     per_cycle_s = locate_s + ramp_s + hold_s + ramp_s + post_s
-    n_indent    = len(depths) * n_iters * 19
+    n_indent    = len(depths) * n_iters * len(points)
 
-    print(f'\n  Depths            : {", ".join(f"{d:g}" for d in depths)} mm')
+    print(f'\n  Points            : {", ".join(f"P{p:02d}" for p in points)}  '
+          f'({len(points)} of 19)')
+    print(f'  Depths            : {", ".join(f"{d:g}" for d in depths)} mm')
     print(f'  Iterations/depth  : {n_iters}  (→ {n_indent} indentations total)')
     print(f'  Ramp (press/retr) : {ramp_s:.1f} s each')
     print(f'  Hold dwell        : {hold_s:.2f} s')
@@ -550,8 +632,8 @@ def main():
 
     # ── Plan ──────────────────────────────────────────────────────────────────
     seed = args.seed if args.seed is not None else random.randint(0, 99999)
-    plan = generate_plan(depths, n_iters, seed=seed)
-    print_plan_summary(plan, depths, n_iters)
+    plan = generate_plan(depths, n_iters, points, seed=seed)
+    print_plan_summary(plan, depths, n_iters, points)
     print(f'  Seed: {seed}  (save this to reproduce the same order)')
 
     # ── Muca sensor board (started exactly like main.py) ──────────────────────
@@ -641,7 +723,7 @@ def main():
 
             if step == total - 1 or (plan[step + 1][0], plan[step + 1][1]) != key:
                 print(f'\n  ✓ Depth {depth_mm:g} mm, round {round_idx + 1} '
-                      f'complete (all 19 points).')
+                      f'complete ({len(points)} point(s)).')
     except KeyboardInterrupt:
         print('\n  Interrupted')
     finally:

@@ -1,7 +1,7 @@
 {
   "global": {
-    "x_mm": -1.2,
-    "y_mm": 0.5,
+    "x_mm": -3.2,
+    "y_mm": 2.5,
     "z_mm": -10.9
   },
   "reference_pose": [

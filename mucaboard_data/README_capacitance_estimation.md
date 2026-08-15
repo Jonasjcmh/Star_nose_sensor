@@ -69,9 +69,15 @@ load-cell force sensor / calibration:
 
 - **Flat & solid**: LCR sweep files use the same `depth_mm` labels
   (5,6,7,8,9 mm) as the mucaboard sessions → matched directly, offset = 0.
-- **Hollow**: the LCR file's `depth_mm` (0–4 mm) corresponds to the
+- **Hollow**: the LCR files' `depth_mm` (0–4 mm) corresponds to the
   mucaboard session's `depth_mm − 5` (5–9 mm) — confirmed by `load_cell_N`
-  matching closely at that offset → matched with **+5 mm offset**.
+  matching closely at that offset → matched with **+5 mm offset**. Two LCR
+  files cover hollow, giving 5 of 19 points (3, 8, 10, 14, 19): one for
+  points 3/10/14, one for points 8/19. A third candidate file (points 5/12,
+  filename timestamp `999999`) was found and **rejected** — its `Cp_pF`
+  increases by an exact, near-noiseless +2.0 pF/mm, unlike every other
+  (real) LCR file in the dataset, and is almost certainly synthetic/test
+  data rather than a genuine measurement.
 
 For each matched `(point, depth)` pair, both sides are first reduced to the
 **hold-phase mean** (`phase == 'hold'`) of their respective signal:
@@ -97,7 +103,7 @@ the current dataset (`n` = number of matched point/depth rows):
 |---------|---------------------------|--------------------|-------|-----------|----|
 | Flat    | −0.9748                   | 1.8112             | 0.216 | 0.3658    | 95 |
 | Solid   | −0.8214                   | 2.3364             | 0.440 | 0.1096    | 95 |
-| Hollow  | −2.0666                   | 2.8529             | 0.481 | 0.2821    | 15 |
+| Hollow  | −1.0716                   | 2.4030             | 0.283 | 0.2666    | 25 |
 
 So, e.g. for the **solid** surface: `Cp_pF ≈ −0.8214 · V + 2.3364`.
 
@@ -117,7 +123,7 @@ that point's 5 depths as samples) does much better on average:
 |---------|--------------------|-----------|
 | Flat    | 0.564              | 0.216     |
 | Solid   | 0.708              | 0.440     |
-| Hollow  | 0.808              | 0.481     |
+| Hollow  | 0.864              | 0.283     |
 
 Per-point coefficients are printed to the console by
 `estimate_capacitance.m` (`FIT (per point)` table, columns `point, slope,
@@ -177,8 +183,8 @@ Implemented in `lcr_delta_c_over_c0.m` (2nd output, `delta_over_c0`). Color
 scale label: `delta-C / C0 (fraction)`.
 
 Both §3.1 and §3.2 are LCR-measured (real pF), so **hollow only has data
-for 3 points** (3/10/14) — that's all the direct-LCR-connected hollow
-dataset covers; the other 16 hexagons are grey.
+for 5 points** (3, 8, 10, 14, 19) — that's all the direct-LCR-connected
+hollow datasets cover; the other 14 hexagons are grey.
 
 ### 3.3 `muca_deltaV_hexmap.png` — relative reading change ΔV/V0 (muca-only, no LCR)
 
@@ -223,7 +229,7 @@ machinery as §3.
 2) Muca reading → estimated capacitance (per surface, pooled fit):
    flat:   Cp_pF ≈ −0.9748 · V + 1.8112   (R²=0.216, n=95)
    solid:  Cp_pF ≈ −0.8214 · V + 2.3364   (R²=0.440, n=95)
-   hollow: Cp_pF ≈ −2.0666 · V + 2.8529   (R²=0.481, n=15)
+   hollow: Cp_pF ≈ −1.0716 · V + 2.4030   (R²=0.283, n=25)
    (or per-point a_p, b_p from fit_by_point.m — see console output / capacitance_perpoint_*.png)
 
 3) Hex map — absolute ΔC (pF), per point:

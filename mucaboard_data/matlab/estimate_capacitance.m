@@ -9,10 +9,15 @@
 %   1. Flat & solid: the LCR sweep files use the SAME depth_mm labels
 %      (5,6,7,8,9mm) as the mucaboard sessions, covering all 19 points --
 %      matched directly, no offset.
-%   2. Hollow: the LCR file's depth_mm (0-4mm) turns out to correspond to
+%   2. Hollow: the LCR files' depth_mm (0-4mm) turns out to correspond to
 %      the mucaboard session's depth_mm-5 (5-9mm) -- confirmed by
 %      load_cell_N matching closely at that +5mm offset (see
-%      match_lcr_muca_by_depth.m) -- and only covers points 3/10/14.
+%      match_lcr_muca_by_depth.m) -- and covers points 3/10/14 (one file)
+%      plus 8/19 (a second file) = 5 of 19 points. A third hollow-labeled
+%      candidate file (P05_P12, timestamp 999999) was found but excluded:
+%      its Cp_pF is a suspiciously exact +2.0 pF/mm ramp with near-zero
+%      noise, unlike every other (real) LCR file -- almost certainly
+%      synthetic/test data, not a genuine measurement.
 %
 % CAVEAT: Cp_pF (direct LCR self-capacitance) and the muca board's
 % normalized reading (the FT5x16 touch chip's own internal mutual-
@@ -62,7 +67,8 @@ LCR_FILES = { ...
       fullfile(CAP_LOG_DIR, 'ramp_collector_20260709_161711_solidD_2mm.csv'), ...
       fullfile(CAP_LOG_DIR, 'ramp_collector_20260710_140020_solidD_3mm.csv'), ...
       fullfile(CAP_LOG_DIR, 'ramp_collector_20260709_144320_solidD_4mm.csv') }, ...
-    { fullfile(CAP_LOG_DIR, 'two_point_iterations_P10_P03_P14_20260804_171210_hollow.csv') } ...
+    { fullfile(CAP_LOG_DIR, 'two_point_iterations_P10_P03_P14_20260804_171210_hollow.csv'), ...
+      fullfile(CAP_LOG_DIR, 'two_point_iterations_P08_P19_20260720_122906_hollow.csv') } ...
 };
 
 DEPTH_OFFSET = [0, 0, 5];   % added to LCR depth_mm before matching mucaboard depth_mm

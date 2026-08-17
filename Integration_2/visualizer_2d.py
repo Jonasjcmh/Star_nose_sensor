@@ -98,15 +98,15 @@ POINT_LABELS = [
 SENSOR_TO_LABEL = POINT_LABELS
 
 def _point_label(pt):
-    """Convert a 1-based HARDWARE point number (from ur5_control) to
-    its hex-grid label via UR5_TO_IDX. Falls back to str(pt) if it
-    isn't a recognized point number."""
-    try:
-        idx = UR5_TO_IDX.get(int(pt))
-        if idx is not None:
-            return POINT_LABELS[idx]
-    except (TypeError, ValueError):
-        pass
+    """Convert a 1-based HARDWARE point number (from ur5_control) to its
+    hex-grid label. Defers to ur5_control.point_label, which derives the label
+    from the sensor cell the point physically presses (a1=P3, c3 center=P10),
+    so the readout matches the press tool. Falls back to str(pt) otherwise."""
+    if HAS_UR5:
+        try:
+            return ur5_control.point_label(int(pt))
+        except (TypeError, ValueError):
+            pass
     return str(pt)
 
 W, H    = 920, 680

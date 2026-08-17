@@ -74,7 +74,7 @@ WORLD_SDF_PATH     = "/tmp/ur5_twin_world.sdf"
 # moving the robot.  Removed at startup and on exit.
 GAZEBO_READY_FILE  = "/tmp/star_nose_gazebo_ready"
 
-SENSOR_REF = np.array([-0.03746 + 0.0005, -0.50066 + 0.0016, 0.06054])
+SENSOR_REF = np.array([-0.03664, -0.49831, 0.06071])
 
 _POINTS_MM = {
      1: ( -8.0, +14.0),  2: (  0.0, +14.0),  3: ( +8.0, +14.0),

@@ -34,10 +34,10 @@ CALIB_Z_MM    = 0.0   # ← set after calibration (surface height)
 POINT_OFFSETS = {}    # pt → (dx_mm, dy_mm) from calib_points_<tip>.json
 
 REFERENCE_POSE = [
-    -0.03746+0.0005,
-    -0.50066+0.0016,
-     0.06054,
-    -2.35063, 2.08341, -0.00009
+    -0.03664,
+    -0.49831,
+     0.06071,
+    2.346, -2.094, -0.00009
 ]
 
 # Correct physical positions matching sensor layout
@@ -64,19 +64,16 @@ POINTS = {
     19: ( +8.0, -14.0),
 }
 
-# Hex-grid label for each hardware point number (1-19). Same order/mapping
-# as POINT_LABELS in visualizer_2d.py and sensor.py: P1=a1, P2=a2, P3=a3,
-# P4=b1 ... P12=c5, P13=d2 ... P16=d5, P17=e3, P18=e4, P19=e5. Pressing point
-# 'a1' therefore hits the same physical point the sensor labels a1.
-POINT_LABELS = [
-    'a1', 'a2', 'a3',
-    'b1', 'b2', 'b3', 'b4',
-    'c1', 'c2', 'c3', 'c4', 'c5',
-    'd2', 'd3', 'd4', 'd5',
-    'e3', 'e4', 'e5',
-]
-POINT_TO_LABEL = {i + 1: lbl for i, lbl in enumerate(POINT_LABELS)}
-LABEL_TO_POINT = {lbl: i + 1 for i, lbl in enumerate(POINT_LABELS)}
+# Hex-grid label for each hardware point number. These are NOT in point-number
+# order: each hardware point physically presses one raw sensor cell (see
+# UR5_TO_SENSOR below), and every cell has a fixed hex label. POINT_TO_LABEL is
+# therefore DERIVED from those two maps further down, so pressing 'a1' always
+# hits the exact point the visualizer/sensor label a1 (a1=P3, c3 center=P10,
+# e5=P17). POINT_LABELS/POINT_TO_LABEL/LABEL_TO_POINT are populated below,
+# once UR5_TO_SENSOR is defined.
+POINT_LABELS   = None
+POINT_TO_LABEL = {}
+LABEL_TO_POINT = {}
 
 def point_label(pt):
     """Hex-grid label ('a1'..'e5') for a 1-based hardware point number."""
@@ -107,6 +104,24 @@ UR5_TO_SENSOR = {
     13:51, 14:39, 15:27, 16:15,
     17:52, 18:40, 19:28,
 }
+
+# Hex label for each raw MUCA sensor cell — same source of truth as
+# visualizer_2d.RAW_CELLS/POINT_LABELS and sensor.py (cell 0 = a1, 1 = a2,
+# 2 = a3, 12 = b1, ... 52 = e5). Each hardware point's label is whatever cell
+# it presses via UR5_TO_SENSOR.
+SENSOR_CELL_TO_LABEL = {
+     0:'a1',  1:'a2',  2:'a3',
+    12:'b1', 13:'b2', 14:'b3', 15:'b4',
+    24:'c1', 25:'c2', 26:'c3', 27:'c4', 28:'c5',
+    37:'d2', 38:'d3', 39:'d4', 40:'d5',
+    50:'e3', 51:'e4', 52:'e5',
+}
+
+# Derived point<->label maps (see note above): label always matches the
+# sensor cell the point physically presses.
+POINT_TO_LABEL = {pt: SENSOR_CELL_TO_LABEL[cell] for pt, cell in UR5_TO_SENSOR.items()}
+LABEL_TO_POINT = {lbl: pt for pt, lbl in POINT_TO_LABEL.items()}
+POINT_LABELS   = [POINT_TO_LABEL[pt] for pt in sorted(POINT_TO_LABEL)]
 
 SEQUENCE = [10,1,2,3,7,6,5,4,8,9,10,11,12,16,15,14,13,17,18,19,10]
 

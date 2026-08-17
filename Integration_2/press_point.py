@@ -3,8 +3,9 @@ press_point.py
 Interactive single-point press tool for the UR5.
 
 Ask for a point by its hex-grid label (a1..e5) — the SAME names the sensor
-and visualizer_2d use — or by hardware number (1..19), and the robot moves to
-that point, presses it, dwells, and retracts. Points map identically to the
+and visualizer_2d use — or by hardware number (1..19), then for the press
+depth (mm), and the robot moves to that point, presses it by that depth,
+dwells, and retracts. Points map identically to the
 sensor: P1=a1, P2=a2, P3=a3, P4=b1 ... P16=d5, P17=e3, P18=e4, P19=e5, so
 pressing 'a1' hits the exact point the sensor labels a1.
 
@@ -55,6 +56,27 @@ def _choose_tip():
         if sel.isdigit() and 1 <= int(sel) <= len(tips):
             return tips[int(sel) - 1]
         print("  Invalid choice — enter a number from the list.")
+
+
+def _ask_depth(default_mm):
+    """Prompt for the press depth (indentation) in mm. Blank keeps the last/
+    default value. Returns a positive float, or None if the user aborts."""
+    while True:
+        try:
+            sel = input(f"  depth mm [{default_mm:.1f}] > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if sel == '':
+            return default_mm
+        try:
+            d = float(sel)
+        except ValueError:
+            print("  Enter a number (mm), e.g. 6 — or blank to keep default.")
+            continue
+        if d <= 0:
+            print("  Depth must be positive.")
+            continue
+        return d
 
 
 def _press(rtde_c, pt, indent_mm, dwell_s):
@@ -108,9 +130,11 @@ def main():
 
         print("\n" + "=" * 55)
         print("  Enter a point to press: label a1..e5, or number 1..19")
+        print("  You'll be asked for the press depth (mm) each time.")
         print("  'list' to show the mapping, 'q' to quit.")
         print("=" * 55)
 
+        last_indent = args.indent
         while True:
             try:
                 token = input("point > ").strip()
@@ -129,8 +153,13 @@ def main():
             except ValueError as e:
                 print(f"  {e}")
                 continue
+            indent_mm = _ask_depth(last_indent)
+            if indent_mm is None:
+                print("  Press cancelled.")
+                continue
+            last_indent = indent_mm
             try:
-                _press(rtde_c, pt, args.indent, args.dwell)
+                _press(rtde_c, pt, indent_mm, args.dwell)
             except Exception as e:
                 print(f"[press] Error pressing point: {e}")
     finally:

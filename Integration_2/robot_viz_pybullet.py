@@ -38,7 +38,7 @@ SENSOR_SHARED_FILE = "/tmp/star_nose_sensor.json"
 Q_HOME = [0.0, -PI / 2, 0.0, -PI / 2, 0.0, 0.0]
 
 # Physical sensor geometry (fixed on table, robot has indenter)
-SENSOR_REF = np.array([-0.03746 + 0.0005, -0.50066 + 0.0016, 0.06054])
+SENSOR_REF = np.array([-0.03664, -0.49831, 0.06071])
 
 _POINTS_MM = {
      1: ( -8.0, +14.0),  2: (  0.0, +14.0),  3: ( +8.0, +14.0),

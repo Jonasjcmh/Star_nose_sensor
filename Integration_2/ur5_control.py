@@ -64,6 +64,40 @@ POINTS = {
     19: ( +8.0, -14.0),
 }
 
+# Hex-grid label for each hardware point number (1-19). Same order/mapping
+# as POINT_LABELS in visualizer_2d.py and sensor.py: P1=a1, P2=a2, P3=a3,
+# P4=b1 ... P12=c5, P13=d2 ... P16=d5, P17=e3, P18=e4, P19=e5. Pressing point
+# 'a1' therefore hits the same physical point the sensor labels a1.
+POINT_LABELS = [
+    'a1', 'a2', 'a3',
+    'b1', 'b2', 'b3', 'b4',
+    'c1', 'c2', 'c3', 'c4', 'c5',
+    'd2', 'd3', 'd4', 'd5',
+    'e3', 'e4', 'e5',
+]
+POINT_TO_LABEL = {i + 1: lbl for i, lbl in enumerate(POINT_LABELS)}
+LABEL_TO_POINT = {lbl: i + 1 for i, lbl in enumerate(POINT_LABELS)}
+
+def point_label(pt):
+    """Hex-grid label ('a1'..'e5') for a 1-based hardware point number."""
+    return POINT_TO_LABEL.get(int(pt), str(pt))
+
+def resolve_point(token):
+    """Return the 1-based hardware point number for a hex label ('a1'..'e5')
+    or a point number ('1'..'19' / int). Raises ValueError if unrecognized."""
+    if isinstance(token, str):
+        t = token.strip().lower()
+        if t in LABEL_TO_POINT:
+            return LABEL_TO_POINT[t]
+        if t.isdigit():
+            token = int(t)
+        else:
+            raise ValueError(f"Unknown point '{token}' (use a1..e5 or 1..19)")
+    pt = int(token)
+    if pt not in POINTS:
+        raise ValueError(f"Point number {pt} out of range (1..19)")
+    return pt
+
 # Corrected mapping: UR5 point → raw sensor cell index
 # Sensor is physically mounted 120° CCW relative to robot frame.
 UR5_TO_SENSOR = {
@@ -247,13 +281,11 @@ class _ScriptController:
             time.sleep(0.05)
 
 
-def run_trajectory(on_press=None, on_release=None, interactive=True):
-    global is_done
-
-    print("="*55)
-    print(f"  UR5 Hex Trajectory | offset X={CALIB_X_MM:+.2f} Y={CALIB_Y_MM:+.2f} Z={CALIB_Z_MM:+.2f} mm")
-    print("="*55)
-
+def connect():
+    """Open RTDEReceive + RTDEControl (with URScript fallback) and start the
+    background force reader. Returns (rtde_c, rtde_r), or (None, None) if the
+    receive interface could not be opened. Shared by run_trajectory() and the
+    single-point press tool."""
     # ── RTDEReceive (always try first — works even on URSim) ──
     rtde_r = None
     for attempt in range(3):
@@ -267,17 +299,13 @@ def run_trajectory(on_press=None, on_release=None, interactive=True):
             time.sleep(2)
 
     if rtde_r is None:
-        print("[ur5] Could not open RTDEReceive — skipping trajectory")
-        with _lock:
-            is_done = True
-        return
+        print("[ur5] Could not open RTDEReceive")
+        return None, None
 
     _rtde_r_ref[0] = rtde_r
 
     # Start background force reader
-    force_thread = threading.Thread(
-        target=_force_reader_loop, daemon=True)
-    force_thread.start()
+    threading.Thread(target=_force_reader_loop, daemon=True).start()
     print("[ur5] Force reader started at 125Hz")
 
     # ── RTDEControl (may fail on some sims → URScript fallback) ──
@@ -300,6 +328,23 @@ def run_trajectory(on_press=None, on_release=None, interactive=True):
     if rtde_c is None:
         print("[ur5] RTDE Control unavailable — using URScript fallback")
         rtde_c = _ScriptController(ROBOT_IP, rtde_r)
+
+    return rtde_c, rtde_r
+
+
+def run_trajectory(on_press=None, on_release=None, interactive=True):
+    global is_done
+
+    print("="*55)
+    print(f"  UR5 Hex Trajectory | offset X={CALIB_X_MM:+.2f} Y={CALIB_Y_MM:+.2f} Z={CALIB_Z_MM:+.2f} mm")
+    print("="*55)
+
+    rtde_c, rtde_r = connect()
+    if rtde_r is None:
+        print("[ur5] Could not open RTDEReceive — skipping trajectory")
+        with _lock:
+            is_done = True
+        return
 
     # ── Print current position ───────────────────────────────
     try:

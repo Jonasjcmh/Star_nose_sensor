@@ -69,7 +69,9 @@ def apply(tip=None):
     if os.path.exists(pts_path):
         with open(pts_path) as f:
             pd = json.load(f)
-        offsets = {int(k): (v.get('dx_mm', 0.0), v.get('dy_mm', 0.0))
+        # Keys may be hex labels ('a1'..'e5') or point numbers ('1'..'19');
+        # resolve_point handles both and yields the hardware point number.
+        offsets = {ur5_control.resolve_point(k): (v.get('dx_mm', 0.0), v.get('dy_mm', 0.0))
                    for k, v in pd.get('per_point', {}).items()}
         ur5_control.set_point_offsets(offsets)
     else:

@@ -58,7 +58,12 @@ POINT_OVERRIDES = {
 # Format: [x, y, z, rx, ry, rz]  (meters, radians)
 # X, Y offsets and Z indentation are applied on top of this pose.
 # ──────────────────────────────────────────────
-REFERENCE_POSE = [-0.03746+0.0005, -0.50066+0.0016, 0.06054, -2.35063, 2.08341, -0.00009]
+REFERENCE_POSE = [
+    -0.03664,
+    -0.49831,
+     0.06071,
+    2.346, -2.094, -0.00009
+]
 
 # ──────────────────────────────────────────────
 # POINT DICTIONARY

@@ -93,30 +93,82 @@ def parse_args():
 
 # ── Calibration (inline — avoids ur5_control import in load_calibration.py) ──
 
-def _apply_calibration(ur5, tip=None):
-    """Load calib[_tip].json from Integration_2 and apply to ur5_friction."""
-    name = f'calib_{tip}.json' if tip else 'calib.json'
-    path = os.path.join(INTEGRATION_DIR, name)
-    if not os.path.exists(path):
-        print(f"[calib] {name} not found — using zero offset")
+def _list_calib_files():
+    """Return sorted offset calibration files (calib_short_*.json) in Integration_2."""
+    import glob
+    files = sorted(glob.glob(os.path.join(INTEGRATION_DIR, 'calib_short_*.json')))
+    plain = os.path.join(INTEGRATION_DIR, 'calib.json')
+    if os.path.exists(plain):
+        files.insert(0, plain)
+    return files
+
+
+def _select_calibration(tip=None):
+    """Choose which calibration offset file to apply.
+
+    If --tip is given, load calib_<tip>.json without prompting. Otherwise show a
+    menu of available calib_short_*.json files and let the user pick one.
+    Returns the chosen file path, or None for zero offset.
+    """
+    # Non-interactive override via --tip
+    if tip:
+        path = os.path.join(INTEGRATION_DIR, f'calib_{tip}.json')
+        if not os.path.exists(path):
+            print(f"[calib] calib_{tip}.json not found — using zero offset")
+            return None
+        return path
+
+    files = _list_calib_files()
+    if not files:
+        print("[calib] No calib_short_*.json files found — using zero offset")
+        return None
+
+    print()
+    print("=" * 50)
+    print("  SELECT CALIBRATION FILE")
+    print("=" * 50)
+    for i, p in enumerate(files, 1):
+        print(f"   {i:2d}) {os.path.basename(p)}")
+    print("    0) None (zero offset)")
+
+    while True:
+        try:
+            ans = input(f"  Choose calibration [1-{len(files)}, 0=none] > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            raise SystemExit(1)
+        if ans == '0':
+            return None
+        try:
+            idx = int(ans)
+            if 1 <= idx <= len(files):
+                return files[idx - 1]
+        except ValueError:
+            pass
+        print("  Invalid choice, try again.")
+
+
+def _apply_calibration(ur5, path):
+    """Apply an offset calibration file (x_mm/y_mm/z_mm) to ur5_friction."""
+    if not path or not os.path.exists(path):
+        print("[calib] Using zero offset")
         return
 
     with open(path) as f:
         d = json.load(f)
-    ur5.set_calibration(d.get('x_mm', 0.0),
-                        d.get('y_mm', 0.0),
-                        d.get('z_mm', 0.0))
-    print(f"[calib] Loaded from {name}")
+    x, y, z = d.get('x_mm', 0.0), d.get('y_mm', 0.0), d.get('z_mm', 0.0)
+    ur5.set_calibration(x, y, z)
+    print(f"[calib] Loaded from {os.path.basename(path)}: "
+          f"x={x:.2f}  y={y:.2f}  z={z:.2f} mm")
 
 
-def _confirm_calibration(tip=None):
-    """Ask user to confirm the correct tip is mounted."""
-    label = tip if tip else '(default)'
+def _confirm_calibration(path):
+    """Ask user to confirm the chosen calibration / mounted tip."""
+    label = os.path.basename(path) if path else '(zero offset)'
     print()
     print("=" * 50)
     print("  CALIBRATION CHECK")
     print("=" * 50)
-    print(f"  Tip profile : {label}")
+    print(f"  Calibration : {label}")
     try:
         ans = input("  Correct tip mounted? Continue? [y/N] > ").strip().lower()
     except (EOFError, KeyboardInterrupt):
@@ -173,8 +225,9 @@ def main():
 
     # ── Calibration ───────────────────────────────────────────
     if not args.no_robot:
-        _confirm_calibration(args.tip)
-        _apply_calibration(ur5, args.tip)
+        calib_path = _select_calibration(args.tip)
+        _confirm_calibration(calib_path)
+        _apply_calibration(ur5, calib_path)
 
     # ── Build trajectory ──────────────────────────────────────
     name = args.trajectory

@@ -48,10 +48,10 @@ MAX_ENGAGE_MM     = 15.0            # hard safety limit — never go deeper than
 
 # ── Reference pose (matches ur5_control.py) ───────────────────────────────────
 REFERENCE_POSE = [
-    -0.03746 + 0.0005,
-    -0.50066 + 0.0016,
-     0.06054,
-    -2.35063, 2.08341, -0.00009,
+    -0.03664,
+    -0.49831,
+     0.06071,
+    2.346, -2.094, -0.00009
 ]
 SAFE_HOME_Z_MM = 30.0   # clearance above surface at home
 

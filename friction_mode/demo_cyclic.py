@@ -28,6 +28,23 @@ Usage
   python demo_cyclic.py --step 2            # use every 2nd frame
   python demo_cyclic.py --save              # save MP4 (1 cycle)
   python demo_cyclic.py --gif               # save GIF instead of MP4
+
+Real UR arm (optional)
+----------------------
+Add --robot to *also* drive the physical UR arm through the same trajectories,
+in force-control mode, warped onto the hollow dome via the per-point
+calibration (Integration_2/calib_points_short_new_hollow_dome.json). The arm
+runs in parallel with (not frame-locked to) the synthetic animation.
+
+  python demo_cyclic.py --robot                       # real arm, 5 N force, dome calib
+  python demo_cyclic.py --robot --force 4 --robot-speed 6
+  python demo_cyclic.py --robot --displacement --depth 6   # fixed 6 mm indentation
+  python demo_cyclic.py --robot --sim                 # URSim at 127.0.0.1
+  python demo_cyclic.py --robot --calib /path/to/calib_points_*.json
+
+By default the arm runs in force control; pass --displacement to slide at a
+fixed indentation --depth (mm) instead.  Either way you're prompted to confirm
+(and can adjust) the depth/force before it moves.
 """
 
 import os
@@ -162,6 +179,166 @@ def _waypoints_to_series(pts_mm, v_mm_s=V_SLIDE_MMS, pause_s=0.5):
     y_dense = np.interp(t_dense, ta, ya)
     p_dense = np.interp(t_dense, ta, pa) > 0.5
     return t_dense, x_dense, y_dense, p_dense
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hollow-dome calibration  →  real UR arm motion  (optional, --robot)
+# ─────────────────────────────────────────────────────────────────────────────
+# The synthetic demo above never touches hardware.  When --robot is passed we
+# additionally drive the *real* UR arm through the very same trajectories, using
+# the "new hollow dome" per-point calibration so the tip follows the true
+# (warped) dome surface rather than the ideal sensor grid.
+#
+# Calibration file layout (Integration_2/calib_points_short_new_hollow_dome.json)
+#   global         : x/y/z_mm offset of the dome origin in the robot frame
+#   reference_pose : base TCP pose the offsets are measured against
+#   per_point[1-19]: dx/dy_mm the true point deviates from the ideal grid
+#
+# Verified mapping (from the file's own "points" block):
+#   offset_mm = theoretical_mm + deviation_mm + global_offset
+#   pose      = reference_pose + offset/1000
+# so we warp each waypoint by the *interpolated* per-point deviation and let
+# ur5_friction._build_pose add the global offset on top of reference_pose.
+
+_DOME_CALIB_DEFAULT = os.path.normpath(os.path.join(
+    _HERE, '..', 'Integration_2', 'calib_points_short_new_hollow_dome.json'))
+
+# Canonical theoretical positions of the 19 sensor points (mm, sensor-centred).
+# Keyed by UR5 point id 1..19 — matches trajectories.star_path and the calib file.
+_SENSOR_POINTS_MM = {
+     1: (-8.0, 14.0),  2: (0.0, 14.0),  3: (8.0, 14.0),
+     4: (-12.0, 7.0),  5: (-4.0, 7.0),  6: (4.0, 7.0),  7: (12.0, 7.0),
+     8: (-16.0, 0.0),  9: (-8.0, 0.0), 10: (0.0, 0.0), 11: (8.0, 0.0), 12: (16.0, 0.0),
+    13: (-12.0, -7.0), 14: (-4.0, -7.0), 15: (4.0, -7.0), 16: (12.0, -7.0),
+    17: (-8.0, -14.0), 18: (0.0, -14.0), 19: (8.0, -14.0),
+}
+
+def _tps_fit(P, F):
+    """
+    Thin-plate-spline fit through scattered 2-D nodes.
+      P : (n, 2) node coordinates      F : (n, k) values at the nodes
+    Returns an evaluator eval_fn(Q) -> (m, k) that interpolates *exactly* at the
+    nodes and stays smooth between them (parameter-free; pure numpy).
+    """
+    n = P.shape[0]
+
+    def _U(r2):
+        # U(r) = r^2 log r ;  written in r^2 with the r→0 limit (0) handled.
+        out = np.zeros_like(r2)
+        nz  = r2 > 1e-12
+        out[nz] = 0.5 * r2[nz] * np.log(r2[nz])
+        return out
+
+    # Pairwise squared distances between nodes → K
+    d2 = ((P[:, None, :] - P[None, :, :]) ** 2).sum(-1)
+    K  = _U(d2)
+    Pm = np.hstack([np.ones((n, 1)), P])          # (n, 3) affine tail
+    A  = np.zeros((n + 3, n + 3))
+    A[:n, :n]   = K
+    A[:n, n:]   = Pm
+    A[n:, :n]   = Pm.T
+    B = np.vstack([F, np.zeros((3, F.shape[1]))])
+    sol = np.linalg.solve(A, B)
+    W, C = sol[:n], sol[n:]                        # rbf weights, affine coeffs
+
+    def eval_fn(Q):
+        Q  = np.atleast_2d(np.asarray(Q, dtype=float))
+        r2 = ((Q[:, None, :] - P[None, :, :]) ** 2).sum(-1)
+        return _U(r2) @ W + np.hstack([np.ones((Q.shape[0], 1)), Q]) @ C
+
+    return eval_fn
+
+
+def load_dome_calibration(path):
+    """Read the hollow-dome calib JSON → (global_offset_dict, reference_pose,
+    warp_fn).  warp_fn(x_mm, y_mm) -> (dx_mm, dy_mm) interpolated deviation,
+    exact at the 19 measured points, smooth in between (thin-plate spline)."""
+    import json
+    with open(path) as f:
+        cal = json.load(f)
+
+    g   = cal['global']
+    ref = list(cal['reference_pose'])
+
+    # Pair each per-point deviation with its theoretical position.
+    P, D = [], []
+    for pid_str, dev in cal['per_point'].items():
+        pid = int(pid_str)
+        # Prefer the theoretical_mm stored alongside the point, else canonical grid.
+        pt = cal.get('points', {}).get(pid_str, {}).get('theoretical_mm')
+        P.append(tuple(pt) if pt else _SENSOR_POINTS_MM[pid])
+        D.append((dev['dx_mm'], dev['dy_mm']))
+    P = np.asarray(P, dtype=float)     # (19, 2)
+    D = np.asarray(D, dtype=float)     # (19, 2)
+
+    tps = _tps_fit(P, D)
+
+    def warp(x_mm, y_mm):
+        dx, dy = tps([[x_mm, y_mm]])[0]
+        return float(dx), float(dy)
+
+    return g, ref, warp
+
+
+def warp_trajectory(pts_mm, warp_fn):
+    """Apply the interpolated dome deviation to a list of (x_mm, y_mm) waypoints."""
+    out = []
+    for x, y in pts_mm:
+        dx, dy = warp_fn(x, y)
+        out.append((x + dx, y + dy))
+    return out
+
+
+def run_robot_sequence(traj_keys, cycles, calib_path, target_N, speed_mms,
+                       sim=False, stop_evt=None, displacement=False,
+                       depth_mm=6.0):
+    """
+    Drive the real UR arm through `traj_keys` (× cycles), warped onto the hollow
+    dome.  Blocking — run me in a background thread so the matplotlib animation
+    keeps free-running in parallel.
+
+    Two motion modes:
+      • force control (default)  — hold a constant FUTEK contact force `target_N`
+      • displacement (`displacement=True`) — slide at a fixed indentation
+        `depth_mm` below the dome surface
+    """
+    if sim:
+        os.environ['UR_ROBOT_IP'] = '127.0.0.1'
+        print('[robot] Simulator mode — UR_ROBOT_IP = 127.0.0.1')
+
+    from trajectories import TRAJECTORIES
+    import ur5_friction as ur5      # deferred: pulls in rtde_* only when needed
+
+    g, ref, warp = load_dome_calibration(calib_path)
+    ur5.REFERENCE_POSE = list(ref)                       # dome base pose
+    ur5.set_calibration(g.get('x_mm', 0.0),
+                        g.get('y_mm', 0.0),
+                        g.get('z_mm', 0.0))              # dome origin offset
+    mode_tag = (f'depth={depth_mm:.1f} mm' if displacement
+                else f'target={target_N:.1f} N')
+    print(f'[robot] Dome calib: {os.path.basename(calib_path)}  '
+          f'ref_pose[0:3]={ref[0:3]}  '
+          f'{"displacement" if displacement else "force"}  {mode_tag}  '
+          f'speed={speed_mms:.1f} mm/s')
+
+    speed_mps = speed_mms / 1000.0
+    keys = [k for k in traj_keys if k in TRAJECTORIES] or DEFAULT_ORDER
+
+    for cyc in range(cycles):
+        for key in keys:
+            if stop_evt is not None and stop_evt.is_set():
+                print('[robot] Stop requested — ending sequence')
+                return
+            pts    = TRAJECTORIES[key]()
+            warped = warp_trajectory(pts, warp)
+            label  = TRAJ_LABELS.get(key, key)
+            print(f'\n[robot] ── cycle {cyc + 1}/{cycles}  |  {label} '
+                  f'({len(warped)} waypoints) ──')
+            if displacement:
+                ur5.run_displacement_trajectory(warped, depth_mm, speed_mps)
+            else:
+                ur5.run_force_trajectory(warped, target_N, speed_mps)
+    print('\n[robot] Sequence complete — arm home.')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -704,6 +881,27 @@ def parse_args():
                    help='Save as GIF (default: MP4)')
     p.add_argument('--seed',   type=int, default=7,
                    help='RNG seed for reproducibility (default: 7)')
+
+    # ── Real-hardware options (default: purely synthetic, no robot) ──────────
+    r = p.add_argument_group('real UR arm (optional)')
+    r.add_argument('--robot', action='store_true',
+                   help='Also drive the real UR arm through the same trajectories')
+    r.add_argument('--calib', default=_DOME_CALIB_DEFAULT, metavar='PATH',
+                   help='Hollow-dome per-point calibration JSON '
+                        '(default: new_hollow_dome)')
+    r.add_argument('--displacement', action='store_true',
+                   help='Slide at a fixed indentation depth instead of '
+                        'constant force (force control is the default)')
+    r.add_argument('--depth', type=float, default=6.0, metavar='MM',
+                   help='Indentation depth in mm [displacement mode] (default: 6)')
+    r.add_argument('--force', type=float, default=5.0, metavar='N',
+                   help='Target contact force for force-control mode (default: 5 N)')
+    r.add_argument('--robot-speed', type=float, default=8.0, metavar='MMS',
+                   help='Lateral sliding speed in mm/s (default: 8)')
+    r.add_argument('--sim', action='store_true',
+                   help='Drive URSim at 127.0.0.1 instead of the real robot')
+    r.add_argument('--yes', action='store_true',
+                   help='Skip the safety confirmation prompt before moving')
     return p.parse_args()
 
 
@@ -728,6 +926,11 @@ def main():
         'axes.edgecolor':   EDGE,
     })
 
+    if args.robot and (args.save or args.gif):
+        print('[demo] --robot moves real hardware and needs the live window; '
+              'it cannot be combined with --save/--gif. Aborting.')
+        return
+
     df, traj_meta, seg_bounds = build_demo_df(
         traj_keys=args.traj,
         cycles=args.cycles,
@@ -736,6 +939,67 @@ def main():
     )
 
     print(f'[demo] Speed: {args.speed}×   Step: every {args.step} frame(s)')
+
+    # ── Optional: launch the real UR arm in parallel ─────────────────────────
+    import threading
+    robot_stop   = threading.Event()
+    robot_thread = None
+    if args.robot:
+        if not os.path.exists(args.calib):
+            print(f'[demo] Calibration file not found: {args.calib} — aborting.')
+            return
+        print('\n' + '=' * 60)
+        print('  REAL UR ARM MOTION — force control on the hollow dome')
+        print('=' * 60)
+        print(f'  Calibration : {os.path.basename(args.calib)}')
+        print(f'  Robot IP    : {"127.0.0.1 (URSim)" if args.sim else os.environ.get("UR_ROBOT_IP", "177.22.22.2")}')
+        print(f'  Mode        : {"DISPLACEMENT" if args.displacement else "FORCE CONTROL"}')
+        if args.displacement:
+            print(f'  Depth       : {args.depth:.1f} mm')
+        else:
+            print(f'  Target force: {args.force:.1f} N')
+        print(f'  Slide speed : {args.robot_speed:.1f} mm/s')
+        print(f'  Trajectories: {", ".join(args.traj)}  × {args.cycles} cycle(s)')
+        print('=' * 60)
+        if not args.yes:
+            if args.displacement:
+                print(f'\n  Indentation depth : {args.depth:.1f} mm')
+                try:
+                    ans = input('  Change depth? [Enter = keep] > ').strip()
+                    if ans:
+                        args.depth = float(ans)
+                        print(f'  Depth set to {args.depth:.1f} mm\n')
+                except (EOFError, ValueError):
+                    pass
+            else:
+                print(f'\n  Target contact force : {args.force:.1f} N')
+                try:
+                    ans = input('  Change target force? [Enter = keep] > ').strip()
+                    if ans:
+                        args.force = float(ans)
+                        print(f'  Target force set to {args.force:.1f} N\n')
+                except (EOFError, ValueError):
+                    pass
+            try:
+                ans = input('  Dome mounted & area clear — move the robot? [y/N] > ').strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print('\n[demo] Aborted.')
+                return
+            if ans != 'y':
+                print('[demo] Robot motion declined — showing synthetic demo only.')
+                args.robot = False
+
+    if args.robot:
+        robot_thread = threading.Thread(
+            target=run_robot_sequence,
+            kwargs=dict(traj_keys=args.traj, cycles=args.cycles,
+                        calib_path=args.calib, target_N=args.force,
+                        speed_mms=args.robot_speed, sim=args.sim,
+                        stop_evt=robot_stop,
+                        displacement=args.displacement, depth_mm=args.depth),
+            daemon=True)
+        robot_thread.start()
+        print('[demo] Robot sequence started in parallel with the animation.\n')
 
     fig, anim, interval = build_animation(
         df, traj_meta, seg_bounds,
@@ -755,7 +1019,18 @@ def main():
             anim.save(out, writer=FFMpegWriter(fps=fps, bitrate=2500))
         print(f'[demo] Done → {out}')
     else:
-        plt.show()
+        try:
+            plt.show()
+        finally:
+            if robot_thread is not None and robot_thread.is_alive():
+                print('[demo] Window closed — asking robot to stop & return home...')
+                robot_stop.set()
+                try:
+                    import ur5_friction as ur5
+                    ur5.request_stop()
+                except Exception:
+                    pass
+                robot_thread.join(timeout=30)
 
 
 if __name__ == '__main__':

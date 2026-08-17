@@ -33,13 +33,13 @@ CALIB_Y_MM    = 0.0   # ← set after calibration
 CALIB_Z_MM    = 0.0   # ← set after calibration (surface height)
 POINT_OFFSETS = {}    # pt → (dx_mm, dy_mm) from calib_points_<tip>.json
 
+
 REFERENCE_POSE = [
     -0.03664,
     -0.49831,
      0.06071,
     2.346, -2.094, -0.00009
 ]
-
 # Correct physical positions matching sensor layout
 # P10 = center (0,0), all others relative in mm
 POINTS = {

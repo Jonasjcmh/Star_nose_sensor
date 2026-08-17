@@ -34,9 +34,12 @@ BLEND_RADIUS = 0.000  # m — 0.0 = full stop at every point
 # Format: [x, y, z, rx, ry, rz]  (meters, radians)
 # Z and orientation are FIXED for the entire trajectory.
 # ──────────────────────────────────────────────
-REFERENCE_POSE = [-0.03746, -0.50066, 0.06054+0.003
-
-    , -2.35063, 2.08341, -0.00009]
+REFERENCE_POSE = [
+    -0.03664,
+    -0.49831,
+     0.06071,
+    2.346, -2.094, -0.00009
+]
 
 # ──────────────────────────────────────────────
 # POINT DICTIONARY

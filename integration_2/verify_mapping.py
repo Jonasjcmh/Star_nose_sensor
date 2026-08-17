@@ -25,8 +25,10 @@ DEFAULT_INDENT  = 6.0   # mm
 DWELL_S         = 2.0   # hold longer so we can read sensor
 
 REFERENCE_POSE = [
-    -0.03695, -0.49906,
-     0.06054, 2.352, -2.08341, -0.00009
+    -0.03664,
+    -0.49831,
+     0.06071,
+    2.346, -2.094, -0.00009
 ]
 
 POINTS = {

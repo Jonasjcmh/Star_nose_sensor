@@ -28,10 +28,10 @@ ROBOT_IP   = "177.22.22.2"
 CALIB_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'calib.json')
 
 REFERENCE_POSE = [
-    -0.03746+0.0005,
-    -0.50066+0.0016,
-     0.06054,
-    -2.35063, 2.08341, -0.00009
+    -0.03664,
+    -0.49831,
+     0.06071,
+    2.346, -2.094, -0.00009
 ]
 
 VELOCITY_JOG   = 0.02

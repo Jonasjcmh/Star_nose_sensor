@@ -39,7 +39,7 @@ SENSOR_SHARED_FILE = "/tmp/star_nose_sensor.json"
 
 # ── Physical sensor geometry (fixed on table, robot has an indenter) ────────────
 # Sensor centre = UR5 P10 reference TCP position (indenter tip at surface)
-SENSOR_REF = np.array([-0.03746 + 0.0005, -0.50066 + 0.0016, 0.06054])
+SENSOR_REF = np.array([-0.03664, -0.49831, 0.06071])
 
 # UR5 scan-point offsets (mm) relative to P10 centre
 _POINTS_MM = {

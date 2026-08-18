@@ -91,26 +91,66 @@ REFERENCE_POSE = [
     2.346, -2.094, -0.00009
 ]
 
+# ROBOT-frame mm. Points are numbered in sensor label/grid order (P1=a1 ...
+# P10=c3 center ... P19=e5) — MUST match ur5_control.POINTS exactly.
 POINTS = {
-     1: ( -8.0, +14.0),   2: (  0.0, +14.0),   3: ( +8.0, +14.0),
-     4: (-12.0,  +7.0),   5: ( -4.0,  +7.0),   6: ( +4.0,  +7.0),
-     7: (+12.0,  +7.0),   8: (-16.0,   0.0),   9: ( -8.0,   0.0),
-    10: (  0.0,   0.0),  11: ( +8.0,   0.0),  12: (+16.0,   0.0),
-    13: (-12.0,  -7.0),  14: ( -4.0,  -7.0),  15: ( +4.0,  -7.0),
-    16: (+12.0,  -7.0),  17: ( -8.0, -14.0),  18: (  0.0, -14.0),
-    19: ( +8.0, -14.0),
+     1: ( +8.0, +14.0),   # a1
+     2: (+12.0,  +7.0),   # a2
+     3: (+16.0,   0.0),   # a3
+     4: (  0.0, +14.0),   # b1
+     5: ( +4.0,  +7.0),   # b2
+     6: ( +8.0,   0.0),   # b3
+     7: (+12.0,  -7.0),   # b4
+     8: ( -8.0, +14.0),   # c1
+     9: ( -4.0,  +7.0),   # c2
+    10: (  0.0,   0.0),   # c3 — center
+    11: ( +4.0,  -7.0),   # c4
+    12: ( +8.0, -14.0),   # c5
+    13: (-12.0,  +7.0),   # d2
+    14: ( -8.0,   0.0),   # d3
+    15: ( -4.0,  -7.0),   # d4
+    16: (  0.0, -14.0),   # d5
+    17: (-16.0,   0.0),   # e3
+    18: (-12.0,  -7.0),   # e4
+    19: ( -8.0, -14.0),   # e5
 }
 
-# UR5 point → index in sensor.get_values() 19-element array
-UR5_TO_IDX = {
-    1: 16,  2: 12,  3:  7,
-    4: 17,  5: 13,  6:  8,  7:  3,
-    8: 18,  9: 14, 10:  9, 11:  4, 12:  0,
-   13: 15, 14: 10, 15:  5, 16:  1,
-   17: 11, 18:  6, 19:  2,
+# ── Sensor cell layout — MUST stay in sync with visualizer_2d.py / sensor.py ──
+# sensor.get_values() returns 19 readings in this raw-cell order (USED_CELLS):
+# index i in that array is the reading of raw cell RAW_CELLS[i]. This is the
+# SAME order as visualizer_2d.RAW_CELLS (the on-screen reference for raw cells).
+RAW_CELLS = [0, 1, 2, 12, 13, 14, 15, 24, 25, 26, 27, 28,
+             37, 38, 39, 40, 50, 51, 52]
+
+# Raw sensor cell → hex-grid label (a1..e5), matching visualizer_2d /
+# ur5_control.SENSOR_CELL_TO_LABEL.
+SENSOR_CELL_TO_LABEL = {
+     0: 'a1',  1: 'a2',  2: 'a3',
+    12: 'b1', 13: 'b2', 14: 'b3', 15: 'b4',
+    24: 'c1', 25: 'c2', 26: 'c3', 27: 'c4', 28: 'c5',
+    37: 'd2', 38: 'd3', 39: 'd4', 40: 'd5',
+    50: 'e3', 51: 'e4', 52: 'e5',
 }
-RAW_CELLS = [2, 15, 28, 1, 14, 27, 40, 0, 13, 26, 39, 52, 12, 25, 38, 51, 24, 37, 50]
-UR5_TO_RAW = {pt: RAW_CELLS[UR5_TO_IDX[pt]] for pt in range(1, 20)}
+
+# UR5 hardware point → raw sensor cell it physically presses.
+# Source of truth: ur5_control.UR5_TO_SENSOR. Points are numbered in label/grid
+# order, so this is sequential in RAW_CELLS/USED_CELLS order (0=a1 ... 52=e5).
+UR5_TO_SENSOR = {
+     1:  0,  2:  1,  3:  2,
+     4: 12,  5: 13,  6: 14,  7: 15,
+     8: 24,  9: 25, 10: 26, 11: 27, 12: 28,
+    13: 37, 14: 38, 15: 39, 16: 40,
+    17: 50, 18: 51, 19: 52,
+}
+
+# Derived maps — never hand-edit these.
+#   UR5_TO_IDX : UR5 point → index into the 19-element get_values() array
+#   UR5_TO_RAW : UR5 point → raw sensor cell number (for S-labels in the UI)
+#   UR5_TO_LABEL: UR5 point → hex label (a1..e5)
+_RAW_TO_IDX  = {raw: i for i, raw in enumerate(RAW_CELLS)}
+UR5_TO_IDX   = {pt: _RAW_TO_IDX[cell] for pt, cell in UR5_TO_SENSOR.items()}
+UR5_TO_RAW   = {pt: UR5_TO_SENSOR[pt] for pt in range(1, 20)}
+UR5_TO_LABEL = {pt: SENSOR_CELL_TO_LABEL[cell] for pt, cell in UR5_TO_SENSOR.items()}
 
 SCAN_ORDER = list(range(1, 20))
 
@@ -431,7 +471,7 @@ def open_live_hexmap(pt):
     _live_bar_rects.extend(rects)
 
     ax_bar.axvline(pt - 1, color="red", linewidth=2, alpha=0.6,
-                   label=f"Target P{pt} → S{UR5_TO_RAW[pt]}")
+                   label=f"Target P{pt} ({UR5_TO_LABEL[pt]}) → S{UR5_TO_RAW[pt]}")
     ax_bar.legend(fontsize=7, facecolor=BG, labelcolor="white",
                   edgecolor=EDGE)
     ax_bar.set_xlim(-0.5, 18.5)
@@ -718,7 +758,8 @@ def do_press(rtde_c, pt, global_calib, per_point_offsets, sensor_mod):
     correct   = (top_idx == exp_idx)
 
     sep = "✓" if correct else "✗"
-    print(f"\n  {sep} Expected : S{exp_raw:2d} (idx {exp_idx:2d}) → {_sensor_bar(exp_val)}")
+    print(f"\n  {sep} Expected : S{exp_raw:2d} ({UR5_TO_LABEL[pt]}, idx {exp_idx:2d}) "
+          f"→ {_sensor_bar(exp_val)}")
     if not correct:
         print(f"    Actual   : S{top_raw:2d} (idx {top_idx:2d}) → {_sensor_bar(top_val)}")
 
@@ -785,7 +826,8 @@ def interactive_point(pt, rtde_c, rtde_r, global_calib,
     exp_raw = UR5_TO_RAW[pt]
 
     print(f"\n{'='*62}")
-    print(f"  P{pt:02d}  nominal XY=({POINTS[pt][0]:+.0f},{POINTS[pt][1]:+.0f}) mm  "
+    print(f"  P{pt:02d} ({UR5_TO_LABEL[pt]})  "
+          f"nominal XY=({POINTS[pt][0]:+.0f},{POINTS[pt][1]:+.0f}) mm  "
           f"expected S{exp_raw}")
     print(f"{'='*62}")
     print("  x+/x-/y+/y-  step N  press  teach  status  map  ok  skip  save  quit")
@@ -903,7 +945,7 @@ def scan_all(points_to_scan, rtde_c, rtde_r, global_calib,
     print(f"\n  Scanning {total} point(s) ...")
     for i, pt in enumerate(points_to_scan, 1):
         dx, dy = per_point_offsets.get(pt, (0.0, 0.0))
-        print(f"\n  [{i:02d}/{total}] P{pt:02d}  "
+        print(f"\n  [{i:02d}/{total}] P{pt:02d} ({UR5_TO_LABEL[pt]})  "
               f"XY=({POINTS[pt][0]:+.0f},{POINTS[pt][1]:+.0f}) mm  "
               f"S{UR5_TO_RAW[pt]}  offset dX={dx:+.2f} dY={dy:+.2f}")
         try:

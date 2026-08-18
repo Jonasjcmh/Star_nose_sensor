@@ -40,37 +40,42 @@ REFERENCE_POSE = [
      0.06071,
     2.346, -2.094, -0.00009
 ]
-# Correct physical positions matching sensor layout
-# P10 = center (0,0), all others relative in mm
+# Correct physical positions matching sensor layout, in ROBOT-frame mm.
+# Points are numbered in sensor/label grid order: P1=a1, P2=a2, P3=a3,
+# P4=b1 ... P10=c3 (center), P17=e3, P18=e4, P19=e5 — i.e. hardware point
+# number == the point's position in the a1..e5 reading order, matching the
+# sensor cell it presses (UR5_TO_SENSOR below is now sequential 0,1,2,12,...).
+# Center c3 is still P10 at (0,0). (The robot grid is a ~120° rotation of the
+# sensor-frame layout in visualizer_2d.POINTS_MM; same physical taxels.)
 POINTS = {
-     1: ( -8.0, +14.0),
-     2: (  0.0, +14.0),
-     3: ( +8.0, +14.0),
-     4: (-12.0,  +7.0),
-     5: ( -4.0,  +7.0),
-     6: ( +4.0,  +7.0),
-     7: (+12.0,  +7.0),
-     8: (-16.0,   0.0),
-     9: ( -8.0,   0.0),
-    10: (  0.0,   0.0),   # center
-    11: ( +8.0,   0.0),
-    12: (+16.0,   0.0),
-    13: (-12.0,  -7.0),
-    14: ( -4.0,  -7.0),
-    15: ( +4.0,  -7.0),
-    16: (+12.0,  -7.0),
-    17: ( -8.0, -14.0),
-    18: (  0.0, -14.0),
-    19: ( +8.0, -14.0),
+     1: ( +8.0, +14.0),   # a1
+     2: (+12.0,  +7.0),   # a2
+     3: (+16.0,   0.0),   # a3
+     4: (  0.0, +14.0),   # b1
+     5: ( +4.0,  +7.0),   # b2
+     6: ( +8.0,   0.0),   # b3
+     7: (+12.0,  -7.0),   # b4
+     8: ( -8.0, +14.0),   # c1
+     9: ( -4.0,  +7.0),   # c2
+    10: (  0.0,   0.0),   # c3 — center
+    11: ( +4.0,  -7.0),   # c4
+    12: ( +8.0, -14.0),   # c5
+    13: (-12.0,  +7.0),   # d2
+    14: ( -8.0,   0.0),   # d3
+    15: ( -4.0,  -7.0),   # d4
+    16: (  0.0, -14.0),   # d5
+    17: (-16.0,   0.0),   # e3
+    18: (-12.0,  -7.0),   # e4
+    19: ( -8.0, -14.0),   # e5
 }
 
-# Hex-grid label for each hardware point number. These are NOT in point-number
-# order: each hardware point physically presses one raw sensor cell (see
-# UR5_TO_SENSOR below), and every cell has a fixed hex label. POINT_TO_LABEL is
-# therefore DERIVED from those two maps further down, so pressing 'a1' always
-# hits the exact point the visualizer/sensor label a1 (a1=P3, c3 center=P10,
-# e5=P17). POINT_LABELS/POINT_TO_LABEL/LABEL_TO_POINT are populated below,
-# once UR5_TO_SENSOR is defined.
+# Hex-grid label for each hardware point number. Points are now numbered in
+# label/grid order, so this is a simple sequential correspondence
+# (P1=a1, P2=a2, ... P10=c3 center, ... P19=e5). POINT_TO_LABEL is still
+# DERIVED from UR5_TO_SENSOR + SENSOR_CELL_TO_LABEL below (never hardcode), so
+# pressing 'a1' always hits the exact point the visualizer/sensor label a1.
+# POINT_LABELS/POINT_TO_LABEL/LABEL_TO_POINT are populated once UR5_TO_SENSOR
+# is defined.
 POINT_LABELS   = None
 POINT_TO_LABEL = {}
 LABEL_TO_POINT = {}
@@ -95,14 +100,17 @@ def resolve_point(token):
         raise ValueError(f"Point number {pt} out of range (1..19)")
     return pt
 
-# Corrected mapping: UR5 point → raw sensor cell index
-# Sensor is physically mounted 120° CCW relative to robot frame.
+# UR5 point → raw sensor cell it presses. Points are numbered in label/grid
+# order, so this is sequential in the RAW_CELLS/USED_CELLS order shared with
+# visualizer_2d.py and sensor.py (cell 0=a1, 1=a2, 2=a3, 12=b1, ... 52=e5).
+# (Sensor is physically mounted ~120° CCW relative to the robot frame; that
+# rotation is already baked into POINTS above.)
 UR5_TO_SENSOR = {
-    1:24,  2:12,  3:0,
-    4:37,  5:25,  6:13,  7:1,
-    8:50,  9:38,  10:26, 11:14, 12:2,
-    13:51, 14:39, 15:27, 16:15,
-    17:52, 18:40, 19:28,
+     1:  0,  2:  1,  3:  2,
+     4: 12,  5: 13,  6: 14,  7: 15,
+     8: 24,  9: 25, 10: 26, 11: 27, 12: 28,
+    13: 37, 14: 38, 15: 39, 16: 40,
+    17: 50, 18: 51, 19: 52,
 }
 
 # Hex label for each raw MUCA sensor cell — same source of truth as
@@ -123,7 +131,10 @@ POINT_TO_LABEL = {pt: SENSOR_CELL_TO_LABEL[cell] for pt, cell in UR5_TO_SENSOR.i
 LABEL_TO_POINT = {lbl: pt for pt, lbl in POINT_TO_LABEL.items()}
 POINT_LABELS   = [POINT_TO_LABEL[pt] for pt in sorted(POINT_TO_LABEL)]
 
-SEQUENCE = [10,1,2,3,7,6,5,4,8,9,10,11,12,16,15,14,13,17,18,19,10]
+# Same physical snake path as before, renumbered into the new label/grid
+# point order (old→new via each point's label). Still starts and ends at the
+# c3 center (P10). Physical trajectory is unchanged.
+SEQUENCE = [10,8,4,1,2,5,9,13,17,14,10,6,3,7,11,15,18,19,16,12,10]
 
 # ── Shared state ─────────────────────────────────────────────
 current_point = None

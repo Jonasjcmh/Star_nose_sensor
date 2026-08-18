@@ -38,6 +38,23 @@ REFERENCE_POSE = [
     2.346, -2.094, -0.00009
 ]
 
+# ── Sensor cell layout — MUST stay in sync with visualizer_2d.py / sensor.py ──
+# sensor.get_values() returns 19 readings in this raw-cell order (USED_CELLS):
+# index i is the reading of raw cell RAW_CELLS[i]. Same order as
+# visualizer_2d.RAW_CELLS (the on-screen reference for raw cells).
+RAW_CELLS = [0, 1, 2, 12, 13, 14, 15, 24, 25, 26, 27, 28,
+             37, 38, 39, 40, 50, 51, 52]
+SENSOR_CELL_TO_LABEL = {
+     0: 'a1',  1: 'a2',  2: 'a3',
+    12: 'b1', 13: 'b2', 14: 'b3', 15: 'b4',
+    24: 'c1', 25: 'c2', 26: 'c3', 27: 'c4', 28: 'c5',
+    37: 'd2', 38: 'd3', 39: 'd4', 40: 'd5',
+    50: 'e3', 51: 'e4', 52: 'e5',
+}
+# Center target = P10 = raw cell 26 = label c3. Index into get_values().
+CENTER_RAW = 26
+CENTER_IDX = RAW_CELLS.index(CENTER_RAW)   # -> 9
+
 
 
 VELOCITY_JOG   = 0.02
@@ -83,15 +100,15 @@ def sensor_bar(val, width=20):
 
 def print_status(ox, oy, oz, step, rtde_r=None):
     vals = sensor.get_values()
-    center_val = vals[9] if len(vals) > 9 else 0.0
+    center_val = vals[CENTER_IDX] if len(vals) > CENTER_IDX else 0.0
     tcp = rtde_r.getActualTCPPose() if rtde_r else [0]*6
     print(f"\n  ── Status ──────────────────────────────")
     print(f"  Offset   : X={ox:+7.3f}  Y={oy:+7.3f}  Z={oz:+7.3f} mm")
     print(f"  Step     : {step:.3f} mm")
     print(f"  TCP now  : X={tcp[0]:.5f}  Y={tcp[1]:.5f}  Z={tcp[2]:.5f}")
-    print(f"  S26 (P10): {sensor_bar(center_val)}")
-    all_vals = [f"S{[2,15,28,1,14,27,40,0,13,26,39,52,12,25,38,51,24,37,50][i]}={v:.2f}"
-                for i,v in enumerate(vals) if v > 0.05]
+    print(f"  S{CENTER_RAW} (P10/c3): {sensor_bar(center_val)}")
+    all_vals = [f"S{RAW_CELLS[i]}({SENSOR_CELL_TO_LABEL[RAW_CELLS[i]]})={v:.2f}"
+                for i, v in enumerate(vals) if v > 0.05]
     if all_vals:
         print(f"  Active   : {', '.join(all_vals)}")
     print(f"  ────────────────────────────────────────")
@@ -109,7 +126,7 @@ def do_press(rtde_c, rtde_r, ox, oy, oz):
     readings = []
     for _ in range(8):
         vals = sensor.get_values()
-        readings.append(vals[9] if len(vals) > 9 else 0.0)
+        readings.append(vals[CENTER_IDX] if len(vals) > CENTER_IDX else 0.0)
         time.sleep(0.1)
     peak = max(readings)
 
@@ -117,9 +134,9 @@ def do_press(rtde_c, rtde_r, ox, oy, oz):
 
     all_vals = sensor.get_values()
     top3 = sorted(enumerate(all_vals), key=lambda x: -x[1])[:3]
-    raw_cells = [2,15,28,1,14,27,40,0,13,26,39,52,12,25,38,51,24,37,50]
-    print(f"  Peak S26 value: {sensor_bar(peak)}")
-    print(f"  Top 3 sensors: {[(f'S{raw_cells[i]}', round(v,3)) for i,v in top3]}")
+    print(f"  Peak S{CENTER_RAW} (c3) value: {sensor_bar(peak)}")
+    print(f"  Top 3 sensors: "
+          f"{[(f'S{RAW_CELLS[i]}({SENSOR_CELL_TO_LABEL[RAW_CELLS[i]]})', round(v,3)) for i,v in top3]}")
 
     if peak < 0.1:
         print(f"  WARNING: Low reading — pointer may be misaligned")
@@ -235,8 +252,8 @@ def main():
             rtde_c.moveL(new_pose, VELOCITY_JOG, ACCEL)
             print(f"  Moved to X={ox:+.3f} Y={oy:+.3f} Z={oz:+.3f} mm")
             vals = sensor.get_values()
-            center_val = vals[9] if len(vals) > 9 else 0.0
-            print(f"  S26 = {sensor_bar(center_val)}")
+            center_val = vals[CENTER_IDX] if len(vals) > CENTER_IDX else 0.0
+            print(f"  S{CENTER_RAW} (c3) = {sensor_bar(center_val)}")
 
     rtde_c.stopScript()
 

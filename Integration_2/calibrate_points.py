@@ -115,6 +115,22 @@ POINTS = {
     19: ( -8.0, -14.0),   # e5
 }
 
+# ── Display (sensor-frame) layout ─────────────────────────────────────────────
+# POINTS above are ROBOT-frame XY (used to DRIVE the UR5 — never change them for
+# display). The on-screen hexmap, however, should look like the real sensor grid
+# as drawn in visualizer_2d.POINTS_MM. The sensor frame is a fixed rotation of
+# the robot frame (both share the c3=P10 origin), so DISPLAY_XY[pt] is simply
+# POINTS[pt] re-expressed in the sensor frame via _ROBOT_TO_SENSOR. This
+# reproduces visualizer_2d.POINTS_MM exactly (P1=a1 at (-16,0) … P19=e5 at (16,0)).
+_ROBOT_TO_SENSOR = ((-0.5, -6/7),
+                    ( 7/8, -0.5))
+
+def _to_display(x, y):
+    (a, b), (c, d) = _ROBOT_TO_SENSOR
+    return (a * x + b * y, c * x + d * y)
+
+DISPLAY_XY = {pt: _to_display(*POINTS[pt]) for pt in POINTS}
+
 # ── Sensor cell layout — MUST stay in sync with visualizer_2d.py / sensor.py ──
 # sensor.get_values() returns 19 readings in this raw-cell order (USED_CELLS):
 # index i in that array is the reading of raw cell RAW_CELLS[i]. This is the
@@ -439,7 +455,7 @@ def open_live_hexmap(pt):
     _live_patches.clear()
     _live_texts.clear()
     for pt_n in SCAN_ORDER:
-        xmm, ymm = POINTS[pt_n]
+        xmm, ymm = DISPLAY_XY[pt_n]
         patch = RegularPolygon(
             (xmm, ymm), numVertices=6, radius=4.5,
             facecolor=SENSOR_CMAP(0.0), edgecolor=EDGE, linewidth=0.8)
@@ -489,14 +505,23 @@ def open_live_hexmap(pt):
     print("[hexmap] Live window opened — it will update after each command.")
 
 
-def update_live_hexmap(sensor_mod, pt, dx, dy):
-    """Refresh the live hexmap with current sensor values."""
-    if not _HAS_MPL or _live_fig is None or sensor_mod is None:
+def update_live_hexmap(sensor_mod, pt, dx, dy, vals=None, note=""):
+    """Refresh the live hexmap.
+
+    By default it reads the current live sensor values. Pass `vals` (e.g. the
+    peak values captured during a press) to display a frozen snapshot instead —
+    otherwise a press result never shows, because the robot has already
+    retracted to the surface and the live reading is back to ~0.
+    """
+    if not _HAS_MPL or _live_fig is None:
         return
     if not plt.fignum_exists(_live_fig.number):
         return   # window was closed by user
+    if vals is None:
+        if sensor_mod is None:
+            return
+        vals = sensor_mod.get_values()
 
-    vals = sensor_mod.get_values()
     exp_idx = UR5_TO_IDX[pt]
     exp_raw = RAW_CELLS[exp_idx]
     exp_val = vals[exp_idx]
@@ -523,7 +548,7 @@ def update_live_hexmap(sensor_mod, pt, dx, dy):
 
     _live_title.set_text(
         f"P{pt:02d}  |  target S{exp_raw}={exp_val:.3f}  "
-        f"|  offset dX={dx:+.2f} dY={dy:+.2f} mm")
+        f"|  offset dX={dx:+.2f} dY={dy:+.2f} mm{note}")
 
     _live_fig.canvas.draw_idle()
     _live_fig.canvas.flush_events()
@@ -593,10 +618,11 @@ def show_deviation_map(per_point_offsets, scan_results, save_path=None):
     arrow_scale = 3.0   # magnification so small offsets are visible
 
     for pt in SCAN_ORDER:
-        xmm, ymm = POINTS[pt]
+        xmm, ymm = DISPLAY_XY[pt]
         status, ev = _status(pt)
         colour = STATUS_COLOR[status]
         dx, dy = per_point_offsets.get(pt, (0.0, 0.0))
+        ddx, ddy = _to_display(dx, dy)   # nudge in sensor-display frame
 
         # Hexagon at nominal position
         patch = RegularPolygon(
@@ -616,7 +642,7 @@ def show_deviation_map(per_point_offsets, scan_results, save_path=None):
         if mag > 0.05:
             ax_map.annotate(
                 "",
-                xy=(xmm + dx * arrow_scale, ymm + dy * arrow_scale),
+                xy=(xmm + ddx * arrow_scale, ymm + ddy * arrow_scale),
                 xytext=(xmm, ymm),
                 arrowprops=dict(
                     arrowstyle="->",
@@ -627,8 +653,8 @@ def show_deviation_map(per_point_offsets, scan_results, save_path=None):
             )
             # Magnitude text
             ax_map.text(
-                xmm + dx * arrow_scale * 0.55,
-                ymm + dy * arrow_scale * 0.55 + 1.0,
+                xmm + ddx * arrow_scale * 0.55,
+                ymm + ddy * arrow_scale * 0.55 + 1.0,
                 f"{mag:.1f}mm",
                 ha="center", va="bottom", fontsize=4.5,
                 color="#dddddd",
@@ -854,6 +880,7 @@ def interactive_point(pt, rtde_c, rtde_r, global_calib,
 
         moved = False
         save_and_quit = False
+        froze_hexmap = False   # True after a press: show peak, don't overwrite
 
         if cmd == "x+":
             dx += step_mm;  moved = True
@@ -877,6 +904,11 @@ def interactive_point(pt, rtde_c, rtde_r, global_calib,
                 result["tcp"] = ([round(v, 6) for v in rtde_r.getActualTCPPose()]
                                  if rtde_r else [])
                 scan_results[str(pt)] = result
+                # Show the captured PEAK on the hexmap and freeze it — the robot
+                # has retracted, so a live read would just show ~0 again.
+                update_live_hexmap(sensor_mod, pt, dx, dy,
+                                   vals=result["peak_vals"], note="   [PRESS PEAK]")
+                froze_hexmap = True
             rtde_c.moveL(build_pose(pt, global_calib, dx, dy, 0.0),
                          VELOCITY_PRESS, ACCELERATION)
 
@@ -930,9 +962,12 @@ def interactive_point(pt, rtde_c, rtde_r, global_calib,
                          VELOCITY_TRAVEL, ACCELERATION)
             print(f"  Moved → dX={dx:+.3f} dY={dy:+.3f} mm")
 
-        # Refresh live hexmap and restart terminal display after every command
-        update_live_hexmap(sensor_mod, pt, dx, dy)
-        start_live_display(sensor_mod, pt)
+        # Refresh live hexmap and restart terminal display after every command.
+        # After a press we keep the frozen peak on screen (and leave the terminal
+        # line paused) until the next command, so the result stays readable.
+        if not froze_hexmap:
+            update_live_hexmap(sensor_mod, pt, dx, dy)
+            start_live_display(sensor_mod, pt)
 
         if save_and_quit:
             close_live_hexmap()

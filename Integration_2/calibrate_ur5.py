@@ -75,13 +75,44 @@ def load_existing(tip=None):
         return d['x_mm'], d['y_mm'], d['z_mm']
     return 0.0, 0.0, 0.0
 
-def save_calib(x, y, z, tip=None):
-    f_path = calib_file(tip)
-    with open(f_path, 'w') as f:
+def prompt_save_calib(x, y, z, tip=None):
+    """Ask for the output filename, then save the global calibration to it.
+
+    Defaults to calib_<tip>.json / calib.json but lets you pick any name so
+    calibrations can be kept side by side instead of overwriting each other.
+    """
+    default_name = os.path.basename(calib_file(tip))
+    print("\n" + "=" * 55)
+    print("  SAVE CALIBRATION")
+    print("=" * 55)
+    while True:
+        try:
+            name = input(f"  Output file name [{default_name}] > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            name = ""
+        if not name:
+            name = default_name
+        name = os.path.basename(name)              # ignore any directory part
+        if not name.endswith(".json"):
+            name += ".json"
+        out_path = os.path.join(CALIB_DIR, name)
+        if os.path.exists(out_path):
+            try:
+                ow = input(f"  {name} exists — overwrite? [y/N] > ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                ow = "n"
+            if ow != "y":
+                continue
+        save_calib(x, y, z, out_path)
+        return
+
+
+def save_calib(x, y, z, out_path):
+    with open(out_path, 'w') as f:
         json.dump({'x_mm': round(x,4),
                    'y_mm': round(y,4),
                    'z_mm': round(z,4)}, f, indent=2)
-    print(f"\n[calib] Saved to {f_path}")
+    print(f"\n[calib] Saved to {out_path}")
     print(f"[calib] Paste into ur5_control.py:")
     print(f"         CALIB_X_MM = {round(x,4)}")
     print(f"         CALIB_Y_MM = {round(y,4)}")
@@ -234,7 +265,7 @@ def main():
             ox=oy=oz=0.0; moved=True
             print("  Reset to zero offset")
         elif cmd == 'save':
-            save_calib(ox, oy, oz, args.tip)
+            prompt_save_calib(ox, oy, oz, args.tip)
             rtde_c.stopScript()
             print("[calib] Done!")
             return

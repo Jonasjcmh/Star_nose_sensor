@@ -510,3 +510,4 @@ if __name__ == "__main__":
     finally:
         try: pygame.quit()
         except: pass
+        #For the trajectory/friction dashboard later → yes, the web stack makes sense. If you move the robot onto ROS2, a Python backend publishing over websocket to an html/canvas or three.js 3D view is the right call for a richer, remote-viewable dashboard. We'll revisit that separately.

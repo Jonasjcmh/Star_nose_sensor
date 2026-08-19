@@ -18,7 +18,8 @@ You fly the robot like a game — LETTER keys + arrows only (no symbol keys):
 
   DEPTH / FORCE / SPEED / SURFACE-Z (all live, hold to repeat):
     q / e      depth − / +   (in FORCE mode: target force − / +)
-    a / z      surface-Z up / down  (nudge the calib touch height live)
+    - / =      surface-Z down / up  (nudge the calib touch height live) — or
+               DRAG THE MOUSE on the TIP HEIGHT gauge (right side of the map)
     j / k      slide speed − / +
     m          toggle contact mode: DEPTH (fixed Z) <-> FORCE (FUTEK constant N)
 
@@ -28,8 +29,9 @@ You fly the robot like a game — LETTER keys + arrows only (no symbol keys):
     d diag ↗   f diag ↖   x cross    r raster   t star
     o flip direction LIVE      p pause / resume
 
-  SCALE (circle/pattern radius):  9 / 0   (circle radius = 12 * scale mm),
-                                  or console 'scale 1.5'
+  SCALE (circle/pattern radius, hold to repeat):  9 / 0
+    (circle r = 12*scale mm, spiral r = 14*scale mm — point count scales too,
+    so bigger patterns stay smooth curves), or console 'scale 1.5'
 
   ACTIONS:
     SPACE      run the selected trajectory — LOOPS until you stop
@@ -42,12 +44,13 @@ You fly the robot like a game — LETTER keys + arrows only (no symbol keys):
                    mode force   target 5   hover 8   run circle
 
   ⚠ SAFETY: indentation is hard-capped so the tip never presses deeper than
-     the calibration Z + MAX_PRESS_MM (5 mm), no matter the depth/trim.
+     the calibration Z + MAX_PRESS_MM (10 mm), no matter the depth/trim.
 
   In FORCE mode the robot measures a FUTEK baseline in the air, descends until
   the target force is reached, then a P-controller trims Z each waypoint to hold
   it while sliding. The surface Z is loaded from calib_<tip>.json (z_mm) — you
-  choose the file at startup — and a / z (or console z+/z-) nudge it live.
+  choose the file at startup — and -/= (or the gauge drag, or console z+/z-)
+  nudge it live.
 
 Usage
 ─────
@@ -86,8 +89,8 @@ import ur5_friction as ur5
 
 # ── Ranges / defaults ─────────────────────────────────────────────────────────
 STEP_DEFAULT,  STEP_MIN,  STEP_MAX  = 1.0, 0.1, 5.0     # jog step (mm)
-MAX_PRESS_MM                        = 5.0               # SAFETY: never indent
-                                                        # deeper than calib Z + 5 mm
+MAX_PRESS_MM                        = 10.0              # SAFETY: never indent
+                                                        # deeper than calib Z + 10 mm
 DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX = 4.0, 0.0, MAX_PRESS_MM   # press depth (mm)
 SPEED_DEFAULT, SPEED_MIN, SPEED_MAX = 8.0, 1.0, 30.0    # slide speed (mm/s)
 HOVER_DEFAULT, HOVER_MIN, HOVER_MAX = 8.0, 2.0, 30.0    # idle height above surface
@@ -95,7 +98,7 @@ FORCE_DEFAULT, FORCE_MIN, FORCE_MAX = 5.0, 0.5, 20.0    # target contact force (
 # Surface-Z trim: no tight range. Lower bound tied to the press cap so the
 # surface approach still can't exceed calib + MAX_PRESS_MM; upper is open.
 ZTRIM_MIN,     ZTRIM_MAX            = -MAX_PRESS_MM, 50.0
-SCALE_MIN,     SCALE_MAX            = 0.2, 2.0          # pattern size (circle r = 12*scale)
+SCALE_MIN,     SCALE_MAX            = 0.2, 4.0          # pattern size (circle r = 12*scale)
 OFFSET_LIMIT                        = 25.0              # |jog offset| clamp (mm)
 
 # Surface Z (mm) loaded from the calibration file; the live z_trim adds to this.
@@ -176,6 +179,27 @@ def tcp_to_screen(tcp):
 
 def clamp(v, lo, hi):
     return max(lo, min(hi, v))
+
+
+# circle/spiral base geometry — point count scales WITH the pattern's scale
+# factor so a bigger circle/spiral stays a smooth curve instead of a coarser
+# polygon (fixed point count + bigger radius = longer straight segments =
+# the robot visibly cuts corners instead of tracing the curve).
+_BASE_N = {'circle': 72, 'spiral': 120}
+_BASE_R = {'circle': 12.0, 'spiral': 14.0}
+
+
+def traj_points(name, scale):
+    """Trajectory points at the given scale. circle/spiral regenerate their
+    geometry (radius AND point count); other patterns just scale their
+    fixed points (straight lines don't lose fidelity when stretched)."""
+    if name == 'circle':
+        n = int(clamp(_BASE_N['circle'] * scale, 24, 300))
+        return traj_lib.circle(n_steps=n, radius_mm=_BASE_R['circle'] * scale)
+    if name == 'spiral':
+        n = int(clamp(_BASE_N['spiral'] * scale, 60, 400))
+        return traj_lib.spiral(n_steps=n, r_max_mm=_BASE_R['spiral'] * scale)
+    return [(x * scale, y * scale) for x, y in traj_lib.TRAJECTORIES[name]()]
 
 
 def parse_numeric(cmd, kw, inc):
@@ -465,7 +489,8 @@ def worker(state, stop_evt, abort_evt, rtde_c, cmd_q):
         if name not in traj_lib.TRAJECTORIES:
             log(f"unknown trajectory '{name}'"); return
         cur   = name
-        base  = traj_lib.TRAJECTORIES[cur]()
+        sc    = state.snap()['scale']
+        base  = traj_points(cur, sc)          # scale baked into the geometry
         n     = len(base)
         if n < 2:
             log("trajectory too short"); return
@@ -478,8 +503,7 @@ def worker(state, stop_evt, abort_evt, rtde_c, cmd_q):
         try:
             s0 = state.snap()
             i = 0 if s0['direction'] >= 0 else n - 1
-            sc = s0['scale']
-            x0, y0 = base[i][0] * sc, base[i][1] * sc
+            x0, y0 = base[i]
             z, baseline = engage(s0['off_x'], s0['off_y'], x0, y0, contact)
 
             while not (abort_evt.is_set() or stop_evt.is_set()):
@@ -488,11 +512,24 @@ def worker(state, stop_evt, abort_evt, rtde_c, cmd_q):
                 # LIVE trajectory switch — a new letter changed 'selected'
                 if cs['selected'] != cur and cs['selected'] in traj_lib.TRAJECTORIES:
                     cur = cs['selected']
-                    base = traj_lib.TRAJECTORIES[cur]()
+                    sc = cs['scale']
+                    base = traj_points(cur, sc)
                     n = len(base)
                     i = 0 if cs['direction'] >= 0 else n - 1
                     state.set(n_wp=n, lap=0)
                     log(f"switched → {cur}")
+                    continue
+
+                # LIVE scale change — regenerate geometry so circle/spiral
+                # stay smooth curves instead of a coarser polygon as they grow
+                if cs['scale'] != sc:
+                    sc = cs['scale']
+                    frac = i / n if n else 0.0
+                    base = traj_points(cur, sc)
+                    n = len(base)
+                    i = min(int(round(frac * n)), n - 1)
+                    state.set(n_wp=n)
+                    log(f"scale {sc:.2f}x")
                     continue
 
                 if cs['paused']:
@@ -501,9 +538,9 @@ def worker(state, stop_evt, abort_evt, rtde_c, cmd_q):
                     time.sleep(0.08)
                     continue
 
-                ox, oy, sc = cs['off_x'], cs['off_y'], cs['scale']
+                ox, oy = cs['off_x'], cs['off_y']
                 speed = cs['speed'] / 1000.0
-                x, y = base[i][0] * sc, base[i][1] * sc
+                x, y = base[i]
                 z = hold_z(z, baseline, contact)
                 moveL(ur5._build_pose(x + ox, y + oy, -z), speed)
                 state.set(wp=i + 1, z_now=z,
@@ -732,12 +769,42 @@ def render_loop(state, stop_evt, abort_evt, args, sensor_mod, cmd_q):
 
     preview_cache = {}   # name → robot-frame pts
 
+    # ── Z HEIGHT GAUGE geometry — also a draggable slider (mouse), not just
+    # keyboard. Fixed layout, so computed once outside the frame loop.
+    gx, gy0, gy1 = 712, 70, 560
+    Ztop, Zbot = 16.0, -7.0                 # mm above / below the touch surface
+    GAUGE_HIT = pygame.Rect(gx - 20, gy0 - 12, 40, gy1 - gy0 + 24)
+
+    def z_to_y(zmm):
+        return gy0 + (Ztop - clamp(zmm, Zbot, Ztop)) / (Ztop - Zbot) * (gy1 - gy0)
+
+    def y_to_z(ypix):
+        frac = clamp((ypix - gy0) / (gy1 - gy0), 0.0, 1.0)
+        return Ztop - frac * (Ztop - Zbot)
+
+    def drag_z(ypix, log=False):
+        v = set_ztrim(state, y_to_z(ypix) - state.snap()['hover'])
+        if log:
+            state.push_log(f"surface Z {BASE_CALIB_Z + v:.1f} mm (trim {v:+.1f})")
+
+    dragging_z = False
+
     while not stop_evt.is_set():
         frame_n += 1
         mode = state.snap()['mode']
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 abort_evt.set(); cmd_q.put("quit"); stop_evt.set()
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 \
+                    and GAUGE_HIT.collidepoint(event.pos):
+                dragging_z = True
+                drag_z(event.pos[1])
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                if dragging_z:
+                    drag_z(event.pos[1], log=True)
+                dragging_z = False
+            elif event.type == pygame.MOUSEMOTION and dragging_z:
+                drag_z(event.pos[1])
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_TAB:
                 state.set(mode=("console" if mode == "game" else "game")); cmd_buf = ""
             elif mode == "console":
@@ -781,6 +848,8 @@ def render_loop(state, stop_evt, abort_evt, args, sensor_mod, cmd_q):
             if held(pygame.K_KP_MINUS): adjust_surfz(state, -0.1, log=False)
             if held(pygame.K_k):     state.bump('speed', +0.5, SPEED_MIN, SPEED_MAX)
             if held(pygame.K_j):     state.bump('speed', -0.5, SPEED_MIN, SPEED_MAX)
+            if held(pygame.K_0):     state.bump('scale', +0.05, SCALE_MIN, SCALE_MAX)
+            if held(pygame.K_9):     state.bump('scale', -0.05, SCALE_MIN, SCALE_MAX)
         else:
             held_since.clear()
 
@@ -832,16 +901,19 @@ def render_loop(state, stop_evt, abort_evt, args, sensor_mod, cmd_q):
 
         # ── Trajectory preview (selected), shifted by the live XY offset ──
         name = s['selected']
-        if name not in preview_cache:
+        ox, oy, sc = s['off_x'], s['off_y'], s['scale']
+        cache_key = (name, round(sc, 2))
+        if cache_key not in preview_cache:
             try:
-                preview_cache[name] = traj_lib.TRAJECTORIES[name]()
+                preview_cache[cache_key] = traj_points(name, sc)
             except Exception:
-                preview_cache[name] = []
-        pts_r = preview_cache[name]
+                preview_cache[cache_key] = []
+            if len(preview_cache) > 40:      # scale changes constantly; keep it bounded
+                preview_cache.clear()
+        pts_r = preview_cache[cache_key]
         if s['direction'] < 0:
             pts_r = list(reversed(pts_r))
-        ox, oy, sc = s['off_x'], s['off_y'], s['scale']
-        scr = [robot_to_screen(x * sc + ox, y * sc + oy) for (x, y) in pts_r]
+        scr = [robot_to_screen(x + ox, y + oy) for (x, y) in pts_r]
         if len(scr) > 1:
             # the path is only a GUIDE line; the single moving point is the robot
             pygame.draw.lines(screen, BLUE, False,
@@ -867,14 +939,15 @@ def render_loop(state, stop_evt, abort_evt, args, sensor_mod, cmd_q):
                 pygame.draw.circle(screen, WHITE, (int(tx), int(ty)), 6, 1)
 
         # ── Z HEIGHT GAUGE (side view — the top-down map can't show up/down) ──
-        # Shows the tip height vs the calib touch surface; z-/z+ move it live.
-        gx, gy0, gy1 = 712, 70, 560
-        Ztop, Zbot = 16.0, -7.0                 # mm above / below the touch surface
-        def z_to_y(zmm):
-            return gy0 + (Ztop - clamp(zmm, Zbot, Ztop)) / (Ztop - Zbot) * (gy1 - gy0)
+        # Shows the tip height vs the calib touch surface. Drag it with the
+        # mouse, or z-/z+ (keyboard), to move the indentor's surface Z live.
         pygame.draw.rect(screen, CARD, (gx - 9, gy0 - 6, 18, gy1 - gy0 + 12), border_radius=6)
+        if dragging_z:
+            pygame.draw.rect(screen, CYAN, (gx - 9, gy0 - 6, 18, gy1 - gy0 + 12),
+                             border_radius=6, width=2)
         blit(screen, "TIP", font_sm, MUTED, gx, gy0 - 20, 'center')
         blit(screen, "HEIGHT", font_sm, MUTED, gx, gy0 - 9, 'center')
+        blit(screen, "drag ↕", font_sm, MUTED if not dragging_z else CYAN, gx, gy1 + 8, 'center')
         for zt in (5, 10, 15):                  # air ticks (above surface)
             yt = z_to_y(zt)
             pygame.draw.line(screen, (60, 60, 80), (gx - 6, yt), (gx + 6, yt), 1)
@@ -964,7 +1037,8 @@ def render_loop(state, stop_evt, abort_evt, args, sensor_mod, cmd_q):
         guide = [
             "c circle  s spiral  h horiz  v vert  x cross",
             "d diag /  f diag \\  r raster  t star",
-            "arrows = X/Y    q/e = depth    a/z = surface Z",
+            "arrows = X/Y    q/e = depth    -/= = surface Z",
+            "  (or drag the TIP HEIGHT gauge with the mouse)",
             "j/k = speed    9/0 = scale(radius)    o = flip",
             "p = pause   n = center   m = depth/force",
             "SPACE run (loops)   g home   BACKSPACE stop",

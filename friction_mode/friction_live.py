@@ -15,6 +15,8 @@ You fly the robot like a game — LETTER keys + arrows only (no symbol keys):
 
   MOVE (live XY offset — shifts the whole path, in air AND mid-trajectory):
     ← → ↑ ↓    X / Y offset   (by `step`, default 1 mm)     n  centre offset
+               or DRAG THE MOUSE anywhere on the pressure map — click sets
+               the offset to that spot, drag to move it live
 
   DEPTH / FORCE / SPEED / SURFACE-Z (all live, hold to repeat):
     q / e      depth − / +   (in FORCE mode: target force − / +)
@@ -175,6 +177,16 @@ def tcp_to_screen(tcp):
     rdx = (tcp[0] - ur5.REFERENCE_POSE[0]) * 1000.0 - ur5.CALIB_X_MM
     rdy = (tcp[1] - ur5.REFERENCE_POSE[1]) * 1000.0 - ur5.CALIB_Y_MM
     return robot_to_screen(rdx, rdy)
+
+
+def screen_to_robot(sx, sy):
+    """Inverse of robot_to_screen: screen px → robot-frame mm.
+    Used to turn a mouse click/drag on the hex map into an XY offset."""
+    xd = (sx - HEX_CX) / SX
+    yd = (HEX_CY - sy) / SY
+    (a, b), (c, d) = cp._ROBOT_TO_SENSOR
+    det = a * d - b * c
+    return ((d * xd - b * yd) / det, (-c * xd + a * yd) / det)
 
 
 def clamp(v, lo, hi):
@@ -789,6 +801,21 @@ def render_loop(state, stop_evt, abort_evt, args, sensor_mod, cmd_q):
 
     dragging_z = False
 
+    # ── HEX MAP as an XY-offset pad — drag anywhere on the map to shift the
+    # whole pattern (same off_x/off_y the arrow keys drive). Kept clear of the
+    # Z gauge column (x > 680) and the title / colour-scale bar.
+    HEXMAP_HIT = pygame.Rect(40, 45, 640, 675)
+
+    def drag_xy(pos, log=False):
+        ox, oy = screen_to_robot(*pos)
+        ox = round(clamp(ox, -OFFSET_LIMIT, OFFSET_LIMIT), 2)
+        oy = round(clamp(oy, -OFFSET_LIMIT, OFFSET_LIMIT), 2)
+        state.set(off_x=ox, off_y=oy)
+        if log:
+            state.push_log(f"offset {ox:+.1f}, {oy:+.1f} mm (drag)")
+
+    dragging_xy = False
+
     while not stop_evt.is_set():
         frame_n += 1
         mode = state.snap()['mode']
@@ -799,12 +826,21 @@ def render_loop(state, stop_evt, abort_evt, args, sensor_mod, cmd_q):
                     and GAUGE_HIT.collidepoint(event.pos):
                 dragging_z = True
                 drag_z(event.pos[1])
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 \
+                    and HEXMAP_HIT.collidepoint(event.pos):
+                dragging_xy = True
+                drag_xy(event.pos)
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 if dragging_z:
                     drag_z(event.pos[1], log=True)
+                if dragging_xy:
+                    drag_xy(event.pos, log=True)
                 dragging_z = False
+                dragging_xy = False
             elif event.type == pygame.MOUSEMOTION and dragging_z:
                 drag_z(event.pos[1])
+            elif event.type == pygame.MOUSEMOTION and dragging_xy:
+                drag_xy(event.pos)
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_TAB:
                 state.set(mode=("console" if mode == "game" else "game")); cmd_buf = ""
             elif mode == "console":
@@ -875,7 +911,12 @@ def render_loop(state, stop_evt, abort_evt, args, sensor_mod, cmd_q):
         # ── Draw hex map ──────────────────────────────────────
         screen.fill(BG)
         pygame.draw.rect(screen, PANEL, pygame.Rect(10, 10, 760, 760), border_radius=10)
+        if dragging_xy:
+            pygame.draw.rect(screen, CYAN, pygame.Rect(10, 10, 760, 760),
+                             border_radius=10, width=2)
         blit(screen, "Friction live — pressure map", font_lg, TEXT, 28, 20)
+        blit(screen, "drag ↔ offset X/Y", font_sm,
+             CYAN if dragging_xy else MUTED, 760, 24, 'right')
 
         for pt in cp.SCAN_ORDER:
             cx, cy = disp_to_screen(*cp.DISPLAY_XY[pt])
@@ -1038,7 +1079,7 @@ def render_loop(state, stop_evt, abort_evt, args, sensor_mod, cmd_q):
             "c circle  s spiral  h horiz  v vert  x cross",
             "d diag /  f diag \\  r raster  t star",
             "arrows = X/Y    q/e = depth    -/= = surface Z",
-            "  (or drag the TIP HEIGHT gauge with the mouse)",
+            "  (or drag the map for X/Y, the TIP HEIGHT gauge for Z)",
             "j/k = speed    9/0 = scale(radius)    o = flip",
             "p = pause   n = center   m = depth/force",
             "SPACE run (loops)   g home   BACKSPACE stop",

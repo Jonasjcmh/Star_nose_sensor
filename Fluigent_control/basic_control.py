@@ -6,7 +6,7 @@ import time
 
 P_IDX     = 0        # pressure channel index
 PRESSURE  = 800      # mbar — the "on" level
-ON_TIME   = 0.1      # seconds at PRESSURE
+ON_TIME   = 0.05      # seconds at PRESSURE
 OFF_TIME  = 3.0      # seconds at 0
 N_CYCLES  = None     # set an integer for a fixed count, or None for infinite
 

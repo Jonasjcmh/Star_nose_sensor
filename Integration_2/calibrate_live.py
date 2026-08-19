@@ -21,10 +21,18 @@ OVERLAYS (all live)
                    press and mapped robot-frame → sensor-frame (so target vs
                    actual deviation is visible right on the grid).
   • CYAN star    — the live robot tip, moving continuously, with a fading trail.
+  • AMBER cross  — the current live X/Y trim (0,0 = none), on the map.
 
 Coordinates: the live TCP (robot frame) is mapped into the sensor/display frame
 with calibrate_points._to_display after subtracting REFERENCE_POSE and the
 global calibration offset, so it lines up with the DISPLAY_XY hexes exactly.
+
+LIVE TRIM (X/Y/Z) — a small manual nudge (±10 mm) on top of the loaded
+calibration, applied to every press and updated live even mid-dwell:
+  • Drag the MAP     to set the X/Y trim (click sets it to that spot).
+  • Drag the TIP HEIGHT gauge (right of the map) to set the Z trim.
+  • Or use ← → ↑ ↓ for X/Y and -/= for Z (hold to repeat); N resets to 0.
+This is NOT saved to calib_points.json — it's a live fine-tune for this run.
 
 Usage
 ─────
@@ -36,6 +44,7 @@ Usage
 
 Keys:  ESC/Q quit (robot returns home)   C recalibrate sensor
        T toggle trail   L toggle labels   P pause between points
+       arrows/-/=  nudge X/Y/Z trim   N reset trim   (or drag map/gauge)
 """
 import argparse
 import math
@@ -72,6 +81,16 @@ ORANGE = (255, 136, 0)
 HEX_R          = 34
 HEX_CX, HEX_CY = 350, 360
 SX, SY         = 13.0, 13.0     # mm → px (sensor-frame display)
+
+# Live manual-trim range (mm) — the map/gauge sliders and arrow/-= keys nudge
+# on top of the loaded calibration; kept small since this is a fine-tune, not
+# a full re-jog like friction_live's.
+OFFSET_LIMIT_XY = 10.0
+OFFSET_LIMIT_Z  = 10.0
+
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
 
 
 def lerp_color(v):
@@ -117,6 +136,21 @@ def disp_to_screen(xmm, ymm):
     return HEX_CX + xmm * SX, HEX_CY - ymm * SY
 
 
+def robot_to_screen(xmm, ymm):
+    """Robot-frame mm (e.g. a live X/Y trim) → screen px, via the display frame."""
+    return disp_to_screen(*cp._to_display(xmm, ymm))
+
+
+def screen_to_robot(sx, sy):
+    """Inverse of robot_to_screen: screen px → robot-frame mm. Used to turn a
+    mouse click/drag on the hex map into a live X/Y trim."""
+    xd = (sx - HEX_CX) / SX
+    yd = (HEX_CY - sy) / SY
+    (a, b), (c, d) = cp._ROBOT_TO_SENSOR
+    det = a * d - b * c
+    return ((d * xd - b * yd) / det, (-c * xd + a * yd) / det)
+
+
 def tcp_to_display(tcp, global_calib):
     """Live TCP pose (robot frame, m) → sensor-frame mm, aligned with DISPLAY_XY.
 
@@ -139,6 +173,11 @@ class State:
         self.done       = False
         self.actual     = {}            # pt → (xmm, ymm) recorded press location
         self.connected  = False
+        # Live manual trim (mm), on top of the loaded calibration — dragged via
+        # the map (X/Y) or the TIP HEIGHT gauge (Z), or nudged with arrows/-=.
+        self.extra_x    = 0.0
+        self.extra_y    = 0.0
+        self.extra_z    = 0.0
 
     def set(self, **kw):
         with self.lock:
@@ -149,6 +188,10 @@ class State:
         with self.lock:
             return (self.target, self.pressing, self.status, self.done,
                     dict(self.actual), self.connected)
+
+    def get_offset(self):
+        with self.lock:
+            return self.extra_x, self.extra_y, self.extra_z
 
 
 # ── Robot worker thread ───────────────────────────────────────────────────────
@@ -175,18 +218,24 @@ def robot_worker(state, stop_evt, args, global_calib, offsets, points):
         for pt in points:
             if stop_evt.is_set():
                 break
-            dx, dy  = offsets.get(pt, (0.0, 0.0))
-            surface = cp.build_pose(pt, global_calib, dx, dy, 0.0)
-            pressed = cp.build_pose(pt, global_calib, dx, dy, -args.indent)
+            dx, dy = offsets.get(pt, (0.0, 0.0))
+            lx, ly, lz = state.get_offset()   # live manual trim (drag/keys)
+
+            def surface_pose(lx, ly, lz):
+                return cp.build_pose(pt, global_calib, dx + lx, dy + ly, lz)
+
+            def pressed_pose(lx, ly, lz):
+                return cp.build_pose(pt, global_calib, dx + lx, dy + ly,
+                                      lz - args.indent)
 
             state.set(target=pt, pressing=False,
                       status=f"→ P{pt} ({cp.UR5_TO_LABEL[pt]})")
-            moveL(surface, cp.VELOCITY_TRAVEL)
+            moveL(surface_pose(lx, ly, lz), cp.VELOCITY_TRAVEL)
             if stop_evt.is_set():
                 break
 
             state.set(pressing=True, status=f"pressing P{pt} ({cp.UR5_TO_LABEL[pt]})")
-            moveL(pressed, cp.VELOCITY_PRESS)
+            moveL(pressed_pose(lx, ly, lz), cp.VELOCITY_PRESS)
 
             # Record where the tip actually ended up (sensor-frame mm).
             time.sleep(0.05)
@@ -194,16 +243,22 @@ def robot_worker(state, stop_evt, args, global_calib, offsets, points):
             with state.lock:
                 state.actual[pt] = tcp_to_display(tcp, global_calib)
 
-            # Dwell, honouring pause/stop.
+            # Dwell, honouring pause/stop — and re-issuing the press if the
+            # live trim is dragged/nudged while sitting on this point, so the
+            # slider/keys feel live even mid-press (matches friction_live).
             t_end = time.time() + args.dwell
             while time.time() < t_end and not stop_evt.is_set():
                 while args.paused[0] and not stop_evt.is_set():
                     state.set(status=f"PAUSED at P{pt}")
                     time.sleep(0.1)
                     t_end = time.time() + args.dwell
+                nx, ny, nz = state.get_offset()
+                if (nx, ny, nz) != (lx, ly, lz):
+                    lx, ly, lz = nx, ny, nz
+                    moveL(pressed_pose(lx, ly, lz), cp.VELOCITY_PRESS)
                 time.sleep(0.03)
 
-            moveL(surface, cp.VELOCITY_PRESS)
+            moveL(surface_pose(lx, ly, lz), cp.VELOCITY_PRESS)
             state.set(pressing=False)
 
         state.set(status="returning home", target=None)
@@ -306,6 +361,35 @@ def main():
     show_trail  = True
     show_labels = True
     frame_n     = 0
+    held_since  = {}   # key → frame it went down, for hold-to-repeat nudging
+
+    # ── TIP HEIGHT gauge (Z) — draggable slider, mirrors friction_live.
+    gx, gy0, gy1 = 655, 60, 560
+    Ztop, Zbot   = OFFSET_LIMIT_Z, -OFFSET_LIMIT_Z
+    GAUGE_HIT    = pygame.Rect(gx - 20, gy0 - 12, 40, gy1 - gy0 + 24)
+
+    def z_to_y(zmm):
+        return gy0 + (Ztop - clamp(zmm, Zbot, Ztop)) / (Ztop - Zbot) * (gy1 - gy0)
+
+    def y_to_z(ypix):
+        frac = clamp((ypix - gy0) / (gy1 - gy0), 0.0, 1.0)
+        return Ztop - frac * (Ztop - Zbot)
+
+    def drag_z(ypix):
+        state.set(extra_z=round(clamp(y_to_z(ypix), -OFFSET_LIMIT_Z, OFFSET_LIMIT_Z), 2))
+
+    dragging_z = False
+
+    # ── Hex map as an X/Y trim pad — drag anywhere on the map to nudge.
+    # Kept clear of the gauge column (x > 630) and the title / colour bar.
+    HEXMAP_HIT = pygame.Rect(40, 45, 585, 600)
+
+    def drag_xy(pos):
+        ox, oy = screen_to_robot(*pos)
+        state.set(extra_x=round(clamp(ox, -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2),
+                  extra_y=round(clamp(oy, -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
+
+    dragging_xy = False
 
     running = True
     while running:
@@ -313,6 +397,21 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 \
+                    and GAUGE_HIT.collidepoint(event.pos):
+                dragging_z = True
+                drag_z(event.pos[1])
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 \
+                    and HEXMAP_HIT.collidepoint(event.pos):
+                dragging_xy = True
+                drag_xy(event.pos)
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                dragging_z = False
+                dragging_xy = False
+            elif event.type == pygame.MOUSEMOTION and dragging_z:
+                drag_z(event.pos[1])
+            elif event.type == pygame.MOUSEMOTION and dragging_xy:
+                drag_xy(event.pos)
             elif event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_ESCAPE, pygame.K_q):
                     running = False
@@ -327,6 +426,61 @@ def main():
                         sensor_mod.recalibrate()
                     except Exception:
                         pass
+                elif event.key == pygame.K_n:
+                    state.set(extra_x=0.0, extra_y=0.0, extra_z=0.0)
+                elif event.key == pygame.K_LEFT:
+                    state.set(extra_x=round(clamp(state.get_offset()[0] - 0.5,
+                              -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
+                elif event.key == pygame.K_RIGHT:
+                    state.set(extra_x=round(clamp(state.get_offset()[0] + 0.5,
+                              -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
+                elif event.key == pygame.K_UP:
+                    state.set(extra_y=round(clamp(state.get_offset()[1] + 0.5,
+                              -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
+                elif event.key == pygame.K_DOWN:
+                    state.set(extra_y=round(clamp(state.get_offset()[1] - 0.5,
+                              -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
+                elif event.key in (pygame.K_EQUALS, pygame.K_KP_PLUS):
+                    state.set(extra_z=round(clamp(state.get_offset()[2] + 0.2,
+                              -OFFSET_LIMIT_Z, OFFSET_LIMIT_Z), 2))
+                elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                    state.set(extra_z=round(clamp(state.get_offset()[2] - 0.2,
+                              -OFFSET_LIMIT_Z, OFFSET_LIMIT_Z), 2))
+
+        # ── Hold-to-repeat for arrow/-= nudges ─────────────────
+        pressed_keys = pygame.key.get_pressed()
+
+        def held(key, delay=10, rate=3):
+            if not pressed_keys[key]:
+                held_since.pop(key, None)
+                return False
+            d = frame_n - held_since.setdefault(key, frame_n)
+            return d >= delay and (d - delay) % rate == 0
+
+        if held(pygame.K_LEFT):
+            state.set(extra_x=round(clamp(state.get_offset()[0] - 0.3,
+                      -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
+        if held(pygame.K_RIGHT):
+            state.set(extra_x=round(clamp(state.get_offset()[0] + 0.3,
+                      -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
+        if held(pygame.K_UP):
+            state.set(extra_y=round(clamp(state.get_offset()[1] + 0.3,
+                      -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
+        if held(pygame.K_DOWN):
+            state.set(extra_y=round(clamp(state.get_offset()[1] - 0.3,
+                      -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
+        if held(pygame.K_EQUALS):
+            state.set(extra_z=round(clamp(state.get_offset()[2] + 0.1,
+                      -OFFSET_LIMIT_Z, OFFSET_LIMIT_Z), 2))
+        if held(pygame.K_KP_PLUS):
+            state.set(extra_z=round(clamp(state.get_offset()[2] + 0.1,
+                      -OFFSET_LIMIT_Z, OFFSET_LIMIT_Z), 2))
+        if held(pygame.K_MINUS):
+            state.set(extra_z=round(clamp(state.get_offset()[2] - 0.1,
+                      -OFFSET_LIMIT_Z, OFFSET_LIMIT_Z), 2))
+        if held(pygame.K_KP_MINUS):
+            state.set(extra_z=round(clamp(state.get_offset()[2] - 0.1,
+                      -OFFSET_LIMIT_Z, OFFSET_LIMIT_Z), 2))
 
         # ── Gather live data ──────────────────────────────────
         if sensor_mod is not None:
@@ -335,6 +489,7 @@ def main():
             values = demo_values(frame_n)
 
         target, pressing, status, done, actual, connected = state.snapshot()
+        extra_x, extra_y, extra_z = state.get_offset()
 
         tcp_disp = None
         if not args.no_robot and connected:
@@ -355,7 +510,12 @@ def main():
         # Left panel: hex map
         pygame.draw.rect(screen, PANEL, pygame.Rect(10, 10, 700, 700),
                          border_radius=10)
+        if dragging_xy:
+            pygame.draw.rect(screen, CYAN, pygame.Rect(10, 10, 700, 700),
+                             border_radius=10, width=2)
         blit(screen, "Live calibration map", font_lg, TEXT, 30, 22)
+        blit(screen, "drag ↔ trim X/Y", font_sm,
+             CYAN if dragging_xy else MUTED, 700, 26, 'right')
 
         # Hexagons (DISPLAY_XY order == visualizer_2d.POINTS_MM)
         for pt in cp.SCAN_ORDER:
@@ -409,6 +569,34 @@ def main():
             pygame.draw.polygon(screen, CYAN, spts)
             pygame.draw.polygon(screen, WHITE, spts, 1)
 
+        # AMBER marker — current live X/Y trim (drag the map / arrow keys)
+        if extra_x != 0.0 or extra_y != 0.0:
+            mx, my = robot_to_screen(extra_x, extra_y)
+            pygame.draw.line(screen, AMBER, (mx - 8, my), (mx + 8, my), 2)
+            pygame.draw.line(screen, AMBER, (mx, my - 8), (mx, my + 8), 2)
+            pygame.draw.circle(screen, AMBER, (int(mx), int(my)), 10, 1)
+
+        # ── TIP HEIGHT gauge (Z) — draggable slider ────────────
+        pygame.draw.rect(screen, CARD, (gx - 9, gy0 - 6, 18, gy1 - gy0 + 12),
+                         border_radius=6)
+        if dragging_z:
+            pygame.draw.rect(screen, CYAN, (gx - 9, gy0 - 6, 18, gy1 - gy0 + 12),
+                             border_radius=6, width=2)
+        blit(screen, "TIP", font_sm, MUTED, gx, gy0 - 20, 'center')
+        blit(screen, "TRIM", font_sm, MUTED, gx, gy0 - 9, 'center')
+        for zt in (-5, 0, 5):
+            yt = z_to_y(zt)
+            pygame.draw.line(screen, (60, 60, 80) if zt else GREEN,
+                             (gx - 6, yt), (gx + 6, yt), 1)
+            blit(screen, f"{zt:+d}" if zt else "0", font_sm, MUTED if zt else GREEN,
+                 gx + 14, yt - 6)
+        yh = z_to_y(extra_z)
+        hcol = CYAN if extra_z >= 0 else RED
+        pygame.draw.polygon(screen, hcol, [(gx - 13, yh), (gx - 23, yh - 6), (gx - 23, yh + 6)])
+        pygame.draw.circle(screen, hcol, (gx, int(yh)), 5)
+        blit(screen, f"{extra_z:+.1f}mm", font_sm, hcol, gx - 66, yh - 6)
+        blit(screen, "drag ↕", font_sm, CYAN if dragging_z else MUTED, gx, gy1 + 8, 'center')
+
         # Colour scale
         bx, by, bw, bh = 40, 676, 640, 10
         for px in range(bw):
@@ -446,6 +634,9 @@ def main():
             ("Mapping", "MATCH ✓" if match else ("mismatch" if target else "—"),
              GREEN if match else (RED if target and fired_val > 0.05 else MUTED)),
             ("Presses recorded", f"{len(actual)} / {len(points)}", TEXT),
+            ("Live trim  (drag map/gauge, arrows, n=reset)",
+             f"{extra_x:+.1f}, {extra_y:+.1f}, {extra_z:+.1f} mm",
+             AMBER if (extra_x, extra_y, extra_z) != (0.0, 0.0, 0.0) else MUTED),
         ]
         sy = 72
         for label, val, col in stats:
@@ -472,10 +663,12 @@ def main():
             pygame.draw.circle(screen, col, (740, sy + 6), 5)
             blit(screen, txt, font_sm, TEXT, 754, sy); sy += 16
 
-        sy = H - 96
+        sy = H - 112
         pygame.draw.line(screen, (50, 50, 70), (730, sy - 4), (978, sy - 4), 1)
-        for hint in ["ESC/Q = quit (robot homes)", "C = recalibrate sensor",
-                     "T = trail   L = labels", "P = pause between points"]:
+        for hint in ["ESC/Q quit   C recal   T trail   L labels",
+                     "P pause   N reset trim",
+                     "drag map = X/Y trim   drag gauge = Z trim",
+                     "arrows = X/Y trim   -/= = Z trim  (hold to repeat)"]:
             blit(screen, hint, font_sm, MUTED, 732, sy); sy += 16
         if args.paused[0]:
             blit(screen, "‖ PAUSED", font_md, AMBER, 732, sy)

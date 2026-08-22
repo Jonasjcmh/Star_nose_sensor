@@ -91,7 +91,7 @@ import ur5_friction as ur5
 
 # ── Ranges / defaults ─────────────────────────────────────────────────────────
 STEP_DEFAULT,  STEP_MIN,  STEP_MAX  = 1.0, 0.1, 5.0     # jog step (mm)
-MAX_PRESS_MM                        = 5.0               # SAFETY: never indent
+MAX_PRESS_MM                        = 7            # SAFETY: never indent
                                                         # deeper than calib Z + 10 mm
 DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX = 4.0, 0.0, MAX_PRESS_MM   # press depth (mm)
 SPEED_DEFAULT, SPEED_MIN, SPEED_MAX = 8.0, 1.0, 30.0    # slide speed (mm/s)

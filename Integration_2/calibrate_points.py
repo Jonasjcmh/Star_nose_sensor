@@ -795,12 +795,25 @@ def do_press(rtde_c, pt, global_calib, per_point_offsets, sensor_mod):
         for i, v in ranked if v > 0.01)
     print(f"  Top cells: {top3_str}")
 
-    if exp_val < 0.10:
+    # Verdict — centering, not just magnitude. A high value on the expected
+    # cell is NOT enough: if a neighbour fired as high (or higher) the indenter
+    # is off-centre, so those cases must never read "Good".
+    other_peak = max((v for i, v in enumerate(peak_vals) if i != exp_idx),
+                     default=0.0)
+    margin = exp_val - other_peak     # >0 ⇒ expected cell is the dominant one
+    if not correct:
+        print(f"  ✗ Wrong cell — off-centre: S{top_raw} fired {top_val:.2f} "
+              f"vs expected S{exp_raw}={exp_val:.2f}; nudge toward S{top_raw}")
+    elif exp_val < 0.10:
         print("  ⚠ Very low reading — robot may be badly misaligned")
     elif exp_val < 0.30:
         print("  ⚠ Low reading — consider nudging")
+    elif margin < 0.10:
+        second_raw = RAW_CELLS[ranked[1][0]] if len(ranked) > 1 else top_raw
+        print(f"  ~ Off-centre — neighbour S{second_raw}={other_peak:.2f} "
+              f"almost as high as S{exp_raw}={exp_val:.2f} (margin {margin:+.2f})")
     elif exp_val > 0.55:
-        print("  ✓ Good reading")
+        print(f"  ✓ Good reading (centred, margin {margin:+.2f})")
     else:
         print("  ~ Moderate reading")
 

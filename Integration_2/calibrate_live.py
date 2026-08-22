@@ -1,54 +1,74 @@
 """
 calibrate_live.py
-LIVE calibration window (pygame) — drives the UR5 through the press points and
-shows, in real time, the same hex grid as visualizer_2d.py with calibration
-overlays.
+LIVE per-point calibration — the interactive terminal loop of
+calibrate_points.py married to the pygame pressure map of visualizer_2d.py.
 
 WHAT IT DOES
 ────────────
-One self-contained process:
-  • DRIVES the robot: home → for each point press down by --indent, dwell,
-    retract → home.  (⚠ THIS MOVES THE REAL ROBOT AND TOUCHES THE SENSOR.)
-  • DRAWS a live sensor-frame hex grid (matches visualizer_2d.POINTS_MM /
-    calibrate_points.DISPLAY_XY), cells coloured live from the sensor.
+EVERYTHING happens in ONE pygame window — there is NO terminal juggling. You
+type the SAME commands as calibrate_points.py directly INTO the window (a
+command line is drawn at the bottom), so the live pressure map never disappears
+behind the terminal. pygame owns the MAIN thread (SDL requirement); a BACKGROUND
+worker drives the robot, consuming the commands you type.
 
-OVERLAYS (all live)
-───────────────────
-  • GREEN ring   — the point we are pressing (the TARGET).
-  • ORANGE ring  — the hex cell that actually fired (max live reading); if it
-                   sits on the green ring, the UR5→sensor mapping is spot on.
-  • WHITE dot    — where the tip ACTUALLY pressed, recorded at the bottom of the
-                   press and mapped robot-frame → sensor-frame (so target vs
-                   actual deviation is visible right on the grid).
-  • CYAN star    — the live robot tip, moving continuously, with a fading trail.
-  • AMBER cross  — the current live X/Y trim (0,0 = none), on the map.
+  Commands (type into the window, then Enter):
+        x+  x-  y+  y-   nudge by `step` mm      step 0.5   set step size
+        press            press down + read sensor (peak captured)
+        teach            record current TCP as the offset (freedrive)
+        status           print offset + TCP + sensor snapshot (terminal)
+        map              save a deviation-map PNG so far
+        ok  (or Enter)   accept this point's offset → next point
+        skip             leave this point unchanged → next point
+        back             re-open the previous point
+        save             save everything and finish
+        quit             finish without saving this session
+        trail / labels   toggle the movement trail / hex labels
+        recal            recalibrate the sensor baseline
+    (⚠ press / nudge MOVE THE REAL ROBOT and TOUCH THE SENSOR.)
 
-Coordinates: the live TCP (robot frame) is mapped into the sensor/display frame
-with calibrate_points._to_display after subtracting REFERENCE_POSE and the
-global calibration offset, so it lines up with the DISPLAY_XY hexes exactly.
+  The hex map (same look as visualizer_2d.py) colours every cell by its live
+  pressure (green→yellow→orange→red), so a press lights the touched cell live.
 
-LIVE TRIM (X/Y/Z) — a small manual nudge (±10 mm) on top of the loaded
-calibration, applied to every press and updated live even mid-dwell:
-  • Drag the MAP     to set the X/Y trim (click sets it to that spot).
-  • Drag the TIP HEIGHT gauge (right of the map) to set the Z trim.
-  • Or use ← → ↑ ↓ for X/Y and -/= for Z (hold to repeat); N resets to 0.
-This is NOT saved to calib_points.json — it's a live fine-tune for this run.
+  Mouse (as well as the typed commands):
+        • DRAG on the hex map      → set the current point's X/Y offset (drag to
+                                     preview the AMBER target, release to move).
+        • DRAG the DEPTH slider    → live press depth (right edge of the map).
+    The Z / surface height is NOT adjusted here — it comes straight from the
+    chosen calibration file (calib_<tip>.json), exactly like calibrate_points.py.
+
+OVERLAYS (all live, on the pygame map)
+──────────────────────────────────────
+  • GREEN ring    — the point being calibrated (the TARGET), at the hex centre.
+  • ORANGE ring   — the hex cell that fired most (max live reading).
+  • CYAN circle   — the live robot INDENTOR position (sensor frame). A line from
+                    the target hex centre to this circle shows how far off-centre
+                    the tip is — watch it shrink as you nudge x±/y±. Turns into a
+                    bold RED contact ring while pressing.
+  • WHITE dot     — where the indentor ACTUALLY pressed at each point (recorded
+                    at the bottom of the press), kept as history.
+  • faint trail   — the indentor's path while the robot is moving.
+
+Output: calib_points_<name>.json — identical format to calibrate_points.py
+(per_point / points / scan_results), so it stays compatible with the rest of
+the tooling (deviation maps, ur5_control loading, etc.).
 
 Usage
 ─────
-  python3 calibrate_live.py                       # default calib, all 19 points
+  python3 calibrate_live.py                       # choose base calib, all 19 pts
   python3 calibrate_live.py --tip new_hollow_dome_v2
-  python3 calibrate_live.py --points 5 10 17 --indent 6 --dwell 1.5
+  python3 calibrate_live.py --points 5 10 17 --indent 8
   python3 calibrate_live.py --no-robot            # sensor-only view (no driving)
   python3 calibrate_live.py --no-robot --no-sensor  # pure demo, no hardware
 
-Keys:  ESC/Q quit (robot returns home)   C recalibrate sensor
-       T toggle trail   L toggle labels   P pause between points
-       arrows/-/=  nudge X/Y/Z trim   N reset trim   (or drag map/gauge)
+All commands are typed INTO the window. ESC clears the command line; the window
+close button finishes (robot returns home).
+              T toggle trail           L toggle labels
 """
 import argparse
+import collections
 import math
 import os
+import queue
 import sys
 import threading
 import time
@@ -61,10 +81,10 @@ except ImportError:
     os.system(f"{sys.executable} -m pip install pygame")
     import pygame
 
-import calibrate_points as cp   # single source of truth for geometry/constants
+import calibrate_points as cp   # single source of truth for geometry/press/save
 
 # ── Colours / layout (mirrors visualizer_2d.py) ───────────────────────────────
-W, H   = 1000, 720
+W, H   = 1000, 908       # extra height for the in-window command console
 FPS    = 60
 BG     = (18,  18,  24)
 PANEL  = (26,  26,  36)
@@ -82,11 +102,9 @@ HEX_R          = 34
 HEX_CX, HEX_CY = 350, 360
 SX, SY         = 13.0, 13.0     # mm → px (sensor-frame display)
 
-# Live manual-trim range (mm) — the map/gauge sliders and arrow/-= keys nudge
-# on top of the loaded calibration; kept small since this is a fine-tune, not
-# a full re-jog like friction_live's.
-OFFSET_LIMIT_XY = 10.0
-OFFSET_LIMIT_Z  = 10.0
+# Draggable depth slider range (mm) and map-drag X/Y offset clamp (mm).
+DEPTH_MIN, DEPTH_MAX = 0.0, 12.0
+OFFSET_LIMIT         = 12.0
 
 
 def clamp(v, lo, hi):
@@ -111,16 +129,6 @@ def hex_pts(cx, cy, r):
              cy + r * math.sin(math.radians(60 * i + 30))) for i in range(6)]
 
 
-def star_pts(cx, cy, r, spikes=5):
-    """Points for a filled star marker (outer r, inner 0.45 r)."""
-    pts = []
-    for i in range(spikes * 2):
-        rad = r if i % 2 == 0 else r * 0.45
-        ang = math.radians(-90 + i * 180.0 / spikes)
-        pts.append((cx + rad * math.cos(ang), cy + rad * math.sin(ang)))
-    return pts
-
-
 def blit(surf, text, font, col, x, y, align='left'):
     s = font.render(str(text), True, col)
     if align == 'center':
@@ -136,19 +144,22 @@ def disp_to_screen(xmm, ymm):
     return HEX_CX + xmm * SX, HEX_CY - ymm * SY
 
 
-def robot_to_screen(xmm, ymm):
-    """Robot-frame mm (e.g. a live X/Y trim) → screen px, via the display frame."""
-    return disp_to_screen(*cp._to_display(xmm, ymm))
-
-
 def screen_to_robot(sx, sy):
-    """Inverse of robot_to_screen: screen px → robot-frame mm. Used to turn a
-    mouse click/drag on the hex map into a live X/Y trim."""
+    """Inverse of disp_to_screen + the robot→sensor rotation: screen px →
+    robot-frame mm (measured from REFERENCE_POSE + global calib). Used to turn a
+    click/drag on the hex map into a per-point X/Y offset."""
     xd = (sx - HEX_CX) / SX
     yd = (HEX_CY - sy) / SY
     (a, b), (c, d) = cp._ROBOT_TO_SENSOR
     det = a * d - b * c
     return ((d * xd - b * yd) / det, (-c * xd + a * yd) / det)
+
+
+def screen_to_offset(pos, pt):
+    """Screen px → this point's robot-frame (dx, dy) offset from its nominal
+    position (same convention as `teach` and offsets[pt])."""
+    rx, ry = screen_to_robot(*pos)
+    return rx - cp.POINTS[pt][0], ry - cp.POINTS[pt][1]
 
 
 def tcp_to_display(tcp, global_calib):
@@ -163,117 +174,57 @@ def tcp_to_display(tcp, global_calib):
     return cp._to_display(rdx, rdy)
 
 
-# ── Shared state between robot worker and render loop ─────────────────────────
+# ── Shared state between the terminal loop and the render thread ──────────────
 class State:
     def __init__(self):
         self.lock       = threading.Lock()
         self.target     = None          # current target point (1..19) or None
+        self.offset     = (0.0, 0.0)    # current per-point (dx, dy) mm
+        self.step       = 0.5           # nudge step (mm)
         self.pressing   = False
         self.status     = "starting"
         self.done       = False
-        self.actual     = {}            # pt → (xmm, ymm) recorded press location
         self.connected  = False
-        # Live manual trim (mm), on top of the loaded calibration — dragged via
-        # the map (X/Y) or the TIP HEIGHT gauge (Z), or nudged with arrows/-=.
-        self.extra_x    = 0.0
-        self.extra_y    = 0.0
-        self.extra_z    = 0.0
+        self.actual     = {}            # pt → (xmm, ymm) recorded press location
+        self.peak       = None          # frozen peak vals (19) from last press
+        self.peak_pt    = None          # which point the frozen peak belongs to
+        self.depth      = cp.INDENT_MM  # live press depth (mm) — depth slider
+        self.want_map   = False         # show deviation map in main thread on exit
+        self.log        = collections.deque(maxlen=200)  # console scrollback
 
     def set(self, **kw):
         with self.lock:
             for k, v in kw.items():
                 setattr(self, k, v)
 
+    def push_log(self, msg):
+        with self.lock:
+            self.log.append(msg)
+
+    def record_actual(self, pt, xy):
+        with self.lock:
+            self.actual[pt] = xy
+
     def snapshot(self):
         with self.lock:
-            return (self.target, self.pressing, self.status, self.done,
-                    dict(self.actual), self.connected)
-
-    def get_offset(self):
-        with self.lock:
-            return self.extra_x, self.extra_y, self.extra_z
-
-
-# ── Robot worker thread ───────────────────────────────────────────────────────
-def robot_worker(state, stop_evt, args, global_calib, offsets, points):
-    """Drive the arm through `points`, pressing each. Reads live TCP via
-    ur5_control.get_tcp() (fed by the 125 Hz force reader) — never touches the
-    RTDE receive interface directly, so there is no cross-thread contention."""
-    import ur5_control
-
-    state.set(status="connecting to robot")
-    rtde_c, _ = ur5_control.connect()
-    if rtde_c is None:
-        state.set(status="ROBOT CONNECT FAILED", done=True)
-        return
-    state.set(connected=True)
-
-    def moveL(pose, vel):
-        rtde_c.moveL(pose, vel, cp.ACCELERATION)
-
-    try:
-        state.set(status="moving to home")
-        moveL(cp.home_pose(global_calib), cp.VELOCITY_TRAVEL)
-
-        for pt in points:
-            if stop_evt.is_set():
-                break
-            dx, dy = offsets.get(pt, (0.0, 0.0))
-            lx, ly, lz = state.get_offset()   # live manual trim (drag/keys)
-
-            def surface_pose(lx, ly, lz):
-                return cp.build_pose(pt, global_calib, dx + lx, dy + ly, lz)
-
-            def pressed_pose(lx, ly, lz):
-                return cp.build_pose(pt, global_calib, dx + lx, dy + ly,
-                                      lz - args.indent)
-
-            state.set(target=pt, pressing=False,
-                      status=f"→ P{pt} ({cp.UR5_TO_LABEL[pt]})")
-            moveL(surface_pose(lx, ly, lz), cp.VELOCITY_TRAVEL)
-            if stop_evt.is_set():
-                break
-
-            state.set(pressing=True, status=f"pressing P{pt} ({cp.UR5_TO_LABEL[pt]})")
-            moveL(pressed_pose(lx, ly, lz), cp.VELOCITY_PRESS)
-
-            # Record where the tip actually ended up (sensor-frame mm).
-            time.sleep(0.05)
-            tcp = ur5_control.get_tcp()
-            with state.lock:
-                state.actual[pt] = tcp_to_display(tcp, global_calib)
-
-            # Dwell, honouring pause/stop — and re-issuing the press if the
-            # live trim is dragged/nudged while sitting on this point, so the
-            # slider/keys feel live even mid-press (matches friction_live).
-            t_end = time.time() + args.dwell
-            while time.time() < t_end and not stop_evt.is_set():
-                while args.paused[0] and not stop_evt.is_set():
-                    state.set(status=f"PAUSED at P{pt}")
-                    time.sleep(0.1)
-                    t_end = time.time() + args.dwell
-                nx, ny, nz = state.get_offset()
-                if (nx, ny, nz) != (lx, ly, lz):
-                    lx, ly, lz = nx, ny, nz
-                    moveL(pressed_pose(lx, ly, lz), cp.VELOCITY_PRESS)
-                time.sleep(0.03)
-
-            moveL(surface_pose(lx, ly, lz), cp.VELOCITY_PRESS)
-            state.set(pressing=False)
-
-        state.set(status="returning home", target=None)
-        moveL(cp.home_pose(global_calib), cp.VELOCITY_TRAVEL)
-    except Exception as e:
-        state.set(status=f"robot error: {e}")
-    finally:
-        try:
-            rtde_c.stopScript()
-        except Exception:
-            pass
-        state.set(done=True, status="done — close window to exit")
+            return dict(
+                target=self.target, offset=self.offset, step=self.step,
+                pressing=self.pressing, status=self.status, done=self.done,
+                connected=self.connected, actual=dict(self.actual),
+                peak=(list(self.peak) if self.peak else None),
+                peak_pt=self.peak_pt, depth=self.depth, want_map=self.want_map,
+                log=list(self.log))
 
 
-# ── Sensor ────────────────────────────────────────────────────────────────────
+# ── Thread-safe TCP reader shim (so we never poke rtde_r from two threads) ────
+class _TcpReader:
+    """Stands in for rtde_receive in cp.print_status — reads the 125 Hz cache."""
+    def getActualTCPPose(self):
+        import ur5_control
+        return ur5_control.get_tcp()
+
+
+# ── Sensor demo colours (when --no-sensor) ────────────────────────────────────
 def demo_values(frame):
     t = frame * 0.04
     return [max(0.0, min(1.0, 0.5 * math.sin(t + i * 0.4)
@@ -281,72 +232,16 @@ def demo_values(frame):
             for i in range(19)]
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
-def main():
-    ap = argparse.ArgumentParser(description="Live UR5 calibration window (pygame)")
-    ap.add_argument("--tip", default=None,
-                    help="Calibration profile: loads calib_<tip>.json (global) "
-                         "and calib_points_<tip>.json (per-point offsets)")
-    ap.add_argument("--no-global", action="store_true",
-                    help="Ignore calib.json (zero global offset)")
-    ap.add_argument("--points", nargs="+", type=int, default=None,
-                    help="Subset of points to press (default: all 1..19)")
-    ap.add_argument("--indent", type=float, default=cp.INDENT_MM,
-                    help=f"Press depth in mm (default {cp.INDENT_MM})")
-    ap.add_argument("--dwell", type=float, default=1.0,
-                    help="Seconds held at the bottom of each press (default 1.0)")
-    ap.add_argument("--no-robot", action="store_true",
-                    help="Do not drive the robot (sensor-only view)")
-    ap.add_argument("--no-sensor", action="store_true",
-                    help="Do not read the sensor (demo colours)")
-    args = ap.parse_args()
-    args.paused = [False]   # mutable flag shared with the worker
-
-    global_calib = (0.0, 0.0, 0.0) if args.no_global else cp.load_global_calib(args.tip)
-    offsets, _   = cp.load_point_offsets(args.tip)
-    points       = args.points if args.points else list(cp.SCAN_ORDER)
-    bad = [p for p in points if p not in cp.POINTS]
-    if bad:
-        print(f"[live] Invalid point(s): {bad} (valid 1..19)")
-        sys.exit(1)
-
-    # ── Sensor ────────────────────────────────────────────────
-    sensor_mod = None
-    if not args.no_sensor:
-        import sensor as sensor_mod
-        print("[live] Starting sensor ...")
-        sensor_mod.start()
-        if not sensor_mod.wait_until_ready(timeout=40):
-            print("[live] ⚠ Sensor not ready — falling back to demo colours")
-            sensor_mod = None
-        else:
-            print("[live] Sensor ready!")
-
-    # ── Confirm before moving the robot ───────────────────────
-    state    = State()
-    stop_evt = threading.Event()
-    worker   = None
-    if not args.no_robot:
-        print(f"\n⚠  The robot WILL press {len(points)} point(s) by "
-              f"{args.indent:.1f} mm (dwell {args.dwell:.1f}s). It TOUCHES the sensor.")
-        try:
-            input("   Press Enter to start (Ctrl-C to abort) ...")
-        except (EOFError, KeyboardInterrupt):
-            print("\n[live] Aborted.")
-            sys.exit(0)
-        worker = threading.Thread(
-            target=robot_worker,
-            args=(state, stop_evt, args, global_calib, offsets, points),
-            daemon=True)
-        worker.start()
-    else:
-        state.set(status="sensor-only (no robot)", target=None)
-
-    # ── pygame ────────────────────────────────────────────────
+# ── Render loop: live pygame pressure map + in-window command line (MAIN thread)
+def render_loop(state, stop_evt, args, sensor_mod, global_calib, points, cmd_q):
     pygame.init()
     pygame.display.set_caption("KYWO — Live Calibration")
     screen = pygame.display.set_mode((W, H))
     clock  = pygame.time.Clock()
+    try:
+        pygame.key.start_text_input()
+    except Exception:
+        pass
     try:
         font_lg = pygame.font.SysFont('DejaVuSans', 16, bold=True)
         font_md = pygame.font.SysFont('DejaVuSans', 13)
@@ -356,131 +251,111 @@ def main():
         font_md = pygame.font.Font(None, 18)
         font_sm = pygame.font.Font(None, 14)
 
-    # Live-TCP trail (screen px)
     trail       = []
     show_trail  = True
     show_labels = True
     frame_n     = 0
-    held_since  = {}   # key → frame it went down, for hold-to-repeat nudging
+    cmd_buf     = ""          # what the user is currently typing
 
-    # ── TIP HEIGHT gauge (Z) — draggable slider, mirrors friction_live.
-    gx, gy0, gy1 = 655, 60, 560
-    Ztop, Zbot   = OFFSET_LIMIT_Z, -OFFSET_LIMIT_Z
-    GAUGE_HIT    = pygame.Rect(gx - 20, gy0 - 12, 40, gy1 - gy0 + 24)
+    # Command console geometry (full-width panel across the bottom)
+    CON_X, CON_Y = 10, 720
+    CON_W, CON_H = 980, H - 720 - 10
+    CON_LINES    = 6          # output lines visible in the console
+    INP_H        = 32         # input row height
 
-    def z_to_y(zmm):
-        return gy0 + (Ztop - clamp(zmm, Zbot, Ztop)) / (Ztop - Zbot) * (gy1 - gy0)
+    def submit(text):
+        """Handle a submitted command line: render-only ones locally, the rest
+        go to the worker thread via cmd_q."""
+        nonlocal show_trail, show_labels
+        c = text.strip().lower()
+        low = c
+        if low in ("trail",):
+            show_trail = not show_trail
+            return
+        if low in ("labels", "label"):
+            show_labels = not show_labels
+            return
+        if low in ("recal", "recalibrate", "c"):
+            if sensor_mod is not None:
+                try:
+                    sensor_mod.recalibrate()
+                    state.push_log("sensor recalibrated")
+                except Exception:
+                    pass
+            return
+        # Everything else drives the robot — hand to the worker.
+        state.push_log(f"> {c}" if c else "> (ok)")
+        cmd_q.put(c)
 
-    def y_to_z(ypix):
-        frac = clamp((ypix - gy0) / (gy1 - gy0), 0.0, 1.0)
-        return Ztop - frac * (Ztop - Zbot)
+    # ── Draggable DEPTH slider (right edge of the map panel) ──────────────────
+    # Sets cp.INDENT_MM live, so the next press goes to the new depth. Does NOT
+    # move the robot by itself. Z stays whatever the loaded calib file gives.
+    gx, gy0, gy1 = 655, 70, 560
+    GAUGE_HIT    = pygame.Rect(gx - 22, gy0 - 14, 44, gy1 - gy0 + 28)
 
-    def drag_z(ypix):
-        state.set(extra_z=round(clamp(y_to_z(ypix), -OFFSET_LIMIT_Z, OFFSET_LIMIT_Z), 2))
+    def depth_to_y(d):
+        f = (DEPTH_MAX - clamp(d, DEPTH_MIN, DEPTH_MAX)) / (DEPTH_MAX - DEPTH_MIN)
+        return gy0 + f * (gy1 - gy0)
 
-    dragging_z = False
+    def y_to_depth(ypix):
+        f = clamp((ypix - gy0) / (gy1 - gy0), 0.0, 1.0)
+        return DEPTH_MAX - f * (DEPTH_MAX - DEPTH_MIN)
 
-    # ── Hex map as an X/Y trim pad — drag anywhere on the map to nudge.
-    # Kept clear of the gauge column (x > 630) and the title / colour bar.
-    HEXMAP_HIT = pygame.Rect(40, 45, 585, 600)
+    def drag_depth(ypix):
+        d = round(y_to_depth(ypix), 1)
+        cp.INDENT_MM = d            # do_press reads this module global
+        state.set(depth=d)
 
-    def drag_xy(pos):
-        ox, oy = screen_to_robot(*pos)
-        state.set(extra_x=round(clamp(ox, -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2),
-                  extra_y=round(clamp(oy, -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
+    dragging_depth = False
 
-    dragging_xy = False
+    # ── Drag on the hex MAP to set the current point's X/Y offset ─────────────
+    # Drag to preview (AMBER marker); on release, one 'setxy' goes to the worker
+    # which moves the arm there. Only active while a point is being calibrated.
+    HEXMAP_HIT   = pygame.Rect(20, 40, 620, 620)
+    dragging_xy  = False
+    pending_xy   = None            # (dx, dy) preview while dragging
 
-    running = True
-    while running:
+    while not stop_evt.is_set():
         frame_n += 1
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                running = False
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 \
-                    and GAUGE_HIT.collidepoint(event.pos):
-                dragging_z = True
-                drag_z(event.pos[1])
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 \
-                    and HEXMAP_HIT.collidepoint(event.pos):
-                dragging_xy = True
-                drag_xy(event.pos)
+                cmd_q.put("quit")     # let the worker home the arm, then exit
+                stop_evt.set()
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if GAUGE_HIT.collidepoint(event.pos):
+                    dragging_depth = True
+                    drag_depth(event.pos[1])
+                elif HEXMAP_HIT.collidepoint(event.pos) \
+                        and state.snapshot()['target'] is not None:
+                    dragging_xy = True
+                    pending_xy  = screen_to_offset(
+                        event.pos, state.snapshot()['target'])
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-                dragging_z = False
+                dragging_depth = False
+                if dragging_xy and pending_xy is not None:
+                    dx, dy = pending_xy
+                    dx = clamp(dx, -OFFSET_LIMIT, OFFSET_LIMIT)
+                    dy = clamp(dy, -OFFSET_LIMIT, OFFSET_LIMIT)
+                    cmd_q.put(f"setxy {dx:.3f} {dy:.3f}")   # worker moves the arm
+                    state.push_log(f"> map → dX={dx:+.2f} dY={dy:+.2f}")
                 dragging_xy = False
-            elif event.type == pygame.MOUSEMOTION and dragging_z:
-                drag_z(event.pos[1])
-            elif event.type == pygame.MOUSEMOTION and dragging_xy:
-                drag_xy(event.pos)
+                pending_xy  = None
+            elif event.type == pygame.MOUSEMOTION:
+                if dragging_depth:
+                    drag_depth(event.pos[1])
+                elif dragging_xy and state.snapshot()['target'] is not None:
+                    pending_xy = screen_to_offset(
+                        event.pos, state.snapshot()['target'])
+            elif event.type == pygame.TEXTINPUT:
+                cmd_buf += event.text
             elif event.type == pygame.KEYDOWN:
-                if event.key in (pygame.K_ESCAPE, pygame.K_q):
-                    running = False
-                elif event.key == pygame.K_t:
-                    show_trail = not show_trail
-                elif event.key == pygame.K_l:
-                    show_labels = not show_labels
-                elif event.key == pygame.K_p:
-                    args.paused[0] = not args.paused[0]
-                elif event.key == pygame.K_c and sensor_mod is not None:
-                    try:
-                        sensor_mod.recalibrate()
-                    except Exception:
-                        pass
-                elif event.key == pygame.K_n:
-                    state.set(extra_x=0.0, extra_y=0.0, extra_z=0.0)
-                elif event.key == pygame.K_LEFT:
-                    state.set(extra_x=round(clamp(state.get_offset()[0] - 0.5,
-                              -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
-                elif event.key == pygame.K_RIGHT:
-                    state.set(extra_x=round(clamp(state.get_offset()[0] + 0.5,
-                              -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
-                elif event.key == pygame.K_UP:
-                    state.set(extra_y=round(clamp(state.get_offset()[1] + 0.5,
-                              -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
-                elif event.key == pygame.K_DOWN:
-                    state.set(extra_y=round(clamp(state.get_offset()[1] - 0.5,
-                              -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
-                elif event.key in (pygame.K_EQUALS, pygame.K_KP_PLUS):
-                    state.set(extra_z=round(clamp(state.get_offset()[2] + 0.2,
-                              -OFFSET_LIMIT_Z, OFFSET_LIMIT_Z), 2))
-                elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
-                    state.set(extra_z=round(clamp(state.get_offset()[2] - 0.2,
-                              -OFFSET_LIMIT_Z, OFFSET_LIMIT_Z), 2))
-
-        # ── Hold-to-repeat for arrow/-= nudges ─────────────────
-        pressed_keys = pygame.key.get_pressed()
-
-        def held(key, delay=10, rate=3):
-            if not pressed_keys[key]:
-                held_since.pop(key, None)
-                return False
-            d = frame_n - held_since.setdefault(key, frame_n)
-            return d >= delay and (d - delay) % rate == 0
-
-        if held(pygame.K_LEFT):
-            state.set(extra_x=round(clamp(state.get_offset()[0] - 0.3,
-                      -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
-        if held(pygame.K_RIGHT):
-            state.set(extra_x=round(clamp(state.get_offset()[0] + 0.3,
-                      -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
-        if held(pygame.K_UP):
-            state.set(extra_y=round(clamp(state.get_offset()[1] + 0.3,
-                      -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
-        if held(pygame.K_DOWN):
-            state.set(extra_y=round(clamp(state.get_offset()[1] - 0.3,
-                      -OFFSET_LIMIT_XY, OFFSET_LIMIT_XY), 2))
-        if held(pygame.K_EQUALS):
-            state.set(extra_z=round(clamp(state.get_offset()[2] + 0.1,
-                      -OFFSET_LIMIT_Z, OFFSET_LIMIT_Z), 2))
-        if held(pygame.K_KP_PLUS):
-            state.set(extra_z=round(clamp(state.get_offset()[2] + 0.1,
-                      -OFFSET_LIMIT_Z, OFFSET_LIMIT_Z), 2))
-        if held(pygame.K_MINUS):
-            state.set(extra_z=round(clamp(state.get_offset()[2] - 0.1,
-                      -OFFSET_LIMIT_Z, OFFSET_LIMIT_Z), 2))
-        if held(pygame.K_KP_MINUS):
-            state.set(extra_z=round(clamp(state.get_offset()[2] - 0.1,
-                      -OFFSET_LIMIT_Z, OFFSET_LIMIT_Z), 2))
+                if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    submit(cmd_buf)
+                    cmd_buf = ""
+                elif event.key == pygame.K_BACKSPACE:
+                    cmd_buf = cmd_buf[:-1]
+                elif event.key == pygame.K_ESCAPE:
+                    cmd_buf = ""      # clear the line (does NOT quit)
 
         # ── Gather live data ──────────────────────────────────
         if sensor_mod is not None:
@@ -488,36 +363,29 @@ def main():
         else:
             values = demo_values(frame_n)
 
-        target, pressing, status, done, actual, connected = state.snapshot()
-        extra_x, extra_y, extra_z = state.get_offset()
+        s = state.snapshot()
+        target   = s['target']
+        offset   = s['offset']
+        pressing = s['pressing']
 
         tcp_disp = None
-        if not args.no_robot and connected:
+        if not args.no_robot and s['connected']:
             try:
                 import ur5_control
-                tcp = ur5_control.get_tcp()
-                tcp_disp = tcp_to_display(tcp, global_calib)
+                tcp_disp = tcp_to_display(ur5_control.get_tcp(), global_calib)
             except Exception:
                 tcp_disp = None
 
-        # Cell that fired most (for the orange ring)
         fired_idx = max(range(19), key=lambda i: values[i]) if values else 0
         fired_val = values[fired_idx] if values else 0.0
 
         # ── Draw ──────────────────────────────────────────────
         screen.fill(BG)
 
-        # Left panel: hex map
         pygame.draw.rect(screen, PANEL, pygame.Rect(10, 10, 700, 700),
                          border_radius=10)
-        if dragging_xy:
-            pygame.draw.rect(screen, CYAN, pygame.Rect(10, 10, 700, 700),
-                             border_radius=10, width=2)
         blit(screen, "Live calibration map", font_lg, TEXT, 30, 22)
-        blit(screen, "drag ↔ trim X/Y", font_sm,
-             CYAN if dragging_xy else MUTED, 700, 26, 'right')
 
-        # Hexagons (DISPLAY_XY order == visualizer_2d.POINTS_MM)
         for pt in cp.SCAN_ORDER:
             xmm, ymm = cp.DISPLAY_XY[pt]
             cx, cy   = disp_to_screen(xmm, ymm)
@@ -540,9 +408,30 @@ def main():
                 blit(screen, f"{v:.2f}", font_sm, tc, cx, cy + 12, 'center')
 
         # GREEN ring — target point
+        tgt_screen = None
         if target is not None:
-            cx, cy = disp_to_screen(*cp.DISPLAY_XY[target])
-            pygame.draw.circle(screen, GREEN, (int(cx), int(cy)), HEX_R + 6, 3)
+            tgt_screen = disp_to_screen(*cp.DISPLAY_XY[target])
+            pygame.draw.circle(screen, GREEN,
+                               (int(tgt_screen[0]), int(tgt_screen[1])), HEX_R + 6, 3)
+            # A cross-hair marks the exact hex CENTRE we want the indentor to hit.
+            cx, cy = tgt_screen
+            pygame.draw.line(screen, GREEN, (cx - 7, cy), (cx + 7, cy), 1)
+            pygame.draw.line(screen, GREEN, (cx, cy - 7), (cx, cy + 7), 1)
+
+        # AMBER preview marker while dragging the map to set X/Y (not sent yet)
+        if dragging_xy and pending_xy is not None and target is not None:
+            pdx, pdy = pending_xy
+            mx, my = disp_to_screen(
+                *cp._to_display(cp.POINTS[target][0] + pdx,
+                                cp.POINTS[target][1] + pdy))
+            pygame.draw.line(screen, AMBER,
+                             (int(tgt_screen[0]), int(tgt_screen[1])),
+                             (int(mx), int(my)), 1)
+            pygame.draw.circle(screen, AMBER, (int(mx), int(my)), 7, 2)
+            pygame.draw.line(screen, AMBER, (mx - 9, my), (mx + 9, my), 1)
+            pygame.draw.line(screen, AMBER, (mx, my - 9), (mx, my + 9), 1)
+            blit(screen, f"dX={pdx:+.1f} dY={pdy:+.1f}", font_sm, AMBER,
+                 mx + 10, my - 6)
 
         # ORANGE ring — cell that fired most
         if fired_val > 0.05:
@@ -550,52 +439,42 @@ def main():
             cx, cy = disp_to_screen(*cp.DISPLAY_XY[fpt])
             pygame.draw.circle(screen, ORANGE, (int(cx), int(cy)), HEX_R + 12, 2)
 
-        # WHITE dots — recorded actual press locations
-        for pt, (xmm, ymm) in actual.items():
+        # WHITE dots — recorded actual press locations (history)
+        for pt, (xmm, ymm) in s['actual'].items():
             cx, cy = disp_to_screen(xmm, ymm)
-            pygame.draw.circle(screen, WHITE, (int(cx), int(cy)), 5)
-            pygame.draw.circle(screen, (40, 40, 40), (int(cx), int(cy)), 5, 1)
+            pygame.draw.circle(screen, WHITE, (int(cx), int(cy)), 4)
+            pygame.draw.circle(screen, (40, 40, 40), (int(cx), int(cy)), 4, 1)
 
-        # CYAN star — live robot tip, with trail
+        # Live INDENTOR — small circle at the tip; trail while moving; a line to
+        # the target centre shows how far off-centre it is (watch it shrink on
+        # x+/x-/y+/y- nudges). Bold red contact ring while pressing.
         if tcp_disp is not None:
-            sx, sy = disp_to_screen(*tcp_disp)
-            trail.append((sx, sy))
-            if len(trail) > 120:
-                trail = trail[-120:]
+            tx, ty = disp_to_screen(*tcp_disp)
+            trail.append((tx, ty))
+            if len(trail) > 140:
+                trail = trail[-140:]
             if show_trail and len(trail) > 1:
                 pygame.draw.lines(screen, (40, 120, 130), False,
                                   [(int(x), int(y)) for x, y in trail], 2)
-            spts = star_pts(sx, sy, 13)
-            pygame.draw.polygon(screen, CYAN, spts)
-            pygame.draw.polygon(screen, WHITE, spts, 1)
 
-        # AMBER marker — current live X/Y trim (drag the map / arrow keys)
-        if extra_x != 0.0 or extra_y != 0.0:
-            mx, my = robot_to_screen(extra_x, extra_y)
-            pygame.draw.line(screen, AMBER, (mx - 8, my), (mx + 8, my), 2)
-            pygame.draw.line(screen, AMBER, (mx, my - 8), (mx, my + 8), 2)
-            pygame.draw.circle(screen, AMBER, (int(mx), int(my)), 10, 1)
+            if tgt_screen is not None:
+                # deviation line + magnitude in mm
+                pygame.draw.line(screen, (120, 200, 210),
+                                 (int(tgt_screen[0]), int(tgt_screen[1])),
+                                 (int(tx), int(ty)), 1)
+                dxm = tcp_disp[0] - cp.DISPLAY_XY[target][0]
+                dym = tcp_disp[1] - cp.DISPLAY_XY[target][1]
+                mag = math.hypot(dxm, dym)
+                blit(screen, f"{mag:.1f}mm", font_sm, (150, 210, 220),
+                     (tx + tgt_screen[0]) / 2, (ty + tgt_screen[1]) / 2 - 12,
+                     'center')
 
-        # ── TIP HEIGHT gauge (Z) — draggable slider ────────────
-        pygame.draw.rect(screen, CARD, (gx - 9, gy0 - 6, 18, gy1 - gy0 + 12),
-                         border_radius=6)
-        if dragging_z:
-            pygame.draw.rect(screen, CYAN, (gx - 9, gy0 - 6, 18, gy1 - gy0 + 12),
-                             border_radius=6, width=2)
-        blit(screen, "TIP", font_sm, MUTED, gx, gy0 - 20, 'center')
-        blit(screen, "TRIM", font_sm, MUTED, gx, gy0 - 9, 'center')
-        for zt in (-5, 0, 5):
-            yt = z_to_y(zt)
-            pygame.draw.line(screen, (60, 60, 80) if zt else GREEN,
-                             (gx - 6, yt), (gx + 6, yt), 1)
-            blit(screen, f"{zt:+d}" if zt else "0", font_sm, MUTED if zt else GREEN,
-                 gx + 14, yt - 6)
-        yh = z_to_y(extra_z)
-        hcol = CYAN if extra_z >= 0 else RED
-        pygame.draw.polygon(screen, hcol, [(gx - 13, yh), (gx - 23, yh - 6), (gx - 23, yh + 6)])
-        pygame.draw.circle(screen, hcol, (gx, int(yh)), 5)
-        blit(screen, f"{extra_z:+.1f}mm", font_sm, hcol, gx - 66, yh - 6)
-        blit(screen, "drag ↕", font_sm, CYAN if dragging_z else MUTED, gx, gy1 + 8, 'center')
+            if pressing:
+                pygame.draw.circle(screen, RED, (int(tx), int(ty)), 11, 3)
+                pygame.draw.circle(screen, CYAN, (int(tx), int(ty)), 6)
+            else:
+                pygame.draw.circle(screen, CYAN, (int(tx), int(ty)), 6)
+                pygame.draw.circle(screen, WHITE, (int(tx), int(ty)), 6, 1)
 
         # Colour scale
         bx, by, bw, bh = 40, 676, 640, 10
@@ -605,83 +484,439 @@ def main():
         blit(screen, "0.0", font_sm, MUTED, bx, by + 12)
         blit(screen, "1.0", font_sm, MUTED, bx + bw - 18, by + 12)
 
+        # ── DEPTH slider (draggable) ──────────────────────────
+        cur_depth = s['depth']
+        blit(screen, "DEPTH", font_sm, TEXT, gx, gy0 - 20, 'center')
+        pygame.draw.line(screen, MUTED, (gx, gy0), (gx, gy1), 2)
+        for dd in range(int(DEPTH_MIN), int(DEPTH_MAX) + 1, 2):
+            ty = depth_to_y(dd)
+            pygame.draw.line(screen, (60, 60, 80), (gx - 5, ty), (gx + 5, ty), 1)
+            blit(screen, f"{dd}", font_sm, MUTED, gx + 10, ty - 6)
+        ky = depth_to_y(cur_depth)
+        knob_col = CYAN if dragging_depth else WHITE
+        pygame.draw.circle(screen, knob_col, (gx, int(ky)), 8)
+        pygame.draw.circle(screen, (30, 30, 40), (gx, int(ky)), 8, 1)
+        blit(screen, f"{cur_depth:.1f} mm", font_md, knob_col,
+             gx, gy1 + 8, 'center')
+
         # ── Right panel ───────────────────────────────────────
         pygame.draw.rect(screen, PANEL, pygame.Rect(718, 10, 272, 700),
                          border_radius=10)
 
         if args.no_robot:
             dot_col, rob = MUTED, "no robot"
-        elif done:
+        elif s['done']:
             dot_col, rob = AMBER, "done"
-        elif connected:
+        elif s['connected']:
             dot_col, rob = GREEN, "live"
         else:
             dot_col, rob = AMBER, "connecting"
         pygame.draw.circle(screen, dot_col, (740, 32), 7)
         blit(screen, rob, font_sm, dot_col, 752, 25)
-        blit(screen, "Status", font_lg, TEXT, 730, 46)
+        blit(screen, "Calibration", font_lg, TEXT, 730, 46)
 
-        tgt_lbl = f"P{target} ({cp.UR5_TO_LABEL[target]})" if target else "—"
+        dx, dy   = offset
+        tgt_lbl  = f"P{target} ({cp.UR5_TO_LABEL[target]})" if target else "—"
         fired_lbl = (f"{cp.UR5_TO_LABEL[cp.SCAN_ORDER[fired_idx]]} "
                      f"({fired_val:.2f})") if fired_val > 0.05 else "—"
         match = (target is not None and fired_val > 0.05
                  and cp.SCAN_ORDER[fired_idx] == target)
+
+        peak_lbl = "—"
+        if s['peak'] is not None and s['peak_pt'] is not None:
+            pv = s['peak'][cp.UR5_TO_IDX[s['peak_pt']]]
+            peak_lbl = f"P{s['peak_pt']}: {pv:.2f}"
+
         stats = [
             ("Target (green)", tgt_lbl, GREEN if target else MUTED),
+            ("Offset dX / dY", f"{dx:+.2f} / {dy:+.2f} mm", TEXT),
+            ("Step size", f"{s['step']:.2f} mm", TEXT),
+            ("Press depth (slider)", f"{s['depth']:.1f} mm", CYAN),
             ("Pressing", "YES" if pressing else "no", RED if pressing else MUTED),
             ("Fired cell (orange)", fired_lbl,
              ORANGE if fired_val > 0.05 else MUTED),
             ("Mapping", "MATCH ✓" if match else ("mismatch" if target else "—"),
              GREEN if match else (RED if target and fired_val > 0.05 else MUTED)),
-            ("Presses recorded", f"{len(actual)} / {len(points)}", TEXT),
-            ("Live trim  (drag map/gauge, arrows, n=reset)",
-             f"{extra_x:+.1f}, {extra_y:+.1f}, {extra_z:+.1f} mm",
-             AMBER if (extra_x, extra_y, extra_z) != (0.0, 0.0, 0.0) else MUTED),
+            ("Last press peak", peak_lbl, TEXT),
+            ("Presses recorded", f"{len(s['actual'])} / {len(points)}", TEXT),
         ]
         sy = 72
         for label, val, col in stats:
-            pygame.draw.rect(screen, CARD, pygame.Rect(730, sy, 248, 46),
+            pygame.draw.rect(screen, CARD, pygame.Rect(730, sy, 248, 38),
                              border_radius=6)
-            blit(screen, label, font_sm, MUTED, 742, sy + 6)
-            blit(screen, val, font_md, col, 742, sy + 22)
-            sy += 54
+            blit(screen, label, font_sm, MUTED, 742, sy + 4)
+            blit(screen, val, font_md, col, 742, sy + 19)
+            sy += 43
 
         pygame.draw.line(screen, (50, 50, 70), (730, sy), (978, sy), 1)
-        sy += 8
-        blit(screen, status, font_sm, AMBER, 730, sy)
-        sy += 18
+        sy += 6
+        blit(screen, s['status'], font_sm, AMBER, 730, sy)
+        sy += 20
 
-        # Legend
+        # Legend (inside the right panel)
         blit(screen, "Legend", font_sm, MUTED, 730, sy); sy += 16
-        legend = [
-            (GREEN,  "○ target press point"),
-            (ORANGE, "○ cell that fired"),
-            (WHITE,  "● actual press location"),
-            (CYAN,   "★ live robot tip"),
-        ]
-        for col, txt in legend:
+        for col, txt in [(GREEN,  "+ target centre"),
+                         (ORANGE, "○ cell fired"),
+                         (CYAN,   "● indentor"),
+                         (WHITE,  "● where it pressed"),
+                         (RED,    "○ press contact")]:
             pygame.draw.circle(screen, col, (740, sy + 6), 5)
             blit(screen, txt, font_sm, TEXT, 754, sy); sy += 16
 
-        sy = H - 112
-        pygame.draw.line(screen, (50, 50, 70), (730, sy - 4), (978, sy - 4), 1)
-        for hint in ["ESC/Q quit   C recal   T trail   L labels",
-                     "P pause   N reset trim",
-                     "drag map = X/Y trim   drag gauge = Z trim",
-                     "arrows = X/Y trim   -/= = Z trim  (hold to repeat)"]:
-            blit(screen, hint, font_sm, MUTED, 732, sy); sy += 16
-        if args.paused[0]:
-            blit(screen, "‖ PAUSED", font_md, AMBER, 732, sy)
+        # ── Command CONSOLE (full-width panel across the bottom) ──────
+        pygame.draw.rect(screen, PANEL, pygame.Rect(CON_X, CON_Y, CON_W, CON_H),
+                         border_radius=10)
+        blit(screen, "Command console", font_lg, TEXT, CON_X + 14, CON_Y + 8)
+        blit(screen, "x+ x- y+ y-  ·  press  ·  step N  ·  teach  ·  ok/Enter  ·  "
+                     "skip  ·  back  ·  save  ·  quit  ·  drag map = X/Y  ·  "
+                     "drag right slider = depth  ·  ESC clears",
+             font_sm, MUTED, CON_X + 150, CON_Y + 13)
+
+        # Output scrollback — last CON_LINES messages (commands + responses).
+        out_y = CON_Y + 32
+        log_lines = s['log'][-CON_LINES:]
+        for msg in log_lines:
+            col = GREEN if msg.startswith('>') else TEXT
+            blit(screen, msg[:118], font_sm, col, CON_X + 16, out_y)
+            out_y += 15
+
+        # Input row — the field you type into.
+        inp_y = CON_Y + CON_H - INP_H - 6
+        pygame.draw.rect(screen, CARD,
+                         pygame.Rect(CON_X + 8, inp_y, CON_W - 16, INP_H),
+                         border_radius=6)
+        prompt = f"P{target} > " if target else "> "
+        cursor = "_" if (frame_n // 20) % 2 == 0 else " "
+        blit(screen, prompt, font_md, GREEN, CON_X + 20, inp_y + 8)
+        pw = font_md.size(prompt)[0]
+        blit(screen, cmd_buf + cursor, font_md, WHITE, CON_X + 20 + pw, inp_y + 8)
 
         pygame.display.flip()
         clock.tick(FPS)
 
-    # ── Shutdown: ask worker to stop, let it return home ──────
-    stop_evt.set()
-    if worker is not None and worker.is_alive():
-        print("[live] Stopping — robot returning home ...")
-        worker.join(timeout=30)
     pygame.quit()
+
+
+# ── Interactive per-point loop (commands come from the in-window prompt) ──────
+def interactive_point(pt, rtde_c, tcp_reader, global_calib, offsets,
+                      scan_results, sensor_mod, state, cmd_q):
+    """One point's adjustment loop. Commands arrive via cmd_q (typed into the
+    pygame window). Returns True → next | 'back' → previous | None → save+finish
+    | 'quit' → finish without saving."""
+    dx, dy   = offsets.get(pt, (0.0, 0.0))
+    step_mm  = state.snapshot()['step']
+    exp_raw  = cp.UR5_TO_RAW[pt]
+
+    def log(msg):
+        print("  " + msg)
+        state.push_log(msg)
+
+    print(f"\n{'='*62}")
+    print(f"  P{pt:02d} ({cp.UR5_TO_LABEL[pt]})  "
+          f"nominal XY=({cp.POINTS[pt][0]:+.0f},{cp.POINTS[pt][1]:+.0f}) mm  "
+          f"expected S{exp_raw}")
+    print(f"{'='*62}")
+
+    state.set(target=pt, offset=(dx, dy), step=step_mm, pressing=False,
+              peak=None, peak_pt=None, status=f"→ P{pt} ({cp.UR5_TO_LABEL[pt]})")
+    log(f"P{pt} ({cp.UR5_TO_LABEL[pt]}) — nudge x/y, press, ok")
+    rtde_c.moveL(cp.build_pose(pt, global_calib, dx, dy, 0.0),
+                 cp.VELOCITY_TRAVEL, cp.ACCELERATION)
+
+    while True:
+        cmd = cmd_q.get()            # blocks until the user submits a command
+        cmd = (cmd or "").strip().lower()
+        moved = False
+
+        if cmd == "x+":
+            dx += step_mm; moved = True
+        elif cmd == "x-":
+            dx -= step_mm; moved = True
+        elif cmd == "y+":
+            dy += step_mm; moved = True
+        elif cmd == "y-":
+            dy -= step_mm; moved = True
+        elif cmd.startswith("step"):
+            try:
+                step_mm = float(cmd.split()[1])
+                state.set(step=step_mm)
+                log(f"step = {step_mm:.3f} mm")
+            except (IndexError, ValueError):
+                log("usage: step 0.5")
+
+        elif cmd.startswith("setxy"):
+            # Absolute (dx, dy) from a map drag in the window; moves the arm there.
+            try:
+                _, sxv, syv = cmd.split()
+                dx = clamp(float(sxv), -OFFSET_LIMIT, OFFSET_LIMIT)
+                dy = clamp(float(syv), -OFFSET_LIMIT, OFFSET_LIMIT)
+                moved = True
+            except (ValueError, IndexError):
+                log("bad setxy")
+
+        elif cmd == "press":
+            offsets[pt] = (dx, dy)
+            state.set(pressing=True, status=f"pressing P{pt}")
+            result = cp.do_press(rtde_c, pt, global_calib, offsets, sensor_mod)
+            state.set(pressing=False)
+            if result:
+                result["tcp"] = [round(v, 6) for v in tcp_reader.getActualTCPPose()]
+                scan_results[str(pt)] = result
+                state.set(peak=result["peak_vals"], peak_pt=pt,
+                          status=f"P{pt} peak captured")
+                state.record_actual(pt, tcp_to_display(
+                    tcp_reader.getActualTCPPose(), global_calib))
+                ok = "✓" if result.get("correct") else "✗ WRONG CELL"
+                log(f"P{pt} press: S{result['expected_raw']}="
+                    f"{result['expected_val']:.2f} {ok}")
+            else:
+                log(f"P{pt} pressed (no sensor)")
+            rtde_c.moveL(cp.build_pose(pt, global_calib, dx, dy, 0.0),
+                         cp.VELOCITY_PRESS, cp.ACCELERATION)
+
+        elif cmd == "teach":
+            tcp = tcp_reader.getActualTCPPose()
+            nom_x = cp.REFERENCE_POSE[0] + (cp.POINTS[pt][0] + global_calib[0]) / 1000
+            nom_y = cp.REFERENCE_POSE[1] + (cp.POINTS[pt][1] + global_calib[1]) / 1000
+            dx = round((tcp[0] - nom_x) * 1000, 4)
+            dy = round((tcp[1] - nom_y) * 1000, 4)
+            offsets[pt] = (dx, dy)
+            state.set(offset=(dx, dy))
+            log(f"taught dX={dx:+.2f} dY={dy:+.2f} mm")
+
+        elif cmd == "status":
+            cp.print_status(pt, dx, dy, step_mm, tcp_reader, sensor_mod, global_calib)
+            log(f"P{pt} dX={dx:+.2f} dY={dy:+.2f} (see terminal)")
+
+        elif cmd == "map":
+            # matplotlib GUI isn't thread-safe here — save a PNG snapshot.
+            offsets[pt] = (dx, dy)
+            path = os.path.join(cp.CALIB_DIR, "deviation_map_live_preview.png")
+            try:
+                cp.show_deviation_map(offsets, scan_results, save_path=path)
+                log("saved deviation_map_live_preview.png")
+            except Exception as e:
+                log(f"map failed: {e}")
+
+        elif cmd in ("ok", ""):
+            offsets[pt] = (dx, dy)
+            log(f"P{pt} accepted dX={dx:+.2f} dY={dy:+.2f}")
+            return True
+
+        elif cmd == "skip":
+            log(f"P{pt} skipped")
+            return True
+
+        elif cmd == "back":
+            offsets[pt] = (dx, dy)
+            log("← back one point")
+            return "back"
+
+        elif cmd == "save":
+            offsets[pt] = (dx, dy)
+            return None
+
+        elif cmd == "quit":
+            log("quitting (no save)")
+            return "quit"
+
+        else:
+            log(f"unknown: '{cmd}'")
+
+        if moved:
+            offsets[pt] = (dx, dy)
+            state.set(offset=(dx, dy))
+            rtde_c.moveL(cp.build_pose(pt, global_calib, dx, dy, 0.0),
+                         cp.VELOCITY_TRAVEL, cp.ACCELERATION)
+            log(f"dX={dx:+.2f} dY={dy:+.2f} mm")
+
+
+# ── Robot-driving worker (runs in a BACKGROUND thread) ────────────────────────
+def calibration_worker(state, stop_evt, rtde_c, tcp_reader, global_calib,
+                       offsets, scan_results, sensor_mod, points, default_out, cmd_q):
+    """Drive the arm, run the in-window command loop, save, return home.
+
+    Runs off the main thread so pygame can own the main thread (SDL requires
+    its window to be created/pumped there — otherwise it vanishes the moment
+    the process focus leaves the window). Commands arrive via cmd_q (typed into
+    the window); TCP is read from the 125 Hz cache, so it never contends with
+    the render thread for the RTDE receive interface."""
+    def save_to(name):
+        out = os.path.join(cp.CALIB_DIR, name)
+        cp.save_results(global_calib, offsets, scan_results, out)
+        state.push_log(f"saved {name}")
+
+    saved = False
+    try:
+        state.set(status="moving to home")
+        rtde_c.moveL(cp.home_pose(global_calib), cp.VELOCITY_TRAVEL, cp.ACCELERATION)
+
+        # Baseline press for each point up front (like calibrate_points.py), so
+        # the map is populated before you start nudging.
+        i = 0
+        while 0 <= i < len(points):
+            pt = points[i]
+            print(f"\n  → Baseline press at P{pt} ...")
+            dx, dy = offsets.get(pt, (0.0, 0.0))
+            state.set(target=pt, offset=(dx, dy),
+                      status=f"baseline P{pt}", pressing=True)
+            rtde_c.moveL(cp.build_pose(pt, global_calib, dx, dy, 0.0),
+                         cp.VELOCITY_TRAVEL, cp.ACCELERATION)
+            result = cp.do_press(rtde_c, pt, global_calib, offsets, sensor_mod)
+            state.set(pressing=False)
+            if result:
+                result["tcp"] = [round(v, 6) for v in tcp_reader.getActualTCPPose()]
+                scan_results[str(pt)] = result
+                state.set(peak=result["peak_vals"], peak_pt=pt)
+                state.record_actual(pt, tcp_to_display(
+                    tcp_reader.getActualTCPPose(), global_calib))
+            rtde_c.moveL(cp.build_pose(pt, global_calib, dx, dy, 0.0),
+                         cp.VELOCITY_PRESS, cp.ACCELERATION)
+
+            res = interactive_point(pt, rtde_c, tcp_reader, global_calib,
+                                    offsets, scan_results, sensor_mod, state, cmd_q)
+            if res == "back":
+                i = max(0, i - 1)
+            elif res is True:
+                i += 1
+            elif res == "quit":
+                break
+            else:                       # 'save' → auto-save + finish
+                save_to(default_out)
+                saved = True
+                break
+
+        if i >= len(points) and not saved:      # finished all points normally
+            cp.print_summary(scan_results, offsets)
+            save_to(default_out)
+            state.set(want_map=True)             # main thread shows it on exit
+            saved = True
+
+        state.set(status="returning home", target=None)
+        rtde_c.moveL(cp.home_pose(global_calib), cp.VELOCITY_TRAVEL, cp.ACCELERATION)
+    except Exception as e:
+        print(f"[live] Robot error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        state.set(done=True, status="done — close the window (ESC/Q) to exit")
+        try:
+            rtde_c.stopScript()
+        except Exception:
+            pass
+        stop_evt.set()   # tell the main-thread render loop to exit
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+def main():
+    ap = argparse.ArgumentParser(description="Live per-point UR5 calibration (pygame)")
+    ap.add_argument("--tip", default=None,
+                    help="Calibration profile: loads calib_<tip>.json (global) "
+                         "and calib_points_<tip>.json (per-point offsets)")
+    ap.add_argument("--no-global", action="store_true",
+                    help="Ignore calib.json (zero global offset)")
+    ap.add_argument("--points", nargs="+", type=int, default=None,
+                    help="Subset of points to calibrate (default: all 1..19)")
+    ap.add_argument("--indent", type=float, default=cp.INDENT_MM,
+                    help=f"Press depth in mm (default {cp.INDENT_MM})")
+    ap.add_argument("--no-robot", action="store_true",
+                    help="Do not drive the robot (sensor-only pygame view)")
+    ap.add_argument("--no-sensor", action="store_true",
+                    help="Do not read the sensor (demo colours)")
+    args = ap.parse_args()
+
+    cp.INDENT_MM = args.indent   # cp.do_press presses by this depth
+
+    # ── Choose starting calibration (global X/Y/Z base + per-point deviations) ─
+    if args.no_global:
+        global_calib, offsets, scan_results = (0.0, 0.0, 0.0), {}, {}
+        default_out = "calib_points.json"
+    elif args.tip:
+        global_calib = cp.load_global_calib(args.tip)
+        offsets, scan_results = cp.load_point_offsets(args.tip)
+        default_out = f"calib_points_{args.tip}.json"
+    else:
+        global_calib, base_label, base_points_file = cp.choose_starting_calib()
+        offsets, scan_results = cp.load_existing_deviations(base_points_file)
+        default_out = (f"calib_points_{base_label}.json"
+                       if base_label else "calib_points.json")
+
+    points = args.points if args.points else list(cp.SCAN_ORDER)
+    bad = [p for p in points if p not in cp.POINTS]
+    if bad:
+        print(f"[live] Invalid point(s): {bad} (valid 1..19)")
+        sys.exit(1)
+
+    # ── Sensor ────────────────────────────────────────────────
+    sensor_mod = None
+    if not args.no_sensor:
+        import sensor as sensor_mod
+        print("[live] Starting sensor ...")
+        sensor_mod.start()
+        if not sensor_mod.wait_until_ready(timeout=40):
+            print("[live] ⚠ Sensor not ready — falling back to demo colours")
+            sensor_mod = None
+        else:
+            print("[live] Sensor ready!")
+
+    state    = State()
+    stop_evt = threading.Event()
+    cmd_q    = queue.Queue()        # in-window command line → worker thread
+    state.push_log("console ready — type commands here, then Enter")
+
+    # ── Robot ─────────────────────────────────────────────────
+    rtde_c = None
+    tcp_reader = _TcpReader()
+    if not args.no_robot:
+        print(f"\n⚠  The robot WILL move and press by {args.indent:.1f} mm — it "
+              f"TOUCHES the sensor. Calibrating {len(points)} point(s).")
+        try:
+            input("   Press Enter to start (Ctrl-C to abort) ...")
+        except (EOFError, KeyboardInterrupt):
+            print("\n[live] Aborted.")
+            sys.exit(0)
+        import ur5_control
+        print("[live] Connecting to robot ...")
+        rtde_c, _ = ur5_control.connect()
+        if rtde_c is None:
+            print("[live] Robot connect FAILED — aborting.")
+            sys.exit(1)
+        state.set(connected=True)
+
+    # ── Start the robot-driving worker (background thread) ────────
+    # pygame stays on the MAIN thread; the command loop runs in the worker and
+    # reads what you type into the window, so window + prompt live together.
+    worker = None
+    if not args.no_robot:
+        worker = threading.Thread(
+            target=calibration_worker,
+            args=(state, stop_evt, rtde_c, tcp_reader, global_calib,
+                  offsets, scan_results, sensor_mod, points, default_out, cmd_q),
+            daemon=True)
+        worker.start()
+    else:
+        state.set(status="sensor-only (no robot)")
+
+    # ── Render loop (MAIN thread — keeps the SDL window alive) ──────
+    try:
+        render_loop(state, stop_evt, args, sensor_mod, global_calib, points, cmd_q)
+    except KeyboardInterrupt:
+        stop_evt.set()
+        cmd_q.put("quit")   # unblock the worker so it can home + exit cleanly
+
+    # Window closed (or worker finished). Let the worker return the arm home and
+    # finish any save prompt still in flight before we exit.
+    if worker is not None:
+        worker.join()
+
+    # Final deviation map — matplotlib is only safe on the main thread.
+    if state.snapshot()['want_map'] and cp._HAS_MPL:
+        try:
+            cp.show_deviation_map(offsets, scan_results)
+            cp.plt.ioff()
+            cp.plt.show(block=True)
+        except Exception:
+            pass
     print("[live] Closed")
 
 

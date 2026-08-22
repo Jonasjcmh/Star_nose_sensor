@@ -6,6 +6,13 @@ points, phases locate → press → hold → retract → post, logged at ~100 Hz
 produces a full analysis, mirroring analyze_capacitance_dataset.py but adapted
 to the fixed-ramp / tail-averaging design of the collector.
 
+Point geometry and hex-grid labels (P1=a1, P2=a2, ... P10=c3 center, ...
+P19=e5) are imported from Integration_2/ur5_control.py — the same source of
+truth the collector, the muca-board pipeline, and visualizer_2d.py use — so
+every figure's point titles/axes/legends show both the point number and its
+current hex label. Falls back to a pinned copy if ur5_control can't be
+imported (e.g. running this analysis offline without rtde_control installed).
+
 Two families of figures
 ------------------------
   A. Per-round overlay grids  — FOR EACH ROUND (sample): a 4×5 grid of 19 panels
@@ -49,9 +56,10 @@ from datetime import datetime
 
 import numpy as np
 
-_HERE    = os.path.dirname(os.path.abspath(__file__))
-LOG_DIR  = os.path.join(_HERE, 'logs')
-PLOT_DIR = os.path.join(_HERE, 'plots')
+_HERE        = os.path.dirname(os.path.abspath(__file__))
+_INTEGRATION = os.path.normpath(os.path.join(_HERE, '..', 'Integration_2'))
+LOG_DIR      = os.path.join(_HERE, 'logs')
+PLOT_DIR     = os.path.join(_HERE, 'plots')
 
 # Must match capacitance_ramp_collector.SETTLE_WINDOW_S — the tail window over
 # which each phase's settled reading is averaged.
@@ -66,17 +74,36 @@ PHASE_COLORS = {
     'post':    '#e6e6e6',
 }
 
-# ── Sensor layout (mm, relative to reference pose) ───────────────────────────────
-POINTS_XY = {
-     1: ( -8.0, +14.0),   2: (  0.0, +14.0),   3: ( +8.0, +14.0),
-     4: (-12.0,  +7.0),   5: ( -4.0,  +7.0),   6: ( +4.0,  +7.0),
-     7: (+12.0,  +7.0),   8: (-16.0,   0.0),   9: ( -8.0,   0.0),
-    10: (  0.0,   0.0),  11: ( +8.0,   0.0),  12: (+16.0,   0.0),
-    13: (-12.0,  -7.0),  14: ( -4.0,  -7.0),  15: ( +4.0,  -7.0),
-    16: (+12.0,  -7.0),  17: ( -8.0, -14.0),  18: (  0.0, -14.0),
-    19: ( +8.0, -14.0),
-}
-ALL_POINTS = list(range(1, 20))
+# ── Sensor layout (mm, relative to reference pose) ────────────────────────────
+# Point geometry and hex-grid labels (P1=a1, P2=a2, ... P10=c3 center, ...
+# P19=e5) come from Integration_2/ur5_control.py — the single source of truth
+# shared with the collector, the muca-board pipeline, and visualizer_2d.py.
+# Falls back to a pinned copy if ur5_control (and its rtde_control/
+# rtde_receive imports) aren't available on this machine — this analysis
+# script is often run offline from where the collector runs.
+try:
+    sys.path.insert(0, _INTEGRATION)
+    import ur5_control
+    POINTS_XY      = dict(ur5_control.POINTS)
+    POINT_TO_LABEL = dict(ur5_control.POINT_TO_LABEL)
+except Exception:
+    POINTS_XY = {
+         1: ( +8.0, +14.0),   2: (+12.0,  +7.0),   3: (+16.0,   0.0),
+         4: (  0.0, +14.0),   5: ( +4.0,  +7.0),   6: ( +8.0,   0.0),
+         7: (+12.0,  -7.0),   8: ( -8.0, +14.0),   9: ( -4.0,  +7.0),
+        10: (  0.0,   0.0),  11: ( +4.0,  -7.0),  12: ( +8.0, -14.0),
+        13: (-12.0,  +7.0),  14: ( -8.0,   0.0),  15: ( -4.0,  -7.0),
+        16: (  0.0, -14.0),  17: (-16.0,   0.0),  18: (-12.0,  -7.0),
+        19: ( -8.0, -14.0),
+    }
+    POINT_TO_LABEL = {
+         1: 'a1',  2: 'a2',  3: 'a3',
+         4: 'b1',  5: 'b2',  6: 'b3',  7: 'b4',
+         8: 'c1',  9: 'c2', 10: 'c3', 11: 'c4', 12: 'c5',
+        13: 'd2', 14: 'd3', 15: 'd4', 16: 'd5',
+        17: 'e3', 18: 'e4', 19: 'e5',
+    }
+ALL_POINTS = sorted(POINTS_XY.keys())
 
 # ── Data loading ────────────────────────────────────────────────────────────────
 
@@ -220,9 +247,10 @@ def plot_round_grid(rows, round_idx, out_dir, show=True):
 
     for i, pt in enumerate(ALL_POINTS):
         ax = axs[i // ncols][i % ncols]
+        label = POINT_TO_LABEL.get(pt, '?')
         prows = sorted(by_pt.get(pt, []), key=lambda r: r['timestamp'])
         if not prows:
-            ax.set_title(f'P{pt:02d}  (no data)', fontsize=9)
+            ax.set_title(f'P{pt:02d}/{label}  (no data)', fontsize=9)
             ax.set_xticks([]); ax.set_yticks([])
             continue
         t0 = prows[0]['timestamp']
@@ -236,7 +264,7 @@ def plot_round_grid(rows, round_idx, out_dir, show=True):
         ax.tick_params(axis='y', labelcolor=C_CP, labelsize=7)
         ax.tick_params(axis='x', labelsize=7)
         ax.grid(alpha=0.25)
-        ax.set_title(f'P{pt:02d}', fontsize=10, fontweight='bold')
+        ax.set_title(f'P{pt:02d}/{label}', fontsize=10, fontweight='bold')
         axf = ax.twinx()
         axf.plot(t, ld, color=C_FORCE, lw=0.9, alpha=0.85)
         axf.tick_params(axis='y', labelcolor=C_FORCE, labelsize=7)
@@ -288,7 +316,8 @@ def plot_timeseries(groups, out_dir, show=True):
             ax.plot(ts, cp, color=C_CP, alpha=0.55, lw=0.8)
             ax2.plot(ts, ld, color=C_FORCE, alpha=0.35, lw=0.8, ls='--')
             any_data = True
-        ax.set_title(f'P{pt:02d}  ({POINTS_XY[pt][0]:+.0f},{POINTS_XY[pt][1]:+.0f})',
+        label = POINT_TO_LABEL.get(pt, '?')
+        ax.set_title(f'P{pt:02d}/{label}  ({POINTS_XY[pt][0]:+.0f},{POINTS_XY[pt][1]:+.0f})',
                      fontsize=9, fontweight='bold')
         ax.tick_params(axis='y', labelcolor=C_CP, labelsize=7)
         ax2.tick_params(axis='y', labelcolor=C_FORCE, labelsize=7)
@@ -331,7 +360,8 @@ def plot_summary_bar(dcp_by_pt, out_dir, show=True):
                 bar.get_height() + 0.02 * top,
                 f'n={n}', ha='center', va='bottom', fontsize=7)
     ax.set_xticks(x)
-    ax.set_xticklabels([f'P{p:02d}' for p in pts], rotation=45, fontsize=8)
+    ax.set_xticklabels([f'P{p:02d}/{POINT_TO_LABEL.get(p, "?")}' for p in pts],
+                       rotation=45, fontsize=8)
     ax.set_ylabel('Settled ΔCp = hold − locate  (pF)')
     ax.set_title('Mean ± Std settled ΔCp per Sensor Point  (tail-averaged)')
     ax.axhline(0, color='k', lw=0.6)
@@ -368,9 +398,10 @@ def plot_sensor_map(dcp_by_pt, out_dir, show=True):
         val   = means[pt]
         color = cmap(norm(val)) if not math.isnan(val) else (0.82, 0.82, 0.82, 1.0)
         ax.add_patch(plt.Circle((x, y), r_circle, color=color, ec='white', lw=0.8))
-        label = f'P{pt}\n{val:.1f}' if not math.isnan(val) else f'P{pt}\n—'
+        hex_label = POINT_TO_LABEL.get(pt, f'P{pt}')
+        label = f'{hex_label}\nP{pt}\n{val:.1f}' if not math.isnan(val) else f'{hex_label}\nP{pt}\n—'
         ax.text(x, y, label, ha='center', va='center',
-                fontsize=6.5, color='white', fontweight='bold')
+                fontsize=6, color='white', fontweight='bold')
     sm = ScalarMappable(cmap=cmap, norm=norm); sm.set_array([])
     fig.colorbar(sm, ax=ax, shrink=0.7).set_label('Mean settled ΔCp (pF)')
     ax.set_xlim(-22, 22); ax.set_ylim(-20, 20)
@@ -403,7 +434,8 @@ def plot_force_cp_scatter(responses, out_dir, show=True):
     for p in uniq:
         sel = [r for r in pts if r['point'] == p]
         ax.scatter([r['dcp'] for r in sel], [r['force'] for r in sel],
-                   color=color[p], s=40, alpha=0.75, label=f'P{p:02d}',
+                   color=color[p], s=40, alpha=0.75,
+                   label=f'P{p:02d}/{POINT_TO_LABEL.get(p, "?")}',
                    edgecolors='none')
 
     dcp = np.array([r['dcp'] for r in pts])
@@ -462,16 +494,17 @@ def plot_phase_boxplots(rows, out_dir, show=True):
 
 def print_stats_table(dcp_by_pt):
     print()
-    print('  Point  |  n  |  Mean ΔCp (pF)  |   Std (pF)   |  CV (%)')
-    print('  ' + '-' * 56)
+    print('  Point       |  n  |  Mean ΔCp (pF)  |   Std (pF)   |  CV (%)')
+    print('  ' + '-' * 62)
     for pt in ALL_POINTS:
+        tag  = f'P{pt:02d}/{POINT_TO_LABEL.get(pt, "?")}'
         vals = dcp_by_pt.get(pt, [])
         if not vals:
-            print(f'  P{pt:02d}    |  0  |       —         |      —       |    —')
+            print(f'  {tag:<11} |  0  |       —         |      —       |    —')
             continue
         mu, sd = float(np.mean(vals)), float(np.std(vals))
         cv = (sd / mu * 100) if mu != 0 else float('nan')
-        print(f'  P{pt:02d}    | {len(vals):3d} | {mu:13.3f}   | {sd:10.3f}   | {cv:6.2f}')
+        print(f'  {tag:<11} | {len(vals):3d} | {mu:13.3f}   | {sd:10.3f}   | {cv:6.2f}')
     print()
 
 # ── Main ────────────────────────────────────────────────────────────────────────

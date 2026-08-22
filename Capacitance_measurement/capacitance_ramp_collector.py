@@ -21,6 +21,12 @@ What it does
   • All raw samples go to ONE combined CSV (same schema as the collector, so
     analyze_capacitance_dataset.py also works). round_idx = the sample/round,
     so the analysis script can group "all 19 points of round k" together.
+  • Point numbering, geometry, and hex-grid labels (P1=a1, P2=a2, ... P10=c3
+    center, ... P19=e5) are imported from Integration_2/ur5_control.py — the
+    single source of truth shared with the muca-board pipeline and
+    visualizer_2d.py — so this collector can't drift out of sync with the
+    current physical point layout. Every printed prompt and each saved CSV
+    row carries both the point number and its hex label.
 
 Fixed-ramp motion (per move of distance d, in time ramp_s, accel fraction f):
         cruise v = d / ((1−f)·ramp_s)     accel a = d / (f·(1−f)·ramp_s²)
@@ -53,6 +59,12 @@ _HERE        = os.path.dirname(os.path.abspath(__file__))
 _INTEGRATION = os.path.normpath(os.path.join(_HERE, '..', 'Integration_2'))
 LOG_DIR      = os.path.join(_HERE, 'logs')
 
+# Point numbering/geometry and hex-grid labels (a1..e5) are the single source
+# of truth in Integration_2/ur5_control.py — imported directly so this
+# collector can't drift from the current physical point layout.
+sys.path.insert(0, _INTEGRATION)
+import ur5_control   # noqa: E402  (Integration_2/ur5_control.py)
+
 # ── Robot ─────────────────────────────────────────────────────────────────────
 ROBOT_IP   = os.environ.get('UR_ROBOT_IP', '177.22.22.2')
 VEL_TRAVEL = 0.05    # m/s — travel between points
@@ -69,22 +81,14 @@ def _ai0_to_n(v):
     return -(float(v) - AI0_ZERO_V) * LOADCELL_N_PER_V
 
 # ── Sensor points (mm, relative to reference pose) ───────────────────────────
-POINTS = {
-     1: ( -8.0, +14.0),   2: (  0.0, +14.0),   3: ( +8.0, +14.0),
-     4: (-12.0,  +7.0),   5: ( -4.0,  +7.0),   6: ( +4.0,  +7.0),
-     7: (+12.0,  +7.0),   8: (-16.0,   0.0),   9: ( -8.0,   0.0),
-    10: (  0.0,   0.0),  11: ( +8.0,   0.0),  12: (+16.0,   0.0),
-    13: (-12.0,  -7.0),  14: ( -4.0,  -7.0),  15: ( +4.0,  -7.0),
-    16: (+12.0,  -7.0),  17: ( -8.0, -14.0),  18: (  0.0, -14.0),
-    19: ( +8.0, -14.0),
-}
+# Hex-grid labelled layout (P1=a1, P2=a2, ... P10=c3 center, ... P19=e5) —
+# same POINTS/labels as Integration_2/ur5_control.py, so a point pressed here
+# is the same physical pad the muca-board pipeline and visualizer call by
+# that label.
+POINTS         = ur5_control.POINTS
+POINT_TO_LABEL = ur5_control.POINT_TO_LABEL   # pt -> 'a1'..'e5'
 
-REFERENCE_POSE = [
-    -0.03664,
-    -0.49831,
-     0.06071,
-    2.346, -2.094, -0.00009
-]
+REFERENCE_POSE = ur5_control.REFERENCE_POSE
 
 SENSOR_MAP_ROWS = [
     [1, 2, 3],
@@ -149,7 +153,7 @@ _log_lock = threading.Lock()
 
 FIELDNAMES = [
     'timestamp', 'datetime',
-    'round_idx', 'sample_idx', 'point', 'depth_mm', 'phase',
+    'round_idx', 'sample_idx', 'point', 'label', 'depth_mm', 'phase',
     'tcp_x', 'tcp_y', 'tcp_z',
     'fx', 'fy', 'fz', 'tx', 'ty', 'tz',
     'ai0', 'load_cell_N',
@@ -168,6 +172,7 @@ def _log_row(pt, depth_mm, phase, round_idx, sample_idx, lcr):
         'round_idx':   round_idx,
         'sample_idx':  sample_idx,
         'point':       pt,
+        'label':       POINT_TO_LABEL.get(pt, str(pt)),
         'depth_mm':    depth_mm,
         'phase':       phase,
         'tcp_x':       round(tcp[0], 6),
@@ -370,7 +375,7 @@ def generate_plan(n_samples, seed=None):
 
 def print_plan_summary(plan, n_samples):
     print(f'\n  Plan: {n_samples} rounds × 19 points = {len(plan)} indentations')
-    head = '  '.join(f'P{p:02d}' for _, _, p in plan[:19])
+    head = '  '.join(f'P{p:02d}/{POINT_TO_LABEL.get(p, "?")}' for _, _, p in plan[:19])
     print(f'  Round 1 order: {head}')
 
 # ── Indentation ───────────────────────────────────────────────────────────────
@@ -386,7 +391,7 @@ def do_indentation(rtde_c, pt, depth_mm, round_idx, sample_idx, lcr,
     v_press, a_press = vel_accel_for_ramp(depth_mm, ramp_s)
 
     # ── Locate ───────────────────────────────────────────────────────────────
-    print(f'     → locate  (moving to surface P{pt:02d}) ...')
+    print(f'     → locate  (moving to surface P{pt:02d}/{POINT_TO_LABEL.get(pt, "?")}) ...')
     rtde_c.moveL(surface, VEL_TRAVEL, ACCEL)
     _log_row(pt, depth_mm, 'locate', round_idx, sample_idx, lcr)
     _log_timed(pt, depth_mm, 'locate', round_idx, sample_idx, lcr, rate_hz, locate_s)
@@ -425,11 +430,14 @@ def print_sensor_map(highlight=None):
     print()
     for row in SENSOR_MAP_ROWS:
         indent = ' ' * (2 * (5 - len(row)))
-        parts  = []
+        nums, labels = [], []
         for pt in row:
-            tag = f'[{pt:02d}]' if pt == highlight else f' {pt:02d} '
-            parts.append(tag)
-        print('  ' + indent + ' '.join(parts))
+            label = POINT_TO_LABEL.get(pt, '??')
+            nums.append(f'[P{pt:02d}]' if pt == highlight else f' P{pt:02d} ')
+            labels.append(f'[{label:^3}]' if pt == highlight else f' {label:^3} ')
+        print('  ' + indent + ' '.join(nums))
+        print('  ' + indent + ' '.join(labels))
+        print()
     print()
 
 def _select_lcr_port():
@@ -596,13 +604,17 @@ def main():
             print('─' * 65)
             print(f'  Step {step + 1}/{total}  |  Round {round_idx + 1}/{n_samples}  '
                   f'|  P{pt:02d}  sample {sample_idx + 1}/{n_samples}')
-            print(f'  Point P{pt:02d}  ({px:+.0f}, {py:+.0f}) mm')
+            label = POINT_TO_LABEL.get(pt, '?')
+            print(f'  Point P{pt:02d}/{label}  ({px:+.0f}, {py:+.0f}) mm')
             print_sensor_map(highlight=pt)
 
-            print(f'  ┌─────────────────────────────────────────────────────┐')
-            print(f'  │  Wire the LCR-6100 probes to point  P{pt:02d}            │')
-            print(f'  │  Freq: 20 kHz | Mode: Cp-Rp | Volt: 1 V | FAST     │')
-            print(f'  └─────────────────────────────────────────────────────┘')
+            box1 = f'Wire the LCR-6100 probes to point  P{pt:02d} ({label})'
+            box2 = 'Freq: 20 kHz | Mode: Cp-Rp | Volt: 1 V | FAST'
+            box_w = max(len(box1), len(box2)) + 2
+            print('  ┌' + '─' * box_w + '┐')
+            print(f'  │ {box1.ljust(box_w - 1)}│')
+            print(f'  │ {box2.ljust(box_w - 1)}│')
+            print('  └' + '─' * box_w + '┘')
             Cp_now, _, _ = lcr.get_latest()
             print(f'  Current LCR reading: Cp = {Cp_now * 1e12:.2f} pF')
 

@@ -767,7 +767,7 @@ def _ask_depths(prompt, default_list):
         except ValueError:
             print('  Could not parse — enter numbers only, e.g. 1,2,3 or 1 2 3')
             continue                      # re-prompt, do NOT silently use default
-        if vals and all(0.0 < v <= 20.0 for v in vals):
+        if vals and all(0.0 <= v <= 20.0 for v in vals):
             return vals
         print('  Enter one or more depths in mm (e.g. 1,2,3), each between 0 and 20')
 

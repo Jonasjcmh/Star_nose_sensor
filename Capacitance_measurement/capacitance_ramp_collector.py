@@ -90,12 +90,22 @@ POINT_TO_LABEL = ur5_control.POINT_TO_LABEL   # pt -> 'a1'..'e5'
 
 REFERENCE_POSE = ur5_control.REFERENCE_POSE
 
+# Point ids laid out as the physical hex rows in the SENSOR/DISPLAY frame
+# (constant display-y lines, top -> bottom) under the NEW a1..e5 numbering —
+# NOT sequential P#. Kept in sync with Interdome_touch/main.py SENSOR_MAP_ROWS.
+# The operator hand-wires the LCR probe to the highlighted pad, so this MUST
+# reflect the true physical layout (P1=a1 is the middle-row left, not top-left).
+#   disp y=+14 : a3 b4 c5           -> P3  P7  P12
+#   disp y=+7  : a2 b3 c4 d5        -> P2  P6  P11 P16
+#   disp y=0   : a1 b2 c3 d4 e5     -> P1  P5  P10 P15 P19
+#   disp y=-7  : b1 c2 d3 e4        -> P4  P9  P14 P18
+#   disp y=-14 : c1 d2 e3           -> P8  P13 P17
 SENSOR_MAP_ROWS = [
-    [1, 2, 3],
-    [4, 5, 6, 7],
-    [8, 9, 10, 11, 12],
-    [13, 14, 15, 16],
-    [17, 18, 19],
+    [3, 7, 12],
+    [2, 6, 11, 16],
+    [1, 5, 10, 15, 19],
+    [4, 9, 14, 18],
+    [8, 13, 17],
 ]
 
 # ── Calibration globals ────────────────────────────────────────────────────────

@@ -6,7 +6,9 @@ logging), three data sources while the UR5 presses every point of the 19-point
 star-nose grid:
 
   1. UR5 robot control (position, TCP force/torque, AI0)
-  2. The 19-cell capacitive skin sensor (Integration_2/sensor.py)
+  2. The 19-cell capacitive skin sensor. Default: the RAW muca-board reader
+     (mucaboard_data_raw/sensor_raw.py) which logs pure ADC counts; pass
+     --processed to use the normalised Integration_2/sensor.py instead.
   3. The FUTEK load cell (AI0 channel), converted to Newtons with the
      direct voltage->force calibration confirmed on 2026-07-23 (see
      "FUTEK load cell calibration" below)
@@ -25,7 +27,7 @@ The 19 main pressing points come from the calib_points file you select at
 startup (points[n].offset_mm, points[n].x_mm/y_mm, or per_point[n].dx/dy on the
 nominal grid). In ADDITION you are asked which set of intermediate points to
 press — triangle_centroids_*, diagonal_midpoints_* and horizontal_midpoints_*
-(rigid / translated / actual_<tag> / plain, or none). All chosen points (main +
+(rigid / translated / <tag> / plain, or none). All chosen points (main +
 extras) go through the full depth x iteration matrix.
 
 Mapping routine
@@ -95,8 +97,10 @@ import rtde_receive
 # ── Paths ─────────────────────────────────────────────────────────────────────
 _HERE        = os.path.dirname(os.path.abspath(__file__))
 _INTEGRATION = os.path.normpath(os.path.join(_HERE, '..', 'Integration_2'))
+_MUCA_RAW    = os.path.normpath(os.path.join(_HERE, '..', 'mucaboard_data_raw'))
 LOG_DIR      = os.path.join(_HERE, 'logs')
 sys.path.insert(0, _INTEGRATION)
+sys.path.insert(0, _MUCA_RAW)   # for sensor_raw (RAW muca-board reader)
 
 # ── Robot ─────────────────────────────────────────────────────────────────────
 ROBOT_IP    = os.environ.get('UR_ROBOT_IP', '177.22.22.2')
@@ -105,12 +109,13 @@ VEL_PRESS   = 0.004    # m/s — slow press / retract (matches capacitance long-
 ACCEL       = 0.3      # m/s^2
 SAFE_HOME_Z = 30.0     # mm above surface at home
 
-# The TCP calibration leaves the tip standing off ABOVE the surface (the global
-# Z is calibrated with a gap, not at contact). Without compensation a commanded
-# depth d would travel this standoff first and then indent d, i.e. it presses
-# standoff+d. We lower the whole Z frame by SURFACE_STANDOFF_MM so extra_z=0 is
-# true surface contact and a commanded depth is exactly the indentation depth.
-SURFACE_STANDOFF_MM = 5.0   # override at runtime with --standoff
+# calibrate_points.py defines extra_z=0 as TRUE surface contact (the operator
+# jogs to contact and saves the global Z there), and verify_mapping.py presses
+# the same way. Keep the interdome IDENTICAL: no standoff by default, so
+# _build_pose collapses to ref_z + (gz + extra_z)/1000 and a commanded depth is
+# exactly the indentation depth. Only set --standoff if the tip is genuinely
+# calibrated with a gap above the surface.
+SURFACE_STANDOFF_MM = 0.0   # override at runtime with --standoff
 
 # Shared start pose — identical to Integration_2/calibrate_ur5.py and
 # calibrate_points.py. Keep these three in sync.
@@ -136,20 +141,31 @@ def ai0_to_futek_n(ai0_v):
     return FUTEK_SLOPE_N_PER_V * float(ai0_v) + FUTEK_OFFSET_N
 
 # ── Point -> raw sensor cell (same rig/numbering as Integration_2/ur5_control.py) ─
+# NEW a1..e5 label-order scheme — single source of truth is
+# Integration_2/calibrate_points.py (UR5_TO_SENSOR) / ur5_control.py.
+# Point N is numbered in sensor-label order: P1=a1, P2=a2 ... P19=e5, and it
+# physically presses raw cell UR5_TO_SENSOR[N].
 UR5_TO_SENSOR = {
-    1:24,  2:12,  3:0,
-    4:37,  5:25,  6:13,  7:1,
-    8:50,  9:38,  10:26, 11:14, 12:2,
-    13:51, 14:39, 15:27, 16:15,
-    17:52, 18:40, 19:28,
+    1:0,   2:1,   3:2,
+    4:12,  5:13,  6:14,  7:15,
+    8:24,  9:25,  10:26, 11:27, 12:28,
+    13:37, 14:38, 15:39, 16:40,
+    17:50, 18:51, 19:52,
 }
 
+# Point ids laid out as the physical hex rows in the SENSOR/DISPLAY frame
+# (constant display-y lines, top -> bottom). Used only for the console map.
+#   disp y=+14 : a3 b4 c5           -> P3  P7  P12
+#   disp y=+7  : a2 b3 c4 d5        -> P2  P6  P11 P16
+#   disp y=0   : a1 b2 c3 d4 e5     -> P1  P5  P10 P15 P19
+#   disp y=-7  : b1 c2 d3 e4        -> P4  P9  P14 P18
+#   disp y=-14 : c1 d2 e3           -> P8  P13 P17
 SENSOR_MAP_ROWS = [
-    [1, 2, 3],
-    [4, 5, 6, 7],
-    [8, 9, 10, 11, 12],
-    [13, 14, 15, 16],
-    [17, 18, 19],
+    [3, 7, 12],
+    [2, 6, 11, 16],
+    [1, 5, 10, 15, 19],
+    [4, 9, 14, 18],
+    [8, 13, 17],
 ]
 
 ANCHOR_POINT = 10
@@ -171,14 +187,15 @@ EXTRA_SPECS = [
 # ── Nominal 19-point grid (theoretical) ──────────────────────────────────────
 # Used when a chosen calib_points file only stores per-point deviations (dx,dy)
 # relative to this grid. Matches ur5_control.py / calibrate_points.py.
+# ROBOT-frame mm, NEW a1..e5 label order — MUST match calibrate_points.POINTS.
 NOMINAL_POINTS = {
-     1: ( -8.0, +14.0),  2: (  0.0, +14.0),  3: ( +8.0, +14.0),
-     4: (-12.0,  +7.0),  5: ( -4.0,  +7.0),  6: ( +4.0,  +7.0),
-     7: (+12.0,  +7.0),  8: (-16.0,   0.0),  9: ( -8.0,   0.0),
-    10: (  0.0,   0.0), 11: ( +8.0,   0.0), 12: (+16.0,   0.0),
-    13: (-12.0,  -7.0), 14: ( -4.0,  -7.0), 15: ( +4.0,  -7.0),
-    16: (+12.0,  -7.0), 17: ( -8.0, -14.0), 18: (  0.0, -14.0),
-    19: ( +8.0, -14.0),
+     1: ( +8.0, +14.0),  2: (+12.0,  +7.0),  3: (+16.0,   0.0),   # a1 a2 a3
+     4: (  0.0, +14.0),  5: ( +4.0,  +7.0),  6: ( +8.0,   0.0),   # b1 b2 b3
+     7: (+12.0,  -7.0),  8: ( -8.0, +14.0),  9: ( -4.0,  +7.0),   # b4 c1 c2
+    10: (  0.0,   0.0), 11: ( +4.0,  -7.0), 12: ( +8.0, -14.0),   # c3 c4 c5
+    13: (-12.0,  +7.0), 14: ( -8.0,   0.0), 15: ( -4.0,  -7.0),   # d2 d3 d4
+    16: (  0.0, -14.0), 17: (-16.0,   0.0), 18: (-12.0,  -7.0),   # d5 e3 e4
+    19: ( -8.0, -14.0),                                           # e5
 }
 
 # ── Points + calibration are BOTH taken from one chosen calib_points file ─────
@@ -324,7 +341,7 @@ def _variant_from_calib(path):
 
       * '...rigid...'                   -> 'rigid'
       * '...translated...'              -> 'translated'
-      * 'calib_points_short_<tag>.json' -> 'actual_<tag>'  (untransformed ACTUAL points)
+      * 'calib_points_short_<tag>.json' -> '<tag>'  (untransformed ACTUAL points)
       * otherwise                       -> None (plain files)
     """
     name = os.path.basename(path)
@@ -337,7 +354,7 @@ def _variant_from_calib(path):
     for pre in ('calib_points_short_', 'calib_points_'):
         if stem.startswith(pre):
             tag = stem[len(pre):]
-            return f'actual_{tag}' if tag else 'actual'
+            return tag or None
     return None
 
 def discover_extra_variants():
@@ -345,13 +362,13 @@ def discover_extra_variants():
 
     Returns an ordered list of (variant_value, info) where variant_value is None
     for the plain files (triangle_centroids.json) or the suffix string otherwise
-    (e.g. 'actual_new_hollow_2'). info = {'files': {kind: filename}, 'count': int}.
+    (e.g. 'new_hollow_sensor'). info = {'files': {kind: filename}, 'count': int}.
     """
     found = {}
     for kind, prefix in EXTRA_SPECS:
         for path in sorted(glob.glob(os.path.join(_INTEGRATION, f'{prefix}*.json'))):
             base   = os.path.basename(path)
-            suffix = base[len(prefix):-len('.json')]        # '' or '_rigid' or '_actual_...'
+            suffix = base[len(prefix):-len('.json')]        # '' or '_rigid' or '_new_hollow_...'
             value  = suffix[1:] if suffix.startswith('_') else suffix
             value  = value or None                          # '' -> plain
             entry  = found.setdefault(value, {'files': {}, 'count': 0})
@@ -408,6 +425,95 @@ def select_extra_variant(default_variant):
         value, _ = variants[idx]
         print(f'  [points] Intermediate set: {value or "(plain)"}')
         return True, value
+
+def _calib_is_new_format(path):
+    """True if the calib file has points[N].offset_mm (the new full format the
+    intermediate generator needs)."""
+    try:
+        with open(path) as f:
+            d = json.load(f)
+    except Exception:
+        return False
+    pts = d.get('points') or {}
+    return bool(pts) and any('offset_mm' in v for v in pts.values())
+
+def _intermediate_status(path):
+    """(tag, {kind: exists}) for the intermediate files this calib would produce."""
+    import generate_intermediate_points as gen
+    tag   = gen.variant_tag(path)
+    paths = gen.output_paths(path)
+    return tag, {k: os.path.exists(p) for k, p in paths.items()}
+
+def select_intermediate_calib(main_calib_path):
+    """Ask which calib_points file to BUILD the intermediate points from
+    (triangle centroids + diagonal/horizontal midpoints) — chosen INDEPENDENTLY
+    of the 19-point calibration. If that file's intermediate JSONs are missing,
+    they are generated on the spot from its ACTUAL calibrated positions.
+
+    Returns (use_extras: bool, variant_tag or None). variant_tag is the value
+    load_extra_points() expects (files are the FULL-absolute calib-derived frame,
+    so the global offset must NOT be re-added)."""
+    import generate_intermediate_points as gen
+    files = list_calib_points_files()
+    print('\n' + '=' * 70)
+    print('  INTERMEDIATE POINTS — pick the calib file to build them FROM')
+    print('  (independent of the 19-point calib; triangles + diagonals + horizontals)')
+    print('=' * 70)
+    if not files:
+        print('  No calib_points_*.json files found — pressing only the 19 main points.')
+        return False, None
+
+    default_idx = next((i for i, (n, p) in enumerate(files)
+                        if os.path.abspath(p) == os.path.abspath(main_calib_path)), 0)
+    for i, (name, path) in enumerate(files):
+        tag, present = _intermediate_status(path)
+        have = sum(present.values())
+        if have == 3:
+            status = 'files ready'
+        elif _calib_is_new_format(path):
+            status = f'{have}/3 present — will generate'
+        else:
+            status = 'old format — cannot build' if have == 0 else f'{have}/3 (old format)'
+        mark = '  <- same as 19-point calib' if i == default_idx else ''
+        print(f'   [{i}]  {name:26s} tag={str(tag or "(plain)"):22s} {status}{mark}')
+    none_idx = len(files)
+    print(f'   [{none_idx}]  none — press only the 19 main points')
+
+    while True:
+        try:
+            raw = input(f'\n  Select intermediate calib [0-{none_idx}] '
+                        f'(Enter={default_idx}) > ').strip()
+        except (EOFError, KeyboardInterrupt):
+            raw = ''
+        if raw == '':
+            idx = default_idx
+        elif raw.isdigit() and 0 <= int(raw) <= none_idx:
+            idx = int(raw)
+        else:
+            print(f'  Enter a number between 0 and {none_idx}')
+            continue
+        break
+
+    if idx == none_idx:
+        print('  [points] Intermediate points: none (19 main points only)')
+        return False, None
+
+    name, path = files[idx]
+    tag, present = _intermediate_status(path)
+    if all(present.values()):
+        print(f'  [points] Using existing intermediate files (tag "{tag}") from {name}')
+        return True, tag
+    if not _calib_is_new_format(path):
+        print(f'  [points] ⚠ "{name}" is not the new full format (needs points[].offset_mm) '
+              f'and its files are missing — skipping intermediates.')
+        return False, None
+    print(f'  [points] Generating intermediate points from {name} ...')
+    try:
+        gen.generate(path, write=True, quiet=False)
+    except SystemExit as e:
+        print(f'  [points] ⚠ Could not generate ({e}). Skipping intermediates.')
+        return False, None
+    return True, tag
 
 def load_extra_points(variant, gx=0.0, gy=0.0):
     """Load triangle/diagonal/horizontal extra points for the chosen variant.
@@ -517,6 +623,20 @@ def _pt_xy(pid):
     r = POINT_REG[pid]
     return r['x'], r['y']
 
+def _point_response(sensor_mod, pid):
+    """Sensor response at a MAIN point (1..19): value minus baseline when the
+    reader exposes one (raw muca-board mode), else the value itself (the
+    processed reader already returns a baseline-subtracted, normalised value).
+    Point N maps to array index N-1 in the new a1..e5 scheme."""
+    v = sensor_mod.get_value_for_ur5_point(pid)
+    base_fn = getattr(sensor_mod, 'get_calibration', None)
+    if base_fn is not None:
+        base = base_fn()
+        idx  = pid - 1
+        if base is not None and 0 <= idx < len(base):
+            return v - float(base[idx])
+    return v
+
 def _build_pose(pid, extra_z_mm=0.0):
     dx, dy = _pt_xy(pid)
     pose = list(REFERENCE_POSE)
@@ -530,10 +650,27 @@ def _build_pose(pid, extra_z_mm=0.0):
 def _home_pose():
     return _build_pose(ANCHOR_POINT, SAFE_HOME_Z)
 
-# ── Dataset log ────────────────────────────────────────────────────────────────
-_log_rows = []
-_log_lock = threading.Lock()
+# ── Dataset log (STREAMING) ─────────────────────────────────────────────────────
+# Rows are written straight to the CSV as they are produced and only a tiny
+# buffer is kept in RAM. This keeps memory flat (O(1)) for arbitrarily long runs
+# — the previous design accumulated EVERY row in a Python list for the whole
+# session and rewrote the entire file on each autosave, which exhausted RAM on
+# long runs (100 Hz x 3 hold phases ≈ 330 rows/indentation → millions of rows)
+# and got the process OOM-killed mid-collection. Streaming also means a crash
+# loses at most the last unflushed rows instead of everything.
+_log_lock        = threading.Lock()
+_log_file        = None   # open CSV file handle for the current run
+_log_writer      = None   # csv.DictWriter bound to _log_file
+_log_count       = 0      # total rows written so far this run
+_log_since_flush = 0      # rows written since the last fsync
+_LOG_FLUSH_EVERY = 500    # fsync to disk every N rows (~5 s at 100 Hz)
 
+# cell_1..19  = sensor values as returned by the reader. In the default RAW
+#               muca-board mode these are PURE ADC counts (no normalisation /
+#               baseline subtraction / gamma) — same contract as
+#               mucaboard_data_raw/data_collector_raw.py.
+# calib_1..19 = the baseline (first) frame captured at startup, for reference,
+#               so the raw counts and their baseline travel in the same CSV.
 FIELDNAMES = (
     ['timestamp', 'datetime',
      'depth_idx', 'depth_mm', 'iteration', 'point', 'point_kind', 'phase',
@@ -542,6 +679,7 @@ FIELDNAMES = (
      'fx', 'fy', 'fz', 'tx', 'ty', 'tz',
      'ai0', 'futek_force_N']
     + [f'cell_{i + 1}' for i in range(19)]
+    + [f'calib_{i + 1}' for i in range(19)]
 )
 
 def _log_row(sensor_mod, pt, depth_mm, depth_idx, phase, iteration):
@@ -574,14 +712,30 @@ def _log_row(sensor_mod, pt, depth_mm, depth_idx, phase, iteration):
         'futek_force_N':  round(ai0_to_futek_n(ai0), 4),
     }
     if sensor_mod is not None:
-        vals = sensor_mod.get_values()
+        vals = sensor_mod.get_values()          # RAW ADC counts in raw mode
     else:
         vals = [0.0] * 19
     for i, v in enumerate(vals):
         row[f'cell_{i + 1}'] = round(float(v), 4)
 
+    # Baseline (first) frame — only the RAW reader exposes get_calibration();
+    # the processed reader has none, so those columns are 0.0.
+    base_fn = getattr(sensor_mod, 'get_calibration', None) if sensor_mod else None
+    base    = (base_fn() if base_fn is not None else None) or [0.0] * 19
+    for i in range(19):
+        row[f'calib_{i + 1}'] = round(float(base[i]), 4)
+
+    global _log_count, _log_since_flush
     with _log_lock:
-        _log_rows.append(row)
+        if _log_writer is None:
+            return                       # dataset not open yet (should not happen)
+        _log_writer.writerow(row)
+        _log_count       += 1
+        _log_since_flush += 1
+        if _log_since_flush >= _LOG_FLUSH_EVERY:
+            _log_file.flush()
+            os.fsync(_log_file.fileno())
+            _log_since_flush = 0
 
 def _log_timed(sensor_mod, pt, depth_mm, depth_idx, phase, iteration, rate_hz, duration_s):
     interval = 1.0 / rate_hz
@@ -593,19 +747,40 @@ def _log_timed(sensor_mod, pt, depth_mm, depth_idx, phase, iteration, rate_hz, d
         if rem > 0:
             time.sleep(rem)
 
-def save_dataset(path):
-    with _log_lock:
-        rows = list(_log_rows)
-    if not rows:
-        print('[log] Nothing to save.')
-        return None
+def open_dataset(path):
+    """Open the CSV for streaming and write the header. Call once before the run."""
+    global _log_file, _log_writer, _log_count, _log_since_flush
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', newline='') as f:
-        w = csv.DictWriter(f, fieldnames=FIELDNAMES)
-        w.writeheader()
-        w.writerows(rows)
-    print(f'[log] Saved {len(rows)} rows -> {path}')
+    with _log_lock:
+        _log_file        = open(path, 'w', newline='')
+        _log_writer      = csv.DictWriter(_log_file, fieldnames=FIELDNAMES)
+        _log_writer.writeheader()
+        _log_file.flush()
+        _log_count       = 0
+        _log_since_flush = 0
     return path
+
+def flush_dataset():
+    """Force the buffered rows to disk (used by the periodic autosave)."""
+    with _log_lock:
+        if _log_file is not None:
+            _log_file.flush()
+            os.fsync(_log_file.fileno())
+    return _log_count
+
+def close_dataset():
+    """Flush and close the CSV. Safe to call multiple times."""
+    global _log_file, _log_writer
+    with _log_lock:
+        if _log_file is not None:
+            try:
+                _log_file.flush()
+                os.fsync(_log_file.fileno())
+            finally:
+                _log_file.close()
+            _log_file   = None
+            _log_writer = None
+    return _log_count
 
 # ── Sampling plan ────────────────────────────────────────────────────────────
 def generate_plan(depths_mm, n_iterations, seed=None):
@@ -674,7 +849,7 @@ def do_indentation(rtde_c, sensor_mod, pt, depth_mm, depth_idx, iteration,
     _log_timed(sensor_mod, pt, depth_mm, depth_idx, 'post', iteration, rate_hz, hold_s)
 
     with _log_lock:
-        n_rows = len(_log_rows)
+        n_rows = _log_count
     print(f'     rows so far: {n_rows}')
 
 # ── Mapping routine ───────────────────────────────────────────────────────────
@@ -692,8 +867,8 @@ def run_mapping(rtde_c, sensor_mod, depth_mm, hold_s=MAPPING_HOLD_S):
     def _peak_ur5_point():
         if sensor_mod is None:
             return None, 0.0
-        best = max(range(1, 20), key=lambda p: sensor_mod.get_value_for_ur5_point(p))
-        return best, sensor_mod.get_value_for_ur5_point(best)
+        best = max(range(1, 20), key=lambda p: _point_response(sensor_mod, p))
+        return best, _point_response(sensor_mod, best)
 
     for i, pid in enumerate(order, 1):
         reg   = POINT_REG[pid]
@@ -705,15 +880,19 @@ def run_mapping(rtde_c, sensor_mod, depth_mm, hold_s=MAPPING_HOLD_S):
         rtde_c.moveL(_build_pose(pid, -depth_mm), VEL_PRESS, ACCEL)
         time.sleep(hold_s)
 
+        # "Correct" = the pressed point is the strongest RESPONDER (delta over
+        # baseline). This holds for both raw ADC counts and normalised values,
+        # unlike an absolute-magnitude threshold.
         peak_pt, peak_val = _peak_ur5_point()
         if sensor_mod is None:
             resp = '(no sensor)'
         elif reg['kind'] == 'main':
-            exp = sensor_mod.get_value_for_ur5_point(pid)
-            ok  = '✓' if (peak_pt == pid and exp > 0.05) else ('~' if exp > 0.05 else '✗')
-            resp = f'expect S{cell} val={exp:.3f}  peak=P{peak_pt:02d}({peak_val:.3f})  {ok}'
+            exp = _point_response(sensor_mod, pid)
+            ok  = '✓' if (peak_pt == pid and exp > 0) else ('~' if exp > 0 else '✗')
+            resp = (f'expect S{cell} resp={exp:+.3f}  '
+                    f'peak=P{peak_pt:02d}({peak_val:+.3f})  {ok}')
         else:
-            resp = f'peak=P{peak_pt:02d}({peak_val:.3f})' if peak_pt else '(no reading)'
+            resp = f'peak=P{peak_pt:02d}({peak_val:+.3f})' if peak_pt else '(no reading)'
 
         print(f'  [{i:02d}/{len(order)}] {label:8s} {reg["kind"]:10s} '
               f'({x:+6.1f},{y:+6.1f})mm  {resp}')
@@ -789,13 +968,21 @@ def parse_args():
                    help='Hold = ramp_time * this multiplier (>=1.0). default: 1.0')
     p.add_argument('--no-sensor', action='store_true',
                    help='Skip the capacitive sensor (robot + FUTEK only)')
+    p.add_argument('--processed', action='store_true',
+                   help='Use the normalised sensor (Integration_2/sensor.py) instead '
+                        'of the default RAW muca-board reader (mucaboard_data_raw/'
+                        'sensor_raw.py). Default logs raw ADC counts.')
     p.add_argument('--standoff', type=float, default=None,
                    help='Surface standoff in mm baked into the TCP calibration Z '
                         f'(default: {SURFACE_STANDOFF_MM}). Subtracted so a commanded '
                         'depth equals the true indentation depth.')
     p.add_argument('--extra-variant', default=None, dest='extra_variant',
                    help="Force the intermediate-point variant (skips the prompt): e.g. "
-                        "'actual_new_hollow_2', 'rigid', 'translated', 'plain', or 'none'")
+                        "'new_hollow_sensor', 'rigid', 'translated', 'plain', or 'none'")
+    p.add_argument('--extra-calib', default=None, dest='extra_calib',
+                   help="Build the intermediate points FROM this calib_points_*.json "
+                        "(skips the prompt; auto-generates the JSONs if missing). "
+                        "Independent of the 19-point calib. Overridden by --extra-variant.")
     p.add_argument('--no-mapping', action='store_true',
                    help='Skip the startup mapping routine (1-press-per-point verification)')
     p.add_argument('--mapping-depth', type=float, default=None, dest='mapping_depth',
@@ -851,8 +1038,9 @@ def main():
     print(f'  [points] surface standoff {SURFACE_STANDOFF_MM:.2f} mm removed '
           f'→ commanded depth = true indentation depth')
 
-    # ── Intermediate points — ASK which set to use ────────────────────────────
-    default_variant = _variant_from_calib(CALIB_POINTS_PATH)
+    # ── Intermediate points — ASK which calib file to build them FROM ─────────
+    # Chosen independently of the 19-point calib above. --extra-calib / --extra-
+    # variant override the interactive prompt.
     if args.extra_variant is not None:
         ev = args.extra_variant.lower()
         if ev in ('none', 'skip'):
@@ -861,13 +1049,22 @@ def main():
             use_extras, variant = True, None
         else:
             use_extras, variant = True, args.extra_variant
+    elif args.extra_calib is not None:
+        ec_path = args.extra_calib
+        if not os.path.isabs(ec_path):
+            ec_path = os.path.join(_INTEGRATION, ec_path)
+        import generate_intermediate_points as gen
+        tag, present = _intermediate_status(ec_path)
+        if not all(present.values()) and _calib_is_new_format(ec_path):
+            gen.generate(ec_path, write=True, quiet=False)
+        use_extras, variant = True, tag
     else:
-        use_extras, variant = select_extra_variant(default_variant)
+        use_extras, variant = select_intermediate_calib(CALIB_POINTS_PATH)
 
     if use_extras:
         # Intermediate files come in two coordinate frames:
         #   * plain (triangle_centroids.json, ...) : NOMINAL frame → add the global offset
-        #   * rigid / translated / actual_*        : already FULL absolute coords (they
+        #   * rigid / translated / <tag> (calib)   : already FULL absolute coords (they
         #     bake in the transform, or global+per_point), so the global offset must NOT
         #     be added again. Doing so double-counts it (~3.5mm) and shifts the
         #     intermediate presses onto the domes.
@@ -875,8 +1072,8 @@ def main():
             gx, gy = (g['x'], g['y']) if v is None else (0.0, 0.0)
             return load_extra_points(v, gx=gx, gy=gy)
         extra_points, extra_meta = _load(variant)
-        # Fall back to plain if an 'actual_*' variant's files aren't present.
-        if variant and str(variant).startswith('actual') and not any(m['found'] for m in extra_meta):
+        # Fall back to plain if the chosen variant's files aren't present.
+        if variant and not any(m['found'] for m in extra_meta):
             print(f'  [points] ⚠ No files for variant "{variant}" — falling back to plain')
             variant = None
             extra_points, extra_meta = _load(variant)
@@ -910,8 +1107,12 @@ def main():
     # ── Start capacitive sensor ───────────────────────────────────────────────
     sensor_mod = None
     if not args.no_sensor:
-        print('\n[sensor] Starting capacitive sensor ...')
-        import sensor as _s
+        if args.processed:
+            print('\n[sensor] Starting capacitive sensor (PROCESSED / normalised) ...')
+            import sensor as _s
+        else:
+            print('\n[sensor] Starting capacitive sensor (RAW muca-board ADC counts) ...')
+            import sensor_raw as _s
         _s.start()
         if not _s.wait_until_ready(timeout=60):
             print('[sensor] ERROR: sensor not ready — aborting (use --no-sensor to skip)')
@@ -1036,6 +1237,8 @@ def main():
     total      = len(plan)
     start_time = time.time()
 
+    open_dataset(csv_path)   # stream rows straight to disk (flat RAM, crash-safe)
+
     try:
         for step, (depth_idx, depth, it, pt) in enumerate(plan):
             reg    = POINT_REG[pt]
@@ -1080,8 +1283,8 @@ def main():
                   f'Est. remaining: {remain / 60:.1f} min')
 
             if completed % 10 == 0:
-                print('  [autosave]')
-                save_dataset(csv_path)
+                n = flush_dataset()
+                print(f'  [autosave] {n} rows flushed to disk')
 
     except KeyboardInterrupt:
         print('\n  Interrupted')
@@ -1095,13 +1298,16 @@ def main():
         except Exception:
             pass
 
-        path = save_dataset(csv_path)
+        n_rows = close_dataset()
         print(f'\n  Completed {completed}/{total} indentations.')
-        if path:
-            print(f'  Dataset saved to : {path}')
+        if n_rows:
+            print(f'[log] Saved {n_rows} rows -> {csv_path}')
+            print(f'  Dataset saved to : {csv_path}')
             print(f'  Metadata saved to: {meta_path}')
             print(f'\n  Analyse with:')
-            print(f'    python3 analyze_interdome.py "{path}"')
+            print(f'    python3 analyze_interdome.py "{csv_path}"')
+        else:
+            print('[log] Nothing was logged.')
         print('[done]')
 
 if __name__ == '__main__':

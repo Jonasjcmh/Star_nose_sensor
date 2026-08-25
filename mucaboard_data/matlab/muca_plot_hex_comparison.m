@@ -1,4 +1,4 @@
-function fig = muca_plot_hex_comparison(values, cb_label, title_str, highlight_id, clim)
+function fig = muca_plot_hex_comparison(values, cb_label, title_str, highlight_id, clim, show_labels)
 % MUCA_PLOT_HEX_COMPARISON  Draw the standard 3-panel (flat/solid/hollow)
 % 19-cell hex comparison for ANY values you hand it. This is the exact
 % plotting machinery every hex figure in this repo uses (draw_hex_panel.m
@@ -25,6 +25,10 @@ function fig = muca_plot_hex_comparison(values, cb_label, title_str, highlight_i
 %               whole colormap. Values outside [vmin, vmax] are clamped
 %               to the nearest end color (see value_to_rgb.m), not
 %               clipped to grey.
+%   show_labels : optional, default true. Pass false to draw the hexagons
+%               and colors only, with no "P##"/value text inside each
+%               cell -- useful for a cleaner, presentation-style figure,
+%               or once you already know the layout by heart.
 %
 % Returns the figure handle. Does NOT save to disk -- call
 % save_fig(fig, out_path_no_ext) yourself if you want PNG/SVG output.
@@ -36,11 +40,17 @@ function fig = muca_plot_hex_comparison(values, cb_label, title_str, highlight_i
 %
 % Example (fixed scale, e.g. to match another figure or crop out an outlier)
 %   fig = muca_plot_hex_comparison(v0, 'V0 (mine)', 'My V0 comparison', [], [0 0.5]);
+%
+% Example (no labels)
+%   fig = muca_plot_hex_comparison(v0, 'V0 (mine)', 'My V0 comparison', [], [], false);
     if nargin < 4
         highlight_id = [];
     end
     if nargin < 5
         clim = [];
+    end
+    if nargin < 6
+        show_labels = true;
     end
     [point_ids, point_xy, ~] = muca_layout();
     HEX_RADIUS = 8.0 / sqrt(3);
@@ -93,7 +103,7 @@ function fig = muca_plot_hex_comparison(values, cb_label, title_str, highlight_i
         ax = axes('Parent', fig, 'Position', [panel_left_all(min(i,3)), 0.12, panel_width, 0.72]);
         axes_list{i} = ax;
         draw_hex_panel(ax, point_ids, point_xy, vecs{s}, cmap, vmin, vmax, ...
-            HEX_RADIUS, upper(SURFACE_NAMES{s}), highlight_id);
+            HEX_RADIUS, upper(SURFACE_NAMES{s}), highlight_id, show_labels);
     end
     colormap(fig, cmap);
     for i = 1:n_panels

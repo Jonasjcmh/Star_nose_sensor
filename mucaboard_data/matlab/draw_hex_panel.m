@@ -1,4 +1,4 @@
-function draw_hex_panel(ax, ids, xy, values, cmap, vmin, vmax, r, panel_title, highlight_id)
+function draw_hex_panel(ax, ids, xy, values, cmap, vmin, vmax, r, panel_title, highlight_id, show_labels)
 % DRAW_HEX_PANEL  Draw one 19-hex schematic panel into axes ax.
 %   ids          : Nx1 point ids (1-19)
 %   xy           : Nx2 hex-center coordinates (mm)
@@ -6,8 +6,13 @@ function draw_hex_panel(ax, ids, xy, values, cmap, vmin, vmax, r, panel_title, h
 %   highlight_id : optional point id to outline in red (e.g. the point that
 %                  was actually pressed, when `values` is a cross-talk
 %                  response snapshot rather than each point's own reading)
+%   show_labels  : optional, default true. false = draw the hexagons and
+%                  colors only, no "P##"/value text inside each cell.
     if nargin < 10
         highlight_id = [];
+    end
+    if nargin < 11
+        show_labels = true;
     end
     axes(ax); %#ok<LAXES>
     hold(ax, 'on');
@@ -22,13 +27,15 @@ function draw_hex_panel(ax, ids, xy, values, cmap, vmin, vmax, r, panel_title, h
         else
             patch(ax, vx, vy, rgb, 'EdgeColor', [0.2 0.2 0.2], 'LineWidth', 1);
         end
-        if isnan(val)
-            lbl = sprintf('P%02d\nn/a', ids(k));
-        else
-            lbl = sprintf('P%02d\n%.3f', ids(k), val);
+        if show_labels
+            if isnan(val)
+                lbl = sprintf('P%02d\nn/a', ids(k));
+            else
+                lbl = sprintf('P%02d\n%.3f', ids(k), val);
+            end
+            text(ax, x, y, lbl, 'HorizontalAlignment', 'center', ...
+                'VerticalAlignment', 'middle', 'FontSize', 6.5, 'FontWeight', 'bold');
         end
-        text(ax, x, y, lbl, 'HorizontalAlignment', 'center', ...
-            'VerticalAlignment', 'middle', 'FontSize', 6.5, 'FontWeight', 'bold');
     end
     axis(ax, 'equal');
     pad = r * 2;

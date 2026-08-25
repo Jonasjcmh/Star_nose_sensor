@@ -331,18 +331,34 @@ def select_calibration():
     CALIB_X_MM = d.get('x_mm', 0.0)
     CALIB_Y_MM = d.get('y_mm', 0.0)
     CALIB_Z_MM = d.get('z_mm', 0.0)
-    print(f'\n  [calib] Profile "{tip}": '
-          f'X={CALIB_X_MM:+.3f}  Y={CALIB_Y_MM:+.3f}  Z={CALIB_Z_MM:+.3f} mm')
 
     if ppath:
         with open(ppath) as f:
             pd = json.load(f)
         POINT_OFFSETS = {int(k): (v.get('dx_mm', 0.0), v.get('dy_mm', 0.0))
                          for k, v in pd.get('per_point', {}).items()}
+        # Single source of truth: the calib_points file's own `global` block is
+        # authoritative for X/Y/Z — Interdome_touch/main.py reads the global from
+        # there too. Prefer it so this collector can't drift from Interdome when a
+        # re-calibration updates only the calib_points file. Warn if the
+        # standalone calib_<tip>.json disagrees.
+        g = pd.get('global') or {}
+        if g:
+            gx = g.get('x_mm', 0.0); gy = g.get('y_mm', 0.0); gz = g.get('z_mm', 0.0)
+            if (abs(gx - CALIB_X_MM) > 1e-6 or abs(gy - CALIB_Y_MM) > 1e-6
+                    or abs(gz - CALIB_Z_MM) > 1e-6):
+                print(f'  [calib] NOTE: {os.path.basename(gpath)} global '
+                      f'(X={CALIB_X_MM:+.3f} Y={CALIB_Y_MM:+.3f} Z={CALIB_Z_MM:+.3f}) '
+                      f'differs from {os.path.basename(ppath)} — using the '
+                      f'calib_points global (matches Interdome).')
+            CALIB_X_MM, CALIB_Y_MM, CALIB_Z_MM = gx, gy, gz
         print(f'  [calib] Per-point offsets loaded for {len(POINT_OFFSETS)} points')
     else:
         POINT_OFFSETS = {}
         print('  [calib] No per-point file — global offset only')
+
+    print(f'\n  [calib] Profile "{tip}": '
+          f'X={CALIB_X_MM:+.3f}  Y={CALIB_Y_MM:+.3f}  Z={CALIB_Z_MM:+.3f} mm')
 
     try:
         ans = input('\n  Correct tip mounted? Confirm calibration? [y/N] > ').strip().lower()

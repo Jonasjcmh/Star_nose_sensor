@@ -66,10 +66,14 @@ VEL_PRESS  = 0.004   # m/s — fallback press speed (press/retract use a ramp ti
 ACCEL      = 0.3     # m/s²
 SAFE_HOME_Z = 30.0   # mm above surface at home
 
-# Base press depth (mm) added to every requested depth. The surface pose sits
-# ~5 mm above real contact, so depth label 0 must physically press 5 mm to make
-# contact; labels 1,2,3,4 then press 6,7,8,9 mm. Set to 0 to disable.
-BASE_DEPTH_MM = 5.0
+# Base press depth (mm) added to every requested depth. Must be 0 with the
+# current calibration: the chosen calib's global Z (gz, e.g. -10.8 mm) is
+# measured at TRUE surface contact — extra_z=0 already sits on the surface, so
+# depth label D presses exactly D mm (matching capacitance_ramp_collector.py and
+# Interdome_touch/main.py, where SURFACE_STANDOFF_MM=0). A non-zero base would
+# press that many mm DEEPER than every other script. Only raise it if a tip is
+# genuinely calibrated with a standoff gap above the surface.
+BASE_DEPTH_MM = 0.0
 
 # ── FUTEK load cell ────────────────────────────────────────────────────────────
 AI0_ZERO_V       = 5.0
@@ -334,18 +338,34 @@ def select_calibration():
     CALIB_X_MM = d.get('x_mm', 0.0)
     CALIB_Y_MM = d.get('y_mm', 0.0)
     CALIB_Z_MM = d.get('z_mm', 0.0)
-    print(f'\n  [calib] Profile "{tip}": '
-          f'X={CALIB_X_MM:+.3f}  Y={CALIB_Y_MM:+.3f}  Z={CALIB_Z_MM:+.3f} mm')
 
     if ppath:
         with open(ppath) as f:
             pd = json.load(f)
         POINT_OFFSETS = {int(k): (v.get('dx_mm', 0.0), v.get('dy_mm', 0.0))
                          for k, v in pd.get('per_point', {}).items()}
+        # Single source of truth: the calib_points file's own `global` block is
+        # authoritative for X/Y/Z — Interdome_touch/main.py reads the global from
+        # there too. Prefer it so this collector can't drift from Interdome when a
+        # re-calibration updates only the calib_points file. Warn if the
+        # standalone calib_<tip>.json disagrees.
+        g = pd.get('global') or {}
+        if g:
+            gx = g.get('x_mm', 0.0); gy = g.get('y_mm', 0.0); gz = g.get('z_mm', 0.0)
+            if (abs(gx - CALIB_X_MM) > 1e-6 or abs(gy - CALIB_Y_MM) > 1e-6
+                    or abs(gz - CALIB_Z_MM) > 1e-6):
+                print(f'  [calib] NOTE: {os.path.basename(gpath)} global '
+                      f'(X={CALIB_X_MM:+.3f} Y={CALIB_Y_MM:+.3f} Z={CALIB_Z_MM:+.3f}) '
+                      f'differs from {os.path.basename(ppath)} — using the '
+                      f'calib_points global (matches Interdome).')
+            CALIB_X_MM, CALIB_Y_MM, CALIB_Z_MM = gx, gy, gz
         print(f'  [calib] Per-point offsets loaded for {len(POINT_OFFSETS)} points')
     else:
         POINT_OFFSETS = {}
         print('  [calib] No per-point file — global offset only')
+
+    print(f'\n  [calib] Profile "{tip}": '
+          f'X={CALIB_X_MM:+.3f}  Y={CALIB_Y_MM:+.3f}  Z={CALIB_Z_MM:+.3f} mm')
 
     try:
         ans = input('\n  Correct tip mounted? Confirm calibration? [y/N] > ').strip().lower()
@@ -570,7 +590,8 @@ def parse_args():
                    help='Comma-separated indentation depths in mm [0,1,2,3,4]')
     p.add_argument('--iterations', type=int,   default=5, help='Repeats per depth [5]')
     p.add_argument('--base-depth', type=float, default=BASE_DEPTH_MM,
-                   help=f'Base mm added to every depth (surface→contact offset) [{BASE_DEPTH_MM}]')
+                   help=f'Base mm added to every depth; keep 0 (calib gz is at true '
+                        f'contact) unless the tip has a standoff gap [{BASE_DEPTH_MM}]')
     p.add_argument('--ramp',       type=float, default=None, help='Ramp time s per press/retract [ask, default 2]')
     p.add_argument('--hold',       type=float, default=None, help='Hold dwell s at full depth [ask, default 5]')
     p.add_argument('--locate',     type=float, default=None, help='Locate dwell s at surface [ask, default 5]')

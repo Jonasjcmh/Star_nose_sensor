@@ -342,7 +342,10 @@ def select_calibration():
     if ppath:
         with open(ppath) as f:
             pd = json.load(f)
-        POINT_OFFSETS = {int(k): (v.get('dx_mm', 0.0), v.get('dy_mm', 0.0))
+        # Keys may be hex labels ('a1'..'e5') or point numbers ('1'..'19');
+        # resolve_point handles both → hardware point number (same loader as
+        # mucaboard_data_raw/data_collector_raw.py).
+        POINT_OFFSETS = {ur5_control.resolve_point(k): (v.get('dx_mm', 0.0), v.get('dy_mm', 0.0))
                          for k, v in pd.get('per_point', {}).items()}
         # Single source of truth: the calib_points file's own `global` block is
         # authoritative for X/Y/Z — Interdome_touch/main.py reads the global from
@@ -548,6 +551,23 @@ def _all_points_random():
     random.shuffle(pts)
     return pts
 
+def _ask_depths(default='0,1,2,3,4'):
+    while True:
+        try:
+            raw = input(f'  Indentation depths (mm, comma-separated) '
+                        f'[{default}] > ').strip()
+        except (EOFError, KeyboardInterrupt):
+            raw = ''
+        if raw == '':
+            raw = default
+        try:
+            depths = _parse_depths(raw)
+            if depths:
+                return depths
+        except ValueError:
+            pass
+        print('  Please enter comma-separated numbers, e.g. 0,1,2,3,4')
+
 def _ask_points():
     while True:
         try:
@@ -586,9 +606,10 @@ def parse_args():
     p.add_argument('--points',     type=str,   default=None,
                    help="Comma-separated pad numbers 1–19 (e.g. 5,12,9), or "
                         "'all' for every pad in random order [ask]")
-    p.add_argument('--depths',     type=str,   default='0,1,2,3,4',
-                   help='Comma-separated indentation depths in mm [0,1,2,3,4]')
-    p.add_argument('--iterations', type=int,   default=5, help='Repeats per depth [5]')
+    p.add_argument('--depths',     type=str,   default=None,
+                   help='Comma-separated indentation depths in mm [ask, default 0,1,2,3,4]')
+    p.add_argument('--iterations', type=int,   default=None,
+                   help='Repeats per depth [ask, default 5]')
     p.add_argument('--base-depth', type=float, default=BASE_DEPTH_MM,
                    help=f'Base mm added to every depth; keep 0 (calib gz is at true '
                         f'contact) unless the tip has a standoff gap [{BASE_DEPTH_MM}]')
@@ -618,8 +639,9 @@ def main():
     else:
         points = _ask_points()
 
-    depths_mm  = _parse_depths(args.depths)
-    iterations = args.iterations
+    depths_mm  = _parse_depths(args.depths) if args.depths is not None else _ask_depths()
+    iterations = args.iterations if args.iterations is not None else _ask_int(
+        '  Iterations per depth [5] > ', 5, 1, 100)
 
     ramp_s = args.ramp if args.ramp is not None else float(_ask_int(
         '  Ramp time per press & retract (s) [2] > ', 2, 1, 30))

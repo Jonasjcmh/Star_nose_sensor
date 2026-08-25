@@ -335,7 +335,10 @@ def select_calibration():
     if ppath:
         with open(ppath) as f:
             pd = json.load(f)
-        POINT_OFFSETS = {int(k): (v.get('dx_mm', 0.0), v.get('dy_mm', 0.0))
+        # Keys may be hex labels ('a1'..'e5') or point numbers ('1'..'19');
+        # resolve_point handles both → hardware point number (same loader as
+        # mucaboard_data_raw/data_collector_raw.py).
+        POINT_OFFSETS = {ur5_control.resolve_point(k): (v.get('dx_mm', 0.0), v.get('dy_mm', 0.0))
                          for k, v in pd.get('per_point', {}).items()}
         # Single source of truth: the calib_points file's own `global` block is
         # authoritative for X/Y/Z — Interdome_touch/main.py reads the global from

@@ -39,13 +39,9 @@ POINTS_MM = [
 ]
 RAW_CELLS = [2,15,28,1,14,27,40,0,13,26,39,52,12,25,38,51,24,37,50]
 N = 19
-UR5_TO_IDX = {
-    1:16,  2:12,  3:7,
-    4:17,  5:13,  6:8,   7:3,
-    8:18,  9:14,  10:9,  11:4,  12:0,
-    13:15, 14:10, 15:5,  16:1,
-    17:11, 18:6,  19:2,
-}
+# Identity mapping — matches visualizer_2d.py's UR5_TO_IDX (P1=a1, P2=a2, ...
+# P19=e5, same sequential order as RAW_CELLS/USED_CELLS).
+UR5_TO_IDX = {n: n - 1 for n in range(1, N + 1)}
 IDX_TO_UR5    = {v: k for k, v in UR5_TO_IDX.items()}
 POS_TO_SENSOR = [UR5_TO_IDX[i+1] for i in range(N)]
 # Bar/history position j (0-based) → cell array index for UR5 point j+1

@@ -1,0 +1,72 @@
+# Shared 19-point table for the star-nose rig.
+#
+# This is meant to be the ONE place these numbers live for the ROS2 system,
+# loaded by ur5_node (and later data_logger_node, for expected-cell checks)
+# as a parameter file instead of each node hardcoding its own copy.
+#
+# WHY THIS MATTERS: the pre-ROS2 codebase (Star_nose_sensor/Integration_2)
+# has at least THREE different point-number -> sensor-cell tables hardcoded
+# across calibrate_points.py / ur5_control.py (one table) vs sensor_bridge.py
+# / analyze_session.py (a different table, whose docstring explicitly calls
+# itself "Correct raw cell mapping") -- and they disagree on nearly every
+# point. Which one is physically right is NOT settled yet.
+#
+# `point_to_raw_cell` below is copied from ur5_control.py's CURRENT table as
+# a starting point ONLY. Before trusting it for real runs, verify it against
+# hardware with Integration_2/check_point_coordinates.py (hovers over each
+# nominal point live, no per-point search, so it isn't self-fulfilling the
+# way the interactive calibration loop is) and update this file if it
+# disagrees.
+
+reference_pose:  # absolute UR5 TCP pose (m, rad) that P10/c3 (center) is offset from
+  x: -0.03664
+  y: -0.49831
+  z: 0.06071
+  rx: 2.346
+  ry: -2.094
+  rz: -0.00009
+
+# point id (1-19) -> [dx_mm, dy_mm] offset from reference_pose, in ROBOT frame
+points_mm:
+  1:  [8.0, 14.0]
+  2:  [12.0, 7.0]
+  3:  [16.0, 0.0]
+  4:  [0.0, 14.0]
+  5:  [4.0, 7.0]
+  6:  [8.0, 0.0]
+  7:  [12.0, -7.0]
+  8:  [-8.0, 14.0]
+  9:  [-4.0, 7.0]
+  10: [0.0, 0.0]     # c3 - center
+  11: [4.0, -7.0]
+  12: [8.0, -14.0]
+  13: [-12.0, 7.0]
+  14: [-8.0, 0.0]
+  15: [-4.0, -7.0]
+  16: [0.0, -14.0]
+  17: [-16.0, 0.0]
+  18: [-12.0, -7.0]
+  19: [-8.0, -14.0]
+
+# point id (1-19) -> raw sensor cell it is expected to press
+# (see the warning above -- unverified against the alternate table)
+point_to_raw_cell:
+  1: 0
+  2: 1
+  3: 2
+  4: 12
+  5: 13
+  6: 14
+  7: 15
+  8: 24
+  9: 25
+  10: 26
+  11: 27
+  12: 28
+  13: 37
+  14: 38
+  15: 39
+  16: 40
+  17: 50
+  18: 51
+  19: 52

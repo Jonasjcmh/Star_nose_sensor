@@ -9,7 +9,8 @@ This script ONLY collects and saves data. Plotting/analysis is done separately.
 
 What it does
 ------------
-  • You pick however many points (pad numbers 1–19) you want at the start.
+  • You pick however many points (pad numbers 1–19) you want at the start,
+    or choose "all" to sweep every pad 1–19 in a random order.
   • For each point in turn: for each depth in DEPTHS_MM (default 0,1,2,3,4 mm),
     run ITERATIONS (default 5) repeat indentations at that depth — so all
     depths × iterations for that point happen back-to-back, in order.
@@ -31,12 +32,14 @@ Usage
   python capacitance_two_point_iterations_collector.py
   python capacitance_two_point_iterations_collector.py --points 5,12,9 \
          --depths 0,1,2,3,4 --iterations 5 --ramp 2 --hold 5 --locate 5 --post 5
+  python capacitance_two_point_iterations_collector.py --points all   # all 19, random order
 """
 
 import os
 import sys
 import csv
 import time
+import random
 import argparse
 import threading
 from datetime import datetime
@@ -49,6 +52,12 @@ from lcr6100 import LCR6100, list_ports
 _HERE        = os.path.dirname(os.path.abspath(__file__))
 _INTEGRATION = os.path.normpath(os.path.join(_HERE, '..', 'Integration_2'))
 LOG_DIR      = os.path.join(_HERE, 'logs')
+
+# Point numbering/geometry and hex-grid labels (a1..e5) are the single source
+# of truth in Integration_2/ur5_control.py — imported directly so this
+# collector can't drift from the current physical point layout.
+sys.path.insert(0, _INTEGRATION)
+import ur5_control   # noqa: E402  (Integration_2/ur5_control.py)
 
 # ── Robot ─────────────────────────────────────────────────────────────────────
 ROBOT_IP   = os.environ.get('UR_ROBOT_IP', '177.22.22.2')
@@ -71,29 +80,31 @@ def _ai0_to_n(v):
     return -(float(v) - AI0_ZERO_V) * LOADCELL_N_PER_V
 
 # ── Sensor points (mm, relative to reference pose) ───────────────────────────
-POINTS = {
-     1: ( -8.0, +14.0),   2: (  0.0, +14.0),   3: ( +8.0, +14.0),
-     4: (-12.0,  +7.0),   5: ( -4.0,  +7.0),   6: ( +4.0,  +7.0),
-     7: (+12.0,  +7.0),   8: (-16.0,   0.0),   9: ( -8.0,   0.0),
-    10: (  0.0,   0.0),  11: ( +8.0,   0.0),  12: (+16.0,   0.0),
-    13: (-12.0,  -7.0),  14: ( -4.0,  -7.0),  15: ( +4.0,  -7.0),
-    16: (+12.0,  -7.0),  17: ( -8.0, -14.0),  18: (  0.0, -14.0),
-    19: ( +8.0, -14.0),
-}
+# Hex-grid labelled layout (P1=a1, P2=a2, ... P10=c3 center, ... P19=e5) —
+# same POINTS/labels/pose as Integration_2/ur5_control.py, so a point pressed
+# here is the same physical pad the muca-board pipeline and visualizer call by
+# that label.
+POINTS         = ur5_control.POINTS
+POINT_TO_LABEL = ur5_control.POINT_TO_LABEL   # pt -> 'a1'..'e5'
 
-REFERENCE_POSE = [
-    -0.03664,
-    -0.49831,
-     0.06071,
-    2.346, -2.094, -0.00009
-]
+REFERENCE_POSE = ur5_control.REFERENCE_POSE
 
+# Point ids laid out as the physical hex rows in the SENSOR/DISPLAY frame
+# (constant display-y lines, top -> bottom) under the NEW a1..e5 numbering —
+# NOT sequential P#. Kept in sync with Interdome_touch/main.py SENSOR_MAP_ROWS.
+# The operator hand-wires the LCR probe to the highlighted pad, so this MUST
+# reflect the true physical layout (P1=a1 is the middle-row left, not top-left).
+#   disp y=+14 : a3 b4 c5           -> P3  P7  P12
+#   disp y=+7  : a2 b3 c4 d5        -> P2  P6  P11 P16
+#   disp y=0   : a1 b2 c3 d4 e5     -> P1  P5  P10 P15 P19
+#   disp y=-7  : b1 c2 d3 e4        -> P4  P9  P14 P18
+#   disp y=-14 : c1 d2 e3           -> P8  P13 P17
 SENSOR_MAP_ROWS = [
-    [1, 2, 3],
-    [4, 5, 6, 7],
-    [8, 9, 10, 11, 12],
-    [13, 14, 15, 16],
-    [17, 18, 19],
+    [3, 7, 12],
+    [2, 6, 11, 16],
+    [1, 5, 10, 15, 19],
+    [4, 9, 14, 18],
+    [8, 13, 17],
 ]
 
 # ── Calibration globals ────────────────────────────────────────────────────────
@@ -151,7 +162,7 @@ _log_lock = threading.Lock()
 
 FIELDNAMES = [
     'timestamp', 'datetime',
-    'point_idx', 'point', 'depth_mm', 'iter_idx', 'phase',
+    'point_idx', 'point', 'label', 'depth_mm', 'iter_idx', 'phase',
     'tcp_x', 'tcp_y', 'tcp_z',
     'fx', 'fy', 'fz', 'tx', 'ty', 'tz',
     'ai0', 'load_cell_N',
@@ -169,6 +180,7 @@ def _log_row(pt, depth_mm, phase, point_idx, iter_idx, lcr):
         'datetime':    datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3],
         'point_idx':   point_idx,
         'point':       pt,
+        'label':       POINT_TO_LABEL.get(pt, str(pt)),
         'depth_mm':    depth_mm,
         'iter_idx':    iter_idx,
         'phase':       phase,
@@ -254,7 +266,10 @@ def save_dataset(points):
         return None
     os.makedirs(LOG_DIR, exist_ok=True)
     ts     = datetime.now().strftime('%Y%m%d_%H%M%S')
-    p_tag  = '_'.join(f'P{p:02d}' for p in points)
+    # Keep the filename short when many points are swept (e.g. 'all'); the exact
+    # per-point order is preserved in the CSV via point_idx/point anyway.
+    p_tag  = (f'ALL{len(points)}' if len(points) >= len(POINTS)
+              else '_'.join(f'P{p:02d}' for p in points))
     path   = os.path.join(LOG_DIR, f'two_point_iterations_{p_tag}_{ts}.csv')
     with open(path, 'w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=FIELDNAMES)
@@ -422,12 +437,13 @@ def do_indentation(rtde_c, pt, depth_mm, point_idx, iter_idx, lcr,
 def print_sensor_map(highlight=None):
     print()
     for row in SENSOR_MAP_ROWS:
-        indent = ' ' * (2 * (5 - len(row)))
-        parts  = []
+        indent = ' ' * (4 * (5 - len(row)))
+        cells = []
         for pt in row:
-            tag = f'[{pt:02d}]' if pt == highlight else f' {pt:02d} '
-            parts.append(tag)
-        print('  ' + indent + ' '.join(parts))
+            label = POINT_TO_LABEL.get(pt, '??')
+            cell  = f'P{pt:02d}/{label:<2}'          # e.g. 'P01/a1'
+            cells.append(f'[{cell}]' if pt == highlight else f' {cell} ')
+        print('  ' + indent + ' '.join(cells))
     print()
 
 def _select_lcr_port():
@@ -506,8 +522,29 @@ def _parse_points(raw):
         pts.append(val)
     return pts
 
+def _all_points_random():
+    """Every pad 1–19 in a fresh random order (re-wiring happens per point)."""
+    pts = list(POINTS)
+    random.shuffle(pts)
+    return pts
+
 def _ask_points():
-    n = _ask_int('  How many points? [2] > ', 2, 1, len(POINTS))
+    while True:
+        try:
+            raw = input('  Test [S]eparate chosen points or [A]ll points '
+                        '(random order)? [S] > ').strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            raw = ''
+        if raw in ('', 's', 'sep', 'separate'):
+            break
+        if raw in ('a', 'all'):
+            pts = _all_points_random()
+            print(f'  All {len(pts)} points, random order: '
+                  + ', '.join(f'P{p:02d}/{POINT_TO_LABEL.get(p, "?")}' for p in pts))
+            return pts
+        print("  Please enter 'S' for separate points or 'A' for all")
+
+    n = _ask_int(f'  How many points? [2] > ', 2, 1, len(POINTS))
     points = []
     for i in range(n):
         while True:
@@ -527,7 +564,8 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__)
     p.add_argument('--points',     type=str,   default=None,
-                   help='Comma-separated pad numbers 1–19, e.g. 5,12,9 [ask]')
+                   help="Comma-separated pad numbers 1–19 (e.g. 5,12,9), or "
+                        "'all' for every pad in random order [ask]")
     p.add_argument('--depths',     type=str,   default='0,1,2,3,4',
                    help='Comma-separated indentation depths in mm [0,1,2,3,4]')
     p.add_argument('--iterations', type=int,   default=5, help='Repeats per depth [5]')
@@ -550,7 +588,12 @@ def main():
 
     print_sensor_map()
     if args.points:
-        points = _parse_points(args.points)
+        if args.points.strip().lower() == 'all':
+            points = _all_points_random()
+            print('  All points, random order: '
+                  + ', '.join(f'P{p:02d}/{POINT_TO_LABEL.get(p, "?")}' for p in points))
+        else:
+            points = _parse_points(args.points)
     else:
         points = _ask_points()
 
@@ -643,11 +686,12 @@ def main():
             if pt != current_point:
                 current_point = pt
                 px, py = POINTS[pt]
+                lbl = POINT_TO_LABEL.get(pt, '??')
                 print('═' * 65)
-                print(f'  Point {point_idx + 1}/{len(points)}  |  P{pt:02d}  ({px:+.0f}, {py:+.0f}) mm')
+                print(f'  Point {point_idx + 1}/{len(points)}  |  P{pt:02d} ({lbl})  ({px:+.0f}, {py:+.0f}) mm')
                 print_sensor_map(highlight=pt)
                 print(f'  ┌─────────────────────────────────────────────────────┐')
-                print(f'  │  Wire the LCR-6100 probes to point  P{pt:02d}            │')
+                print(f'  │  Wire the LCR-6100 probes to point  P{pt:02d} ({lbl:^3})      │')
                 print(f'  │  Freq: 20 kHz | Mode: Cp-Rp | Volt: 1 V | FAST     │')
                 print(f'  └─────────────────────────────────────────────────────┘')
                 Cp_now, _, _ = lcr.get_latest()

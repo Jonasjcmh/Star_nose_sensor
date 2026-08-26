@@ -187,10 +187,15 @@ data_folder = fullfile(fileparts(mfilename('fullpath')), '..', 'logs');
 
 surface_names = {'flat', 'solid', 'hollow'};
 file_names = { ...
-    '19_points_flat_sensor_5_iterations_session_20260825_113614.csv', ...
-    '19_points_solid_sensor_5_iterations_session_20260825_125908.csv', ...
-    '19_points_hollow_sensor_5_itertations_session_20260825_111045.csv' ...
+    'flat_sensor_19_points_10_iterations_session_20260826_155255.csv', ...
+    'solid_sensor_19_points_10_iterations_session_20260826_165651.csv', ...
+    'hollow_sensor_19_points_10_iterations_session_20260826_134101.csv' ...
 };
+% NOTE: hollow file has a genuine hardware fault (cells 4-7 pegged near
+% 65535 -- 16-bit overflow -- from the very first row, including
+% calibration itself). See qa_check_dataset.m. Those 4 points will show
+% as grey/NaN in the hollow panel below; the underlying session should
+% be re-collected when possible, this is not fixable in software.
 
 % ---- CHOOSE WHICH POINTS TO ANALYZE HERE -------------------------------
 % One full set of 5 plots gets generated per point listed here, saved
@@ -200,10 +205,7 @@ file_names = { ...
 % that distinction exists and matters here.
 POINT_IDS_TO_ANALYZE = 1:19;
 
-N_ITERATIONS   = 5;    % round_idx goes 0-4 in these files. (Confirmed
-                        % from the data -- these logs are labeled
-                        % "5_iterations", NOT the 10 iterations the
-                        % central-point dataset had.)
+N_ITERATIONS   = 10;   % round_idx goes 0-9 in these files.
 PRESS_DEPTH_MM = 10;    % kept for reference; only one depth exists in
                          % these files, so it isn't filtered on below
 

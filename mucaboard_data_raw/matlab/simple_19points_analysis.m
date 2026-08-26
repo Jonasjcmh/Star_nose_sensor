@@ -189,13 +189,12 @@ surface_names = {'flat', 'solid', 'hollow'};
 file_names = { ...
     'flat_sensor_19_points_10_iterations_session_20260826_155255.csv', ...
     'solid_sensor_19_points_10_iterations_session_20260826_165651.csv', ...
-    'hollow_sensor_19_points_10_iterations_session_20260826_134101.csv' ...
+    'hollow_sensor_iterations_all_session_20260826_190632.csv' ...
 };
-% NOTE: hollow file has a genuine hardware fault (cells 4-7 pegged near
-% 65535 -- 16-bit overflow -- from the very first row, including
-% calibration itself). See qa_check_dataset.m. Those 4 points will show
-% as grey/NaN in the hollow panel below; the underlying session should
-% be re-collected when possible, this is not fixable in software.
+% NOTE: the previous hollow file (..._134101.csv) had cells 4-7 pegged
+% near 65535 (16-bit overflow) from the very first row -- see
+% qa_check_dataset.m. This is the re-collected replacement; it passes
+% all 5 QA checks clean (verified 2026-08-26).
 
 % ---- CHOOSE WHICH POINTS TO ANALYZE HERE -------------------------------
 % One full set of 5 plots gets generated per point listed here, saved

@@ -42,5 +42,6 @@ function draw_hex_panel(ax, ids, xy, values, cmap, vmin, vmax, r, panel_title, h
     xlim(ax, [min(xy(:, 1)) - pad, max(xy(:, 1)) + pad]);
     ylim(ax, [min(xy(:, 2)) - pad, max(xy(:, 2)) + pad]);
     set(ax, 'XTick', [], 'YTick', []);
+    box(ax, 'on');   % full rectangular frame around the panel
     title(ax, panel_title, 'FontSize', 10, 'FontWeight', 'bold');
 end

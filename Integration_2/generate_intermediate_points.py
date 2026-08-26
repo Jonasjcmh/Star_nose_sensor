@@ -49,7 +49,7 @@ OUTPUT (matches Interdome_touch/main.py's variant convention)
     horizontal_midpoints_<tag>.json
 where <tag> is derived from the calib file name the same way interdome's
 _variant_from_calib does (e.g. calib_points_short_new_hollow_sensor.json ->
-tag "actual_new_hollow_sensor"). Each file is a dict:
+tag "new_hollow_sensor"). Each file is a dict:
 
     { "<label>": { "vertices":[...], "vertex_pts":[...],
                    "x_mm":.., "y_mm":..,               # ROBOT frame (drive these)
@@ -198,7 +198,7 @@ def variant_tag(path):
     for pre in ("calib_points_short_", "calib_points_"):
         if stem.startswith(pre):
             tag = stem[len(pre):]
-            return f"actual_{tag}" if tag else "actual"
+            return tag or None
     return None
 
 

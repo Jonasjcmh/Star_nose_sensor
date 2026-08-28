@@ -1152,7 +1152,20 @@ def main():
 
     # ── Mapping routine (verify every point once, in order, before the run) ────
     mapping_depth = args.mapping_depth if args.mapping_depth is not None else max(depths_mm)
-    if not args.no_mapping:
+
+    # --no-mapping skips it outright; otherwise let the operator choose at runtime
+    # so they can jump straight to data collection without restarting.
+    skip_mapping = args.no_mapping
+    if not skip_mapping:
+        try:
+            ans = input('\n  Run the startup mapping routine, or skip straight to '
+                        'data collection?\n  [M = map (default) / s = skip] > ').strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ans = 'm'
+        if ans in ('s', 'skip'):
+            skip_mapping = True
+
+    if not skip_mapping:
         try:
             run_mapping(rtde_c, sensor_mod, mapping_depth, hold_s=MAPPING_HOLD_S)
         except KeyboardInterrupt:
@@ -1174,7 +1187,8 @@ def main():
                 pass
             return
     else:
-        print('[map] Mapping routine skipped (--no-mapping)\n')
+        why = '--no-mapping' if args.no_mapping else 'user skipped'
+        print(f'[map] Mapping routine skipped ({why}) — starting data collection\n')
 
     # ── Plan ───────────────────────────────────────────────────────────────────
     seed = args.seed if args.seed is not None else random.randint(0, 99999)
@@ -1201,7 +1215,7 @@ def main():
         'point_ids':        [_pt_label(p) for p in POINT_ORDER],
         'surface_standoff_mm': SURFACE_STANDOFF_MM,
         'mapping_routine':  {
-            'enabled':  not args.no_mapping,
+            'enabled':  not skip_mapping,
             'depth_mm': mapping_depth,
             'hold_s':   MAPPING_HOLD_S,
         },

@@ -26,6 +26,8 @@ setup(
             'ui_node = star_nose_ros2.ui_node:main',
             'ur5_node = star_nose_ros2.ur5_node:main',
             'data_logger_node = star_nose_ros2.data_logger_node:main',
+            'friction_ui_node = star_nose_ros2.friction_ui_node:main',
+            'ur5_friction_node = star_nose_ros2.ur5_friction_node:main',
         ],
     },
 )

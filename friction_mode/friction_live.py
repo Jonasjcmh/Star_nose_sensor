@@ -193,6 +193,44 @@ def clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
+# ── Sensor-area boundary (from the visualizer) ────────────────────────────────
+# The valid touch region is the sensor grid as drawn in the hex map, i.e. the
+# bounding box of the sensor cells in the DISPLAY frame (+ a small margin). The
+# old ±OFFSET_LIMIT clamp was a blind robot-frame square, which — because the
+# robot frame is a ~120° rotation of the sensor — let the tip travel well past
+# the real sensor edge. Deriving the box from cp.DISPLAY_XY keeps it aligned
+# with what the operator sees.
+_GDX = [d[0] for d in cp.DISPLAY_XY.values()]
+_GDY = [d[1] for d in cp.DISPLAY_XY.values()]
+SENSOR_MARGIN_MM = 2.0
+DXD_MIN, DXD_MAX = min(_GDX) - SENSOR_MARGIN_MM, max(_GDX) + SENSOR_MARGIN_MM
+DYD_MIN, DYD_MAX = min(_GDY) - SENSOR_MARGIN_MM, max(_GDY) + SENSOR_MARGIN_MM
+
+
+def _sensor_to_robot(sdx, sdy):
+    """Invert cp._ROBOT_TO_SENSOR: a vector in the sensor/display frame → the
+    robot frame (same math as screen_to_robot, without the pixel scaling)."""
+    (a, b), (c, d) = cp._ROBOT_TO_SENSOR
+    det = a * d - b * c
+    return ((d * sdx - b * sdy) / det, (-c * sdx + a * sdy) / det)
+
+
+def sensor_delta_to_robot(sdx, sdy):
+    """A jog along the SENSOR-display axes (x+/y+/arrows — what the operator is
+    watching on the hex map) → a robot-frame (dx,dy) increment. Without this the
+    raw robot-frame jog sends the tip off diagonally across the sensor."""
+    return _sensor_to_robot(sdx, sdy)
+
+
+def clamp_to_sensor(ox, oy):
+    """Clamp a robot-frame offset so the indentor stays inside the real sensor
+    area (the DISPLAY-frame bounding box of the cells), replacing the blind
+    ±OFFSET_LIMIT robot-frame square."""
+    dx, dy = cp._to_display(ox, oy)
+    return _sensor_to_robot(clamp(dx, DXD_MIN, DXD_MAX),
+                            clamp(dy, DYD_MIN, DYD_MAX))
+
+
 # circle/spiral base geometry — point count scales WITH the pattern's scale
 # factor so a bigger circle/spiral stays a smooth curve instead of a coarser
 # polygon (fixed point count + bigger radius = longer straight segments =
@@ -202,16 +240,26 @@ _BASE_R = {'circle': 12.0, 'spiral': 14.0}
 
 
 def traj_points(name, scale):
-    """Trajectory points at the given scale. circle/spiral regenerate their
-    geometry (radius AND point count); other patterns just scale their
-    fixed points (straight lines don't lose fidelity when stretched)."""
+    """Trajectory points (ROBOT frame) at the given scale. circle/spiral
+    regenerate their geometry (radius AND point count); other patterns just
+    scale their fixed points (straight lines don't lose fidelity when stretched).
+
+    trajectories.py authors its coordinates in the SENSOR/display frame — a
+    "horizontal" line is horizontal ON THE SENSOR (corner a1→e5), a circle is a
+    circle on the sensor, etc. The robot base frame is a ~120° rotation of that,
+    so we convert sensor→robot here; otherwise line_h etc. trace the rotated
+    version (e.g. a "horizontal" sweep runs almost entirely along display Y).
+    Everything downstream (_build_pose, preview, clamp_to_sensor) is robot-frame.
+    """
     if name == 'circle':
         n = int(clamp(_BASE_N['circle'] * scale, 24, 300))
-        return traj_lib.circle(n_steps=n, radius_mm=_BASE_R['circle'] * scale)
-    if name == 'spiral':
+        raw = traj_lib.circle(n_steps=n, radius_mm=_BASE_R['circle'] * scale)
+    elif name == 'spiral':
         n = int(clamp(_BASE_N['spiral'] * scale, 60, 400))
-        return traj_lib.spiral(n_steps=n, r_max_mm=_BASE_R['spiral'] * scale)
-    return [(x * scale, y * scale) for x, y in traj_lib.TRAJECTORIES[name]()]
+        raw = traj_lib.spiral(n_steps=n, r_max_mm=_BASE_R['spiral'] * scale)
+    else:
+        raw = [(x * scale, y * scale) for x, y in traj_lib.TRAJECTORIES[name]()]
+    return [_sensor_to_robot(x, y) for x, y in raw]
 
 
 def parse_numeric(cmd, kw, inc):
@@ -307,8 +355,11 @@ class State:
     # game-key mutations (clamped) ------------------------------------------------
     def jog(self, dx, dy):
         with self.lock:
-            self.off_x = clamp(self.off_x + dx * self.step, -OFFSET_LIMIT, OFFSET_LIMIT)
-            self.off_y = clamp(self.off_y + dy * self.step, -OFFSET_LIMIT, OFFSET_LIMIT)
+            # dx, dy are ±1 along the SENSOR-display axes; convert to a robot-
+            # frame increment and clamp to the real sensor area.
+            ndx, ndy = sensor_delta_to_robot(dx * self.step, dy * self.step)
+            self.off_x, self.off_y = clamp_to_sensor(self.off_x + ndx,
+                                                     self.off_y + ndy)
             return self.off_x, self.off_y
 
     def bump(self, field, delta, lo, hi):
@@ -443,6 +494,10 @@ def worker(state, stop_evt, abort_evt, rtde_c, cmd_q):
 
     def engage(ox, oy, x0, y0, contact):
         """Descend onto the surface at (x0,y0)+offset. Returns (z, baseline)."""
+        # Keep the descent point inside the real sensor area (trajectory geometry
+        # + offset can otherwise land off the sensor).
+        x0, y0 = clamp_to_sensor(x0 + ox, y0 + oy)
+        ox = oy = 0.0
         moveL(ur5._build_pose(x0 + ox, y0 + oy, state.snap()['hover']), ur5.VELOCITY_HOME)
         cap = press_cap()
         if contact == 'force':
@@ -553,8 +608,11 @@ def worker(state, stop_evt, abort_evt, rtde_c, cmd_q):
                 ox, oy = cs['off_x'], cs['off_y']
                 speed = cs['speed'] / 1000.0
                 x, y = base[i]
+                # Clamp the waypoint (pattern + offset) to the sensor area so the
+                # trajectory never runs off the sensor, whatever the scale/offset.
+                ax, ay = clamp_to_sensor(x + ox, y + oy)
                 z = hold_z(z, baseline, contact)
-                moveL(ur5._build_pose(x + ox, y + oy, -z), speed)
+                moveL(ur5._build_pose(ax, ay, -z), speed)
                 state.set(wp=i + 1, z_now=z,
                           status=f"looping {cur} lap {cs['lap']} "
                                  f"({'CW/rev' if cs['direction'] < 0 else 'CCW/fwd'})")
@@ -643,19 +701,30 @@ def worker(state, stop_evt, abort_evt, rtde_c, cmd_q):
                     handled = True
                     break
             if not handled:
-                # X / Y jog offset:  x+  x-  y+  y-  (by step) | x 5 (absolute)
-                sstep = state.snap()['step']
-                for axis, field in (("x", "off_x"), ("y", "off_y")):
-                    r = parse_numeric(cmd, axis, sstep)
-                    if r:
-                        cur = state.snap()[field]
-                        newv = clamp(r[1] if r[0] == "abs" else cur + r[1],
-                                     -OFFSET_LIMIT, OFFSET_LIMIT)
-                        state.set(**{field: newv})
-                        last_jog = None
-                        log(f"{axis} offset {newv:+.1f} mm")
-                        handled = True
-                        break
+                # X / Y jog offset:  x+ x- y+ y- (relative, along the SENSOR
+                # axes) | x 5 (absolute robot-frame). Clamped to the sensor area.
+                cur = state.snap()
+                ox, oy, sstep = cur['off_x'], cur['off_y'], cur['step']
+                rx = parse_numeric(cmd, "x", sstep)
+                ry = parse_numeric(cmd, "y", sstep)
+                if rx or ry:
+                    if rx:
+                        if rx[0] == "abs":
+                            ox = rx[1]
+                        else:
+                            ndx, ndy = sensor_delta_to_robot(rx[1], 0.0)
+                            ox += ndx; oy += ndy
+                    if ry:
+                        if ry[0] == "abs":
+                            oy = ry[1]
+                        else:
+                            ndx, ndy = sensor_delta_to_robot(0.0, ry[1])
+                            ox += ndx; oy += ndy
+                    ox, oy = clamp_to_sensor(ox, oy)
+                    state.set(off_x=round(ox, 2), off_y=round(oy, 2))
+                    last_jog = None
+                    log(f"offset {ox:+.1f}, {oy:+.1f} mm")
+                    handled = True
             if not handled:
                 # Z jog:  z-  moves the indentor DOWN,  z+  moves it UP
                 r = parse_numeric(cmd, "z", 0.5)
@@ -807,9 +876,8 @@ def render_loop(state, stop_evt, abort_evt, args, sensor_mod, cmd_q):
     HEXMAP_HIT = pygame.Rect(40, 45, 640, 675)
 
     def drag_xy(pos, log=False):
-        ox, oy = screen_to_robot(*pos)
-        ox = round(clamp(ox, -OFFSET_LIMIT, OFFSET_LIMIT), 2)
-        oy = round(clamp(oy, -OFFSET_LIMIT, OFFSET_LIMIT), 2)
+        ox, oy = clamp_to_sensor(*screen_to_robot(*pos))
+        ox, oy = round(ox, 2), round(oy, 2)
         state.set(off_x=ox, off_y=oy)
         if log:
             state.push_log(f"offset {ox:+.1f}, {oy:+.1f} mm (drag)")
@@ -954,7 +1022,8 @@ def render_loop(state, stop_evt, abort_evt, args, sensor_mod, cmd_q):
         pts_r = preview_cache[cache_key]
         if s['direction'] < 0:
             pts_r = list(reversed(pts_r))
-        scr = [robot_to_screen(x + ox, y + oy) for (x, y) in pts_r]
+        # Clamp to the sensor area so the preview matches the (clamped) motion.
+        scr = [robot_to_screen(*clamp_to_sensor(x + ox, y + oy)) for (x, y) in pts_r]
         if len(scr) > 1:
             # the path is only a GUIDE line; the single moving point is the robot
             pygame.draw.lines(screen, BLUE, False,

@@ -29,7 +29,6 @@ worker drives the robot, consuming the commands you type.
   The hex map (same look as visualizer_2d.py) colours every cell by its live
   pressure (green→yellow→orange→red), so a press lights the touched cell live.
 
-<<<<<<< Updated upstream
   Mouse (as well as the typed commands):
         • DRAG on the hex map      → set the current point's X/Y offset (drag to
                                      preview the AMBER target, release to move).
@@ -37,8 +36,6 @@ worker drives the robot, consuming the commands you type.
     The Z / surface height is NOT adjusted here — it comes straight from the
     chosen calibration file (calib_<tip>.json), exactly like calibrate_points.py.
 
-=======
->>>>>>> Stashed changes
 OVERLAYS (all live, on the pygame map)
 ──────────────────────────────────────
   • GREEN ring    — the point being calibrated (the TARGET), at the hex centre.
@@ -105,13 +102,31 @@ HEX_R          = 34
 HEX_CX, HEX_CY = 350, 360
 SX, SY         = 13.0, 13.0     # mm → px (sensor-frame display)
 
-# Draggable depth slider range (mm) and map-drag X/Y offset clamp (mm).
+# Draggable depth slider range (mm).
 DEPTH_MIN, DEPTH_MAX = 0.0, 12.0
-OFFSET_LIMIT         = 12.0
+
+# Map-drag X/Y boundary — you can drag the indentor anywhere inside the REAL
+# sensor grid, i.e. the bounding box of the extreme calibration points (robot
+# frame) plus a small margin. This replaces the old fixed ±OFFSET_LIMIT box
+# around each point's nominal, which clamped drags short of the outer points.
+_GRID_X = [p[0] for p in cp.POINTS.values()]
+_GRID_Y = [p[1] for p in cp.POINTS.values()]
+DRAG_MARGIN_MM       = 2.0     # allow this much past the outermost points
+X_MIN, X_MAX = min(_GRID_X) - DRAG_MARGIN_MM, max(_GRID_X) + DRAG_MARGIN_MM
+Y_MIN, Y_MAX = min(_GRID_Y) - DRAG_MARGIN_MM, max(_GRID_Y) + DRAG_MARGIN_MM
 
 
 def clamp(v, lo, hi):
     return max(lo, min(hi, v))
+
+
+def clamp_offset(pt, dx, dy):
+    """Clamp a per-point (dx, dy) so the ABSOLUTE target position stays inside
+    the sensor grid boundary defined by the extreme points — not a fixed box
+    around this point's nominal. Returns the adjusted (dx, dy)."""
+    ax = clamp(cp.POINTS[pt][0] + dx, X_MIN, X_MAX)
+    ay = clamp(cp.POINTS[pt][1] + dy, Y_MIN, Y_MAX)
+    return ax - cp.POINTS[pt][0], ay - cp.POINTS[pt][1]
 
 
 def lerp_color(v):
@@ -165,6 +180,18 @@ def screen_to_offset(pos, pt):
     return rx - cp.POINTS[pt][0], ry - cp.POINTS[pt][1]
 
 
+def sensor_delta_to_robot(sdx, sdy):
+    """Convert a nudge along the SENSOR-DISPLAY axes (what the operator watches
+    on the hex map) into a robot-frame (dx, dy) increment. The x+/x-/y+/y-
+    nudges are meant to move the indentor along the on-screen axes; the robot
+    base frame is a ~120° rotation of the sensor frame, so a raw robot-frame
+    nudge sends the tip off diagonally. Same inverse map as screen_to_robot /
+    the map-drag, so all three ways of setting X/Y agree."""
+    (a, b), (c, d) = cp._ROBOT_TO_SENSOR
+    det = a * d - b * c
+    return ((d * sdx - b * sdy) / det, (-c * sdx + a * sdy) / det)
+
+
 def tcp_to_display(tcp, global_calib):
     """Live TCP pose (robot frame, m) → sensor-frame mm, aligned with DISPLAY_XY.
 
@@ -191,10 +218,7 @@ class State:
         self.actual     = {}            # pt → (xmm, ymm) recorded press location
         self.peak       = None          # frozen peak vals (19) from last press
         self.peak_pt    = None          # which point the frozen peak belongs to
-<<<<<<< Updated upstream
         self.depth      = cp.INDENT_MM  # live press depth (mm) — depth slider
-=======
->>>>>>> Stashed changes
         self.want_map   = False         # show deviation map in main thread on exit
         self.log        = collections.deque(maxlen=200)  # console scrollback
 
@@ -206,7 +230,6 @@ class State:
     def push_log(self, msg):
         with self.lock:
             self.log.append(msg)
-<<<<<<< Updated upstream
 
     def record_actual(self, pt, xy):
         with self.lock:
@@ -231,31 +254,6 @@ class _TcpReader:
         return ur5_control.get_tcp()
 
 
-=======
-
-    def record_actual(self, pt, xy):
-        with self.lock:
-            self.actual[pt] = xy
-
-    def snapshot(self):
-        with self.lock:
-            return dict(
-                target=self.target, offset=self.offset, step=self.step,
-                pressing=self.pressing, status=self.status, done=self.done,
-                connected=self.connected, actual=dict(self.actual),
-                peak=(list(self.peak) if self.peak else None),
-                peak_pt=self.peak_pt, log=list(self.log))
-
-
-# ── Thread-safe TCP reader shim (so we never poke rtde_r from two threads) ────
-class _TcpReader:
-    """Stands in for rtde_receive in cp.print_status — reads the 125 Hz cache."""
-    def getActualTCPPose(self):
-        import ur5_control
-        return ur5_control.get_tcp()
-
-
->>>>>>> Stashed changes
 # ── Sensor demo colours (when --no-sensor) ────────────────────────────────────
 def demo_values(frame):
     t = frame * 0.04
@@ -319,7 +317,6 @@ def render_loop(state, stop_evt, args, sensor_mod, global_calib, points, cmd_q):
         state.push_log(f"> {c}" if c else "> (ok)")
         cmd_q.put(c)
 
-<<<<<<< Updated upstream
     # ── Draggable DEPTH slider (right edge of the map panel) ──────────────────
     # Sets cp.INDENT_MM live, so the next press goes to the new depth. Does NOT
     # move the robot by itself. Z stays whatever the loaded calib file gives.
@@ -347,16 +344,14 @@ def render_loop(state, stop_evt, args, sensor_mod, global_calib, points, cmd_q):
     HEXMAP_HIT   = pygame.Rect(20, 40, 620, 620)
     dragging_xy  = False
     pending_xy   = None            # (dx, dy) preview while dragging
+    drag_pt      = None            # point the current drag belongs to
 
-=======
->>>>>>> Stashed changes
     while not stop_evt.is_set():
         frame_n += 1
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 cmd_q.put("quit")     # let the worker home the arm, then exit
                 stop_evt.set()
-<<<<<<< Updated upstream
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 if GAUGE_HIT.collidepoint(event.pos):
                     dragging_depth = True
@@ -364,26 +359,24 @@ def render_loop(state, stop_evt, args, sensor_mod, global_calib, points, cmd_q):
                 elif HEXMAP_HIT.collidepoint(event.pos) \
                         and state.snapshot()['target'] is not None:
                     dragging_xy = True
-                    pending_xy  = screen_to_offset(
-                        event.pos, state.snapshot()['target'])
+                    drag_pt     = state.snapshot()['target']
+                    pending_xy  = clamp_offset(
+                        drag_pt, *screen_to_offset(event.pos, drag_pt))
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 dragging_depth = False
-                if dragging_xy and pending_xy is not None:
+                if dragging_xy and pending_xy is not None and drag_pt is not None:
                     dx, dy = pending_xy
-                    dx = clamp(dx, -OFFSET_LIMIT, OFFSET_LIMIT)
-                    dy = clamp(dy, -OFFSET_LIMIT, OFFSET_LIMIT)
                     cmd_q.put(f"setxy {dx:.3f} {dy:.3f}")   # worker moves the arm
                     state.push_log(f"> map → dX={dx:+.2f} dY={dy:+.2f}")
                 dragging_xy = False
                 pending_xy  = None
+                drag_pt     = None
             elif event.type == pygame.MOUSEMOTION:
                 if dragging_depth:
                     drag_depth(event.pos[1])
-                elif dragging_xy and state.snapshot()['target'] is not None:
-                    pending_xy = screen_to_offset(
-                        event.pos, state.snapshot()['target'])
-=======
->>>>>>> Stashed changes
+                elif dragging_xy and drag_pt is not None:
+                    pending_xy = clamp_offset(
+                        drag_pt, *screen_to_offset(event.pos, drag_pt))
             elif event.type == pygame.TEXTINPUT:
                 cmd_buf += event.text
             elif event.type == pygame.KEYDOWN:
@@ -455,7 +448,6 @@ def render_loop(state, stop_evt, args, sensor_mod, global_calib, points, cmd_q):
             cx, cy = tgt_screen
             pygame.draw.line(screen, GREEN, (cx - 7, cy), (cx + 7, cy), 1)
             pygame.draw.line(screen, GREEN, (cx, cy - 7), (cx, cy + 7), 1)
-<<<<<<< Updated upstream
 
         # AMBER preview marker while dragging the map to set X/Y (not sent yet)
         if dragging_xy and pending_xy is not None and target is not None:
@@ -471,8 +463,6 @@ def render_loop(state, stop_evt, args, sensor_mod, global_calib, points, cmd_q):
             pygame.draw.line(screen, AMBER, (mx, my - 9), (mx, my + 9), 1)
             blit(screen, f"dX={pdx:+.1f} dY={pdy:+.1f}", font_sm, AMBER,
                  mx + 10, my - 6)
-=======
->>>>>>> Stashed changes
 
         # ORANGE ring — cell that fired most
         if fired_val > 0.05:
@@ -572,10 +562,7 @@ def render_loop(state, stop_evt, args, sensor_mod, global_calib, points, cmd_q):
             ("Target (green)", tgt_lbl, GREEN if target else MUTED),
             ("Offset dX / dY", f"{dx:+.2f} / {dy:+.2f} mm", TEXT),
             ("Step size", f"{s['step']:.2f} mm", TEXT),
-<<<<<<< Updated upstream
             ("Press depth (slider)", f"{s['depth']:.1f} mm", CYAN),
-=======
->>>>>>> Stashed changes
             ("Pressing", "YES" if pressing else "no", RED if pressing else MUTED),
             ("Fired cell (orange)", fired_lbl,
              ORANGE if fired_val > 0.05 else MUTED),
@@ -612,13 +599,8 @@ def render_loop(state, stop_evt, args, sensor_mod, global_calib, points, cmd_q):
                          border_radius=10)
         blit(screen, "Command console", font_lg, TEXT, CON_X + 14, CON_Y + 8)
         blit(screen, "x+ x- y+ y-  ·  press  ·  step N  ·  teach  ·  ok/Enter  ·  "
-<<<<<<< Updated upstream
                      "skip  ·  back  ·  save  ·  quit  ·  drag map = X/Y  ·  "
                      "drag right slider = depth  ·  ESC clears",
-=======
-                     "skip  ·  back  ·  save  ·  quit  ·  map  ·  trail/labels/recal "
-                     "·  ESC clears",
->>>>>>> Stashed changes
              font_sm, MUTED, CON_X + 150, CON_Y + 13)
 
         # Output scrollback — last CON_LINES messages (commands + responses).
@@ -677,14 +659,14 @@ def interactive_point(pt, rtde_c, tcp_reader, global_calib, offsets,
         cmd = (cmd or "").strip().lower()
         moved = False
 
-        if cmd == "x+":
-            dx += step_mm; moved = True
-        elif cmd == "x-":
-            dx -= step_mm; moved = True
-        elif cmd == "y+":
-            dy += step_mm; moved = True
-        elif cmd == "y-":
-            dy -= step_mm; moved = True
+        if cmd in ("x+", "x-", "y+", "y-"):
+            # Nudge along the SENSOR-display axes the operator is watching, not
+            # the rotated robot base axes (see sensor_delta_to_robot).
+            sdx = step_mm if cmd == "x+" else -step_mm if cmd == "x-" else 0.0
+            sdy = step_mm if cmd == "y+" else -step_mm if cmd == "y-" else 0.0
+            ndx, ndy = sensor_delta_to_robot(sdx, sdy)
+            dx, dy = clamp_offset(pt, dx + ndx, dy + ndy)
+            moved = True
         elif cmd.startswith("step"):
             try:
                 step_mm = float(cmd.split()[1])
@@ -693,19 +675,15 @@ def interactive_point(pt, rtde_c, tcp_reader, global_calib, offsets,
             except (IndexError, ValueError):
                 log("usage: step 0.5")
 
-<<<<<<< Updated upstream
         elif cmd.startswith("setxy"):
             # Absolute (dx, dy) from a map drag in the window; moves the arm there.
             try:
                 _, sxv, syv = cmd.split()
-                dx = clamp(float(sxv), -OFFSET_LIMIT, OFFSET_LIMIT)
-                dy = clamp(float(syv), -OFFSET_LIMIT, OFFSET_LIMIT)
+                dx, dy = clamp_offset(pt, float(sxv), float(syv))
                 moved = True
             except (ValueError, IndexError):
                 log("bad setxy")
 
-=======
->>>>>>> Stashed changes
         elif cmd == "press":
             offsets[pt] = (dx, dy)
             state.set(pressing=True, status=f"pressing P{pt}")

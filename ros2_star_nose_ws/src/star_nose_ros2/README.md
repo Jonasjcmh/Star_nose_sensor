@@ -13,6 +13,36 @@ is being ported from).
 - `ui_node` -- terminal front-end (`goto <1-19>`, `log on|off`). Swap for a
   joystick or GUI node later without touching the other two.
 
+## Friction mode (continuous trajectories)
+Discrete `goto_point` is position-only; friction needs continuous streaming +
+force control, so it has its own nodes (ported from `friction_mode/`):
+
+- `ur5_friction_node` -- owns RTDE, runs the trajectory / force-control loop in
+  its OWN thread (asynchronous, latest-value-wins). Subscribes
+  `/friction/command` (`std_msgs/String`, JSON), publishes `/ur5/tcp_pose`,
+  `/star_nose/status`, `/friction/waypoint`. A **deadman** lifts the arm if
+  commands stop arriving (`command_timeout_s`, default 1 s).
+- `friction_ui_node` -- terminal UI; holds the desired state and publishes it as
+  JSON, **heartbeating** at `heartbeat_hz` (default 5 Hz) so the deadman stays
+  satisfied. `run <pattern>`, `stop`, `speed/scale/depth/force`, `x+/y+` jog, etc.
+- `friction_core` -- shared geometry (robot<->sensor frame) + trajectory shapes.
+  Trajectories are authored in the SENSOR frame and converted to robot frame, and
+  every waypoint is clamped to the sensor area, so patterns trace as drawn and
+  never run off the sensor.
+
+Run:
+```
+ros2 launch star_nose_ros2 friction.launch.py            # real robot
+ros2 launch star_nose_ros2 friction.launch.py robot_ip:=127.0.0.1   # URSim
+```
+The pygame `friction_live.py` can later publish the same `/friction/command`
+JSON via the same `state` dict — the UI node is deliberately a thin swap point.
+
+Command JSON fields: `running, pattern, paused, contact(depth|force), depth,
+force, speed, scale, off_x, off_y, direction`. Sync model: control loop is
+async/decoupled; use `message_filters` in the logger if you need per-sample
+pose+sensor time alignment.
+
 ## Dev machine vs. robot machine
 Developed here on Jazzy (Ubuntu 24.04) -- rclpy's API is the same as
 Humble for what these nodes use, so this builds and the wiring can be

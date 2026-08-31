@@ -177,9 +177,9 @@
 	<g id="gnuplot_plot_23a"  fill="none"><title>gnuplot_plot_23a</title>
 <g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
 	<g stroke='none' shape-rendering='crispEdges'>
-		<polygon fill = 'rgb(222, 160,  89)' points = '332.15,127.36 298.07,147.04 298.07,186.40 332.15,206.07 366.24,186.40 366.24,147.04 '/>
+		<polygon fill = 'rgb(222, 161,  89)' points = '332.15,127.36 298.07,147.04 298.07,186.40 332.15,206.07 366.24,186.40 366.24,147.04 '/>
 	</g>
-	<path stroke='rgb(222, 160,  89)'  d='M332.15,127.36 L298.07,147.04 L298.07,186.40 L332.15,206.07 L366.24,186.40 L366.24,147.04  '/></g>
+	<path stroke='rgb(222, 161,  89)'  d='M332.15,127.36 L298.07,147.04 L298.07,186.40 L332.15,206.07 L366.24,186.40 L366.24,147.04  '/></g>
 	</g>
 	<g id="gnuplot_plot_24a"  fill="none"><title>gnuplot_plot_24a</title>
 <g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
@@ -722,9 +722,9 @@
 	<g id="gnuplot_plot_33c"  fill="none"><title>gnuplot_plot_33c</title>
 <g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
 	<g stroke='none' shape-rendering='crispEdges'>
-		<polygon fill = 'rgb(223, 164,  90)' points = '1356.15,365.94 1322.07,385.61 1322.07,424.97 1356.15,444.65 1390.24,424.97 1390.24,385.61 '/>
+		<polygon fill = 'rgb(223, 164,  91)' points = '1356.15,365.94 1322.07,385.61 1322.07,424.97 1356.15,444.65 1390.24,424.97 1390.24,385.61 '/>
 	</g>
-	<path stroke='rgb(223, 164,  90)'  d='M1356.15,365.94 L1322.07,385.61 L1322.07,424.97 L1356.15,444.65 L1390.24,424.97 L1390.24,385.61  '/></g>
+	<path stroke='rgb(223, 164,  91)'  d='M1356.15,365.94 L1322.07,385.61 L1322.07,424.97 L1356.15,444.65 L1390.24,424.97 L1390.24,385.61  '/></g>
 	</g>
 	<g id="gnuplot_plot_34c"  fill="none"><title>gnuplot_plot_34c</title>
 <g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
@@ -783,17 +783,17 @@
 </g>
 	</g>
 <g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
-	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,394.50 L1560.13,394.50 M1536.00,394.50 L1543.86,394.50  '/>	<g transform="translate(1573.24,397.75)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
+	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,394.54 L1560.13,394.54 M1536.00,394.54 L1543.86,394.54  '/>	<g transform="translate(1573.24,397.79)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
 		<text><tspan font-family="Arial" >0.5</tspan></text>
 	</g>
 </g>
 <g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
-	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,294.12 L1560.13,294.12 M1536.00,294.12 L1543.86,294.12  '/>	<g transform="translate(1573.24,297.37)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
+	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,294.15 L1560.13,294.15 M1536.00,294.15 L1543.86,294.15  '/>	<g transform="translate(1573.24,297.40)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
 		<text><tspan font-family="Arial" >1</tspan></text>
 	</g>
 </g>
 <g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
-	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,193.75 L1560.13,193.75 M1536.00,193.75 L1543.86,193.75  '/>	<g transform="translate(1573.24,197.00)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
+	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,193.76 L1560.13,193.76 M1536.00,193.76 L1543.86,193.76  '/>	<g transform="translate(1573.24,197.01)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
 		<text><tspan font-family="Arial" >1.5</tspan></text>
 	</g>
 </g>

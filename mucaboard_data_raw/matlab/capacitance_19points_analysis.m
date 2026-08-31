@@ -302,9 +302,26 @@ for pi = 1:numel(POINT_IDS_TO_ANALYZE)
     Delta_pF    = Press_pF - Baseline_pF;
     DeltaOverBaseline_pF = Delta_pF ./ Baseline_pF;
 
-    baseline_press_values = [Baseline_pF(:); Press_pF(:)];
-    baseline_press_values = baseline_press_values(~isnan(baseline_press_values));
-    baseline_press_scale  = [min(baseline_press_values), max(baseline_press_values)];
+    % ---- Independent scales, NOT shared -----------------------------------
+    % Baseline_pF (the B intercepts) never changes with PRESSED_POINT --
+    % it's a fixed property of each cell/surface. Press_pF DOES change per
+    % point (through Normalized_matrix), but only by ~0.1-0.2 pF, while
+    % Baseline itself spans ~2 pF cell-to-cell (real electrode-to-electrode
+    % hardware variation). Sharing one scale between the two, as this
+    % script originally did, caused two problems: (1) Baseline's rendered
+    % colors shifted by a rounding sliver from one point-folder to the
+    % next, even though the underlying values never changed -- confusing,
+    % since it looked like a bug rather than the true no-change reality;
+    % (2) Press's real per-point touch signal got crushed into an
+    % imperceptible fraction of a color range dominated by Baseline's much
+    % larger spread. Giving each its own scale fixes both: Baseline now
+    % renders IDENTICALLY across every point folder (as it should, since
+    % it doesn't depend on which point was pressed), and Press uses its
+    % own full range.
+    baseline_scale = [min(Baseline_pF(:)), max(Baseline_pF(:))];
+
+    press_values = Press_pF(~isnan(Press_pF));
+    press_scale  = [min(press_values), max(press_values)];
 
     delta_values = Delta_pF(~isnan(Delta_pF));
     delta_scale  = [min(delta_values), max(delta_values)];
@@ -312,7 +329,8 @@ for pi = 1:numel(POINT_IDS_TO_ANALYZE)
     dob_values = DeltaOverBaseline_pF(~isnan(DeltaOverBaseline_pF));
     dob_scale  = [min(dob_values), max(dob_values)];
 
-    fprintf('  Baseline + Press Cp shared scale: [%.4f, %.4f] pF\n', baseline_press_scale(1), baseline_press_scale(2));
+    fprintf('  Baseline Cp scale (fixed, same for every point): [%.4f, %.4f] pF\n', baseline_scale(1), baseline_scale(2));
+    fprintf('  Press Cp scale (this point only): [%.4f, %.4f] pF\n', press_scale(1), press_scale(2));
     fprintf('  Delta Cp scale: [%.4f, %.4f] pF\n', delta_scale(1), delta_scale(2));
     fprintf('  Delta/Baseline Cp scale: [%.4f, %.4f]\n', dob_scale(1), dob_scale(2));
 
@@ -323,12 +341,12 @@ for pi = 1:numel(POINT_IDS_TO_ANALYZE)
 
     fig1 = plot_matrix_as_hexmap(Baseline_pF, surface_names, ...
         'Baseline capacitance, Cp at V=0 (pF)', ...
-        sprintf('P%02d -- baseline capacitance', PRESSED_POINT), PRESSED_POINT, baseline_press_scale, SHOW_LABELS, point_ids, point_xy);
+        sprintf('P%02d -- baseline capacitance', PRESSED_POINT), PRESSED_POINT, baseline_scale, SHOW_LABELS, point_ids, point_xy);
     save_fig_svg(fig1, fullfile(point_folder, 'capacitance_baseline_hexmap'));
 
     fig2 = plot_matrix_as_hexmap(Press_pF, surface_names, ...
         'Pressed capacitance (pF)', ...
-        sprintf('P%02d -- pressed capacitance', PRESSED_POINT), PRESSED_POINT, baseline_press_scale, SHOW_LABELS, point_ids, point_xy);
+        sprintf('P%02d -- pressed capacitance', PRESSED_POINT), PRESSED_POINT, press_scale, SHOW_LABELS, point_ids, point_xy);
     save_fig_svg(fig2, fullfile(point_folder, 'capacitance_press_hexmap'));
 
     fig3 = plot_matrix_as_hexmap(Delta_pF, surface_names, ...

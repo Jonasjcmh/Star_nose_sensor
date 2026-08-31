@@ -128,56 +128,91 @@ fprintf(['Both collectors'' POINTS dict / REFERENCE_POSE were compared in source
     'tool approaches at a tilted angle (REFERENCE_POSE rx,ry,rz are non-trivial) so\n' ...
     'indentation depth alone shifts tcp_x/y -- mixing depths would confound this check:\n\n']);
 
-muca_probe = read_muca_raw_csv(MUCA_RAW_FILES{1}, RAW_VALID_MAX);
-capmeas_probe_path = fullfile(CAPMEAS_LOGS, 'two_point_iterations_ALL19_20260828_193051_flat_sensor.csv');
-fid = fopen(capmeas_probe_path, 'r');
-header_line = fgetl(fid);
-header = strsplit(header_line, ',', 'CollapseDelimiters', false);
-fmt = repmat('%s', 1, numel(header));
-Craw = textscan(fid, fmt, 'Delimiter', ',', 'Whitespace', '');
-fclose(fid);
-colc  = @(name) str2double(Craw{find(strcmp(header, name), 1)});
-colcs = @(name) Craw{find(strcmp(header, name), 1)};
-cm_point = colc('point');
-cm_tcp_x = colc('tcp_x');
-cm_tcp_y = colc('tcp_y');
-cm_phase = colcs('phase');
-cm_locate = strcmp(cm_phase, 'locate');
-muca_locate = strcmp(muca_probe.phase, 'locate');
+% Checked per SURFACE, not just once on flat -- each surface's muca
+% session and LCR sweep were collected on different days (see file
+% timestamps below), so a coherence check on one surface does NOT prove
+% the other two are equally well-aligned.
+LCR_PROBE_FILES = { ...
+    fullfile(CAPMEAS_LOGS, 'two_point_iterations_ALL19_20260828_193051_flat_sensor.csv'), ...
+    fullfile(CAPMEAS_LOGS, 'two_point_iterations_ALL19_20260828_162718_solid_sensor.csv'), ...
+    fullfile(CAPMEAS_LOGS, 'two_point_iterations_ALL19_20260825_202746_hollow_sensor.csv') ...
+};
 
-fprintf('  %6s %12s %12s %12s %12s %10s\n', 'code', 'muca tcp_x', 'capmeas tcp_x', 'muca tcp_y', 'capmeas tcp_y', 'diff(mm)');
-max_diff_mm = 0;
-n_checked = 0;
-diffs_mm = [];
-for code = 1:19
-    mm = (muca_probe.ur5_point == code) & muca_locate;
-    cmm = (cm_point == code) & cm_locate;
-    if ~any(mm) || ~any(cmm)
-        continue;
+overall_max_diff_mm = 0;
+for s = 1:3
+    fprintf('\n  -- %s --\n', upper(SURFACE_NAMES{s}));
+    muca_probe = read_muca_raw_csv(MUCA_RAW_FILES{s}, RAW_VALID_MAX);
+    fid = fopen(LCR_PROBE_FILES{s}, 'r');
+    header_line = fgetl(fid);
+    header = strsplit(header_line, ',', 'CollapseDelimiters', false);
+    fmt = repmat('%s', 1, numel(header));
+    Craw = textscan(fid, fmt, 'Delimiter', ',', 'Whitespace', '');
+    fclose(fid);
+    colc  = @(name) str2double(Craw{find(strcmp(header, name), 1)});
+    colcs = @(name) Craw{find(strcmp(header, name), 1)};
+    cm_point = colc('point');
+    cm_tcp_x = colc('tcp_x');
+    cm_tcp_y = colc('tcp_y');
+    cm_phase = colcs('phase');
+    cm_locate = strcmp(cm_phase, 'locate');
+    muca_locate = strcmp(muca_probe.phase, 'locate');
+
+    fprintf('  %6s %12s %12s %12s %12s %10s\n', 'code', 'muca tcp_x', 'capmeas tcp_x', 'muca tcp_y', 'capmeas tcp_y', 'diff(mm)');
+    max_diff_mm = 0;
+    n_checked = 0;
+    diffs_mm = [];
+    for code = 1:19
+        mm = (muca_probe.ur5_point == code) & muca_locate;
+        cmm = (cm_point == code) & cm_locate;
+        if ~any(mm) || ~any(cmm)
+            continue;
+        end
+        mx = mean(muca_probe.tcp_x(mm), 'omitnan'); my = mean(muca_probe.tcp_y(mm), 'omitnan');
+        cx = mean(cm_tcp_x(cmm), 'omitnan');        cy = mean(cm_tcp_y(cmm), 'omitnan');
+        diff_mm = 1000 * hypot(mx - cx, my - cy);
+        max_diff_mm = max(max_diff_mm, diff_mm);
+        diffs_mm(end + 1) = diff_mm; %#ok<AGROW>
+        n_checked = n_checked + 1;
+        fprintf('  %6d %12.5f %12.5f %12.5f %12.5f %10.2f\n', code, mx, cx, my, cy, diff_mm);
     end
-    mx = mean(muca_probe.tcp_x(mm), 'omitnan'); my = mean(muca_probe.tcp_y(mm), 'omitnan');
-    cx = mean(cm_tcp_x(cmm), 'omitnan');        cy = mean(cm_tcp_y(cmm), 'omitnan');
-    diff_mm = 1000 * hypot(mx - cx, my - cy);
-    max_diff_mm = max(max_diff_mm, diff_mm);
-    diffs_mm(end + 1) = diff_mm; %#ok<AGROW>
-    n_checked = n_checked + 1;
-    fprintf('  %6d %12.5f %12.5f %12.5f %12.5f %10.2f\n', code, mx, cx, my, cy, diff_mm);
+    fprintf('\n  %s: checked %d/19 point(s); mean diff = %.2f mm, max diff = %.2f mm.\n', ...
+        upper(SURFACE_NAMES{s}), n_checked, mean(diffs_mm), max_diff_mm);
+    overall_max_diff_mm = max(overall_max_diff_mm, max_diff_mm);
+    % SAFETY_MARGIN_MM: the board's TRUE minimum center-to-center spacing
+    % between any two of the 19 points is a clean 8.00mm (verified by
+    % computing every pairwise distance from the POINTS dict -- e.g.
+    % P1-P2, P2-P3, P4-P5 are all exactly 8.00mm, and nothing is closer).
+    % Half of that (4.00mm) is the real threshold below which a position
+    % discrepancy can NEVER be closer to the wrong neighboring point than
+    % to the intended one -- used here instead of an earlier, unverified
+    % "4-8mm" guess that gave a false-alarm WARNING on hollow's 3.21mm.
+    SAFETY_MARGIN_MM = 4.0;
+    if max_diff_mm < SAFETY_MARGIN_MM
+        fprintf('  %s: COHERENT (within %.1fmm, half the board''s true 8.00mm minimum point spacing).\n', ...
+            upper(SURFACE_NAMES{s}), SAFETY_MARGIN_MM);
+    else
+        fprintf('  %s: WARNING -- discrepancy exceeds %.1fmm, half the board''s true 8.00mm minimum point spacing.\n', ...
+            upper(SURFACE_NAMES{s}), SAFETY_MARGIN_MM);
+    end
 end
-fprintf('\n  Checked %d shared point(s); mean diff = %.2f mm, max diff = %.2f mm.\n', ...
-    n_checked, mean(diffs_mm), max_diff_mm);
-if max_diff_mm < 3.0
-    fprintf(['  COHERENT: both datasets press the same physical UR5 locations for the same point\n' ...
-        '  number, well within the hex grid''s own 4-8mm point spacing -- residual mm-scale noise\n' ...
-        '  is expected from independent robot moves, not a registration problem. (This LCR sweep,\n' ...
-        '  two_point_iterations_ALL19_*, was collected 2026-08-25/28, close in time to\n' ...
-        '  mucaboard_data_raw''s 2026-08-26 session -- unlike the older Jun/Jul LCR files, which\n' ...
-        '  showed a much larger ~11mm mean / 17mm max discrepancy here, consistent with the robot\n' ...
-        '  having been re-registered at some point between June/July and August.)\n']);
+
+fprintf('\n  OVERALL max diff across all 3 surfaces: %.2f mm.\n', overall_max_diff_mm);
+if overall_max_diff_mm < SAFETY_MARGIN_MM
+    fprintf(['  COHERENT on all 3 surfaces: each dataset presses the same physical UR5 locations\n' ...
+        '  for the same point number. The board''s TRUE minimum point-to-point spacing is a\n' ...
+        '  verified 8.00mm (computed from every pairwise distance in the POINTS dict), so any\n' ...
+        '  discrepancy under %.1fmm can never be closer to a neighboring point than the intended\n' ...
+        '  one -- residual mm-scale noise here is expected from independent robot moves, not a\n' ...
+        '  registration problem. (The two_point_iterations_ALL19_* LCR sweeps were collected\n' ...
+        '  2026-08-25/28, close in time to mucaboard_data_raw''s 2026-08-26 session -- unlike the\n' ...
+        '  older Jun/Jul LCR files, which showed a much larger ~11mm mean / 17mm max discrepancy,\n' ...
+        '  consistent with the robot having been re-registered between June/July and August.)\n'], SAFETY_MARGIN_MM);
 else
-    fprintf(['  WARNING: discrepancy exceeds the hex grid''s own 4-8mm point spacing even at zero\n' ...
-        '  indentation -- naive point-NUMBER matching (used in STEP B below) can be matching against\n' ...
-        '  a position closer to a NEIGHBORING point than the intended one. Treat STEP B''s fit as\n' ...
-        '  approximate for this reason -- see the printed per-point table.\n']);
+    fprintf(['  WARNING: at least one surface exceeds %.1fmm (half the board''s verified 8.00mm\n' ...
+        '  minimum point spacing) even at zero indentation -- naive point-NUMBER matching (used\n' ...
+        '  in STEP B below) can be matching against a position closer to a NEIGHBORING point than\n' ...
+        '  the intended one for that surface. Treat that surface''s fit as approximate -- see the\n' ...
+        '  per-surface numbers above for which one(s).\n'], SAFETY_MARGIN_MM);
 end
 fprintf(['\n  NOTE: "point number" above is the ROBOT''S OWN numbering (what''s literally in\n' ...
     '  the ur5_point/point column of every CSV in all 3 datasets) -- NOT the physical\n' ...

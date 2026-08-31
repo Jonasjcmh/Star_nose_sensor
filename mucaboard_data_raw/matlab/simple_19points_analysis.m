@@ -202,7 +202,7 @@ file_names = { ...
 % TRUE BOARD ids (matching the physical board's own numbering), not the
 % robot's internal numbering; see the TRUE_TO_CODE block below for why
 % that distinction exists and matters here.
-POINT_IDS_TO_ANALYZE = 1:19;
+POINT_IDS_TO_ANALYZE = [1 5 10 15 19];
 
 N_ITERATIONS   = 10;   % round_idx goes 0-9 in these files.
 PRESS_DEPTH_MM = 10;    % kept for reference; only one depth exists in
@@ -226,7 +226,7 @@ RAW_VALID_MAX = 1000;
 
 % true  -> every hexagon shows "P##" and its value.
 % false -> hexagons show color only, no text.
-SHOW_LABELS = true;
+SHOW_LABELS = false;
 
 n_points   = 19;
 n_surfaces = 3;

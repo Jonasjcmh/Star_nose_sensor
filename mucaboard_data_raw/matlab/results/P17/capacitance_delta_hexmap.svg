@@ -836,7 +836,7 @@
 </g>
 <g fill="none" color="black" stroke="currentColor" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
 	<g transform="translate(800.00,20.86)" stroke="none" fill="rgb(0,0,0)" font-family=":Bold" font-size="13.00"  text-anchor="middle">
-		<text>P17 -- capacitance drop (direct calibration, GAIN=-0.001734 pF/count)</text>
+		<text>P17 -- capacitance drop, CALIB baseline (per-point scale)</text>
 	</g>
 </g>
 <g fill="none" color="black" stroke="rgb(  0,   0,   0)" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">

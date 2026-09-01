@@ -241,7 +241,19 @@ file_names = { ...
     'hollow_sensor_iterations_all_session_20260826_190632.csv' ...
 };
 
+% Every point listed here is COMPUTED (needed for the global color scale).
 POINT_IDS_TO_ANALYZE = 1:19;
+
+% Only these get PLOTTED. Set to a subset to preview quickly without
+% re-rendering all 19 (rendering, not computing, is what costs the time).
+POINT_IDS_TO_PLOT = 1:19;
+
+% false -> each point auto-scales to its own min/max (colors are NOT
+%          comparable between points: red in P01 != red in P10)
+% true  -> one shared scale across every point in POINT_IDS_TO_ANALYZE,
+%          so the same color means the same pF everywhere
+USE_GLOBAL_SCALE = false;
+
 N_ITERATIONS  = 10;
 RAW_VALID_MAX = 1000;   % after signed reinterpretation, anything still this
                          % large is a genuine hardware fault (see qa_check_dataset.m)
@@ -297,39 +309,77 @@ for s = 1:n_surfaces
     fprintf('  %d rows loaded\n', n_rows);
 end
 
-%% ---- STEP 4: per point, dCp = GAIN * d(raw) ---------------------------
+%% ---- STEP 4 (PASS 1): compute every point's matrices -------------------
+% Split into compute-then-plot so a GLOBAL color scale is possible: the
+% shared min/max can only be known once every point has been computed.
+%
+% TWO BASELINES are computed side by side, for comparison:
+%
+%   CALIB baseline  -- raw minus calib_*, the single snapshot taken once
+%                      at session start. Simple, but it does not track
+%                      drift: measured on the flat file, the untouched
+%                      (locate/post) level moves by up to 2.86 counts
+%                      between the start and end of a session, and sits
+%                      0.5-3 counts off calib_* even at the start.
+%                      Against own-cell press deltas of 5.1-23.6 counts
+%                      that is a 12% error on the strongest points and up
+%                      to ~57% on the weakest -- systematic, not noise.
+%
+%   LOCAL baseline  -- raw minus that SAME point-and-round's own
+%                      untouched rows (phase 'locate' and 'post', which
+%                      bracket the press in time). Cancels both the drift
+%                      and the static calib offset, and because the two
+%                      brackets straddle the press, any drift occurring
+%                      DURING the press averages out too.
+%
+% Both are written as separate figures so they can be compared directly.
 results_folder = fullfile(HERE, 'results');
 if ~exist(results_folder, 'dir')
     mkdir(results_folder);
 end
 
-for pi = 1:numel(POINT_IDS_TO_ANALYZE)
+n_analyze = numel(POINT_IDS_TO_ANALYZE);
+DeltaCp_calib_all = nan(n_points, n_surfaces, n_analyze);
+DeltaCp_local_all = nan(n_points, n_surfaces, n_analyze);
+
+for pi = 1:n_analyze
     PRESSED_POINT      = POINT_IDS_TO_ANALYZE(pi);
     CODE_PRESSED_POINT = TRUE_TO_CODE(PRESSED_POINT);
     fprintf('\n%s\n', repmat('=', 1, 60));
     fprintf('  POINT %d\n', PRESSED_POINT);
     fprintf('%s\n', repmat('=', 1, 60));
 
-    DeltaCp = nan(n_points, n_surfaces);
-
     for s = 1:n_surfaces
         d = surface_data{s};
-        is_pressed = (d.ur5_point == CODE_PRESSED_POINT) ...
-                   & (d.round_idx >= 0) & (d.round_idx <= N_ITERATIONS - 1) ...
-                   & strcmp(d.phase, 'hold');
+        in_round = (d.ur5_point == CODE_PRESSED_POINT) ...
+                 & (d.round_idx >= 0) & (d.round_idx <= N_ITERATIONS - 1);
+        is_pressed = in_round & strcmp(d.phase, 'hold');
+        is_base    = in_round & (strcmp(d.phase, 'locate') | strcmp(d.phase, 'post'));
 
-        % raw delta from that cell's own resting baseline -- the offset is
-        % removed HERE, by subtraction, so what follows is purely the
-        % press-induced change (exactly what a cross-talk map should show)
-        delta_raw_all = d.raw_by_point - d.calib_by_point;
+        % ---- CALIB-baseline route (session-start snapshot) -------------
+        delta_calib_all = d.raw_by_point - d.calib_by_point;
 
-        per_it = nan(N_ITERATIONS, 19);
+        per_it_calib = nan(N_ITERATIONS, 19);
+        per_it_local = nan(N_ITERATIONS, 19);
+        n_missing_base = 0;
         for it = 0:(N_ITERATIONS - 1)
-            rows = is_pressed & (d.round_idx == it);
-            if ~any(rows), continue; end
-            per_it(it + 1, :) = nanmean_cols(delta_raw_all(rows, :));
+            rows_p = is_pressed & (d.round_idx == it);
+            if ~any(rows_p), continue; end
+            per_it_calib(it + 1, :) = nanmean_cols(delta_calib_all(rows_p, :));
+
+            % ---- LOCAL-baseline route (this round's own untouched rows)
+            rows_b = is_base & (d.round_idx == it);
+            if ~any(rows_b)
+                n_missing_base = n_missing_base + 1;
+                continue;   % leave NaN; the median below ignores it
+            end
+            press_mean = nanmean_cols(d.raw_by_point(rows_p, :));
+            base_mean  = nanmean_cols(d.raw_by_point(rows_b, :));
+            per_it_local(it + 1, :) = press_mean - base_mean;
         end
-        delta_raw = median_ignore_nan_cols(per_it);
+
+        delta_calib = median_ignore_nan_cols(per_it_calib);
+        delta_local = median_ignore_nan_cols(per_it_local);
 
         % ---- CAPACITANCE DROP (plotted quantity) ----------------------
         % GAIN is negative, so a press (positive raw delta) gives a
@@ -349,28 +399,71 @@ for pi = 1:numel(POINT_IDS_TO_ANALYZE)
         % making a cell that rose indistinguishable from one that fell by
         % the same amount. Negation keeps them separate, as small negative
         % drops at the green end, so no information is lost.
-        DeltaCp(:, s) = (-GAIN * delta_raw)';
+        DeltaCp_calib_all(:, s, pi) = (-GAIN * delta_calib)';
+        DeltaCp_local_all(:, s, pi) = (-GAIN * delta_local)';
 
-        fprintf('%-8s: %d/%d iterations; raw delta %.1f..%.1f counts -> Cp drop %.4f..%.4f pF\n', ...
-            surface_names{s}, sum(~isnan(per_it(:, 1))), N_ITERATIONS, ...
-            min(delta_raw), max(delta_raw), min(-GAIN * delta_raw), max(-GAIN * delta_raw));
+        warn = '';
+        if n_missing_base > 0
+            warn = sprintf('  [%d round(s) had no locate/post rows]', n_missing_base);
+        end
+        fprintf(['%-8s: %d/%d iters; raw delta calib %.1f..%.1f | local %.1f..%.1f counts' ...
+                 '  (shift %+.2f)%s\n'], ...
+            surface_names{s}, sum(~isnan(per_it_calib(:, 1))), N_ITERATIONS, ...
+            min(delta_calib), max(delta_calib), min(delta_local), max(delta_local), ...
+            mean(delta_local - delta_calib), warn);
+    end
+end
+
+%% ---- global scales (used only when USE_GLOBAL_SCALE is true) ----------
+gc = DeltaCp_calib_all(~isnan(DeltaCp_calib_all));
+gl = DeltaCp_local_all(~isnan(DeltaCp_local_all));
+global_scale_calib = [min(gc), max(gc)];
+global_scale_local = [min(gl), max(gl)];
+fprintf('\n%s\n', repmat('-', 1, 60));
+fprintf('GLOBAL scale, calib baseline: [%.4f, %.4f] pF\n', global_scale_calib);
+fprintf('GLOBAL scale, local baseline: [%.4f, %.4f] pF\n', global_scale_local);
+fprintf('%s\n', repmat('-', 1, 60));
+
+%% ---- STEP 5 (PASS 2): plot -------------------------------------------
+for pi = 1:n_analyze
+    PRESSED_POINT = POINT_IDS_TO_ANALYZE(pi);
+    if ~any(POINT_IDS_TO_PLOT == PRESSED_POINT)
+        continue;
     end
 
-    vals = DeltaCp(~isnan(DeltaCp));
-    scale = [min(vals), max(vals)];
-    fprintf('  Cp drop scale: [%.4f, %.4f] pF  (positive = capacitance reduced by contact)\n', ...
-        scale(1), scale(2));
+    DeltaCp_calib = DeltaCp_calib_all(:, :, pi);
+    DeltaCp_local = DeltaCp_local_all(:, :, pi);
+
+    if USE_GLOBAL_SCALE
+        scale_calib = global_scale_calib;
+        scale_local = global_scale_local;
+        scale_tag   = 'global scale';
+    else
+        v = DeltaCp_calib(~isnan(DeltaCp_calib)); scale_calib = [min(v), max(v)];
+        v = DeltaCp_local(~isnan(DeltaCp_local)); scale_local = [min(v), max(v)];
+        scale_tag   = 'per-point scale';
+    end
 
     point_folder = fullfile(results_folder, sprintf('P%02d', PRESSED_POINT));
     if ~exist(point_folder, 'dir')
         mkdir(point_folder);
     end
 
-    fig = plot_matrix_as_hexmap(DeltaCp, surface_names, ...
+    fprintf('\nP%02d (%s): calib [%.4f, %.4f] | local [%.4f, %.4f] pF\n', ...
+        PRESSED_POINT, scale_tag, scale_calib, scale_local);
+
+    fig = plot_matrix_as_hexmap(DeltaCp_calib, surface_names, ...
         'Capacitance drop -dCp (pF): positive = contact lowered Cp', ...
-        sprintf('P%02d -- capacitance drop (direct calibration, GAIN=%.6f pF/count)', PRESSED_POINT, GAIN), ...
-        PRESSED_POINT, scale, SHOW_LABELS, point_ids, point_xy);
+        sprintf('P%02d -- capacitance drop, CALIB baseline (%s)', PRESSED_POINT, scale_tag), ...
+        PRESSED_POINT, scale_calib, SHOW_LABELS, point_ids, point_xy);
     save_fig_svg(fig, fullfile(point_folder, 'capacitance_delta_hexmap'));
+    close(fig);
+
+    fig = plot_matrix_as_hexmap(DeltaCp_local, surface_names, ...
+        'Capacitance drop -dCp (pF): positive = contact lowered Cp', ...
+        sprintf('P%02d -- capacitance drop, LOCAL baseline (%s)', PRESSED_POINT, scale_tag), ...
+        PRESSED_POINT, scale_local, SHOW_LABELS, point_ids, point_xy);
+    save_fig_svg(fig, fullfile(point_folder, 'capacitance_delta_localbase_hexmap'));
     close(fig);
 end
 

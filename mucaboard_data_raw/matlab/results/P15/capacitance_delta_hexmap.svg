@@ -779,37 +779,37 @@
 </g>
 	<g id="gnuplot_plot_1d"  fill="none"><title>gnuplot_plot_1d</title>
 <g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
-<image x='1536.00' y='88.01' width='31.99' height='395.99' preserveAspectRatio='none' xlink:href='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAEACAIAAAAWazDMAAAABmJLR0QA/wD/AP+gvaeTAAAA00lEQVQ4jZ1SyRHDMAjczajHNJQ6UqrJw/aISwjn5QH2Apmf7xvAIABggDgrAngByGYKYpuTUMzaDjhVqHmVw0TaGYPtqtL0FIKKzhi3446U7lSSj9tvzXNHrjT9kYsrWemtZi+LMgohCqMHBPPXrcVcXIicn2umqgZkwFamyT0k1xQx7g2InonE5o0UiSoumSRGHmKb2Lk7ZAURt8re/U9eB3I8c59HvrZl9gD2IJxN9+ByVwz0iaRBZkY6RG5UhVjMYqR82yzg6i6Ed69mfrEk2Q+WBqk8GzNFowAAAABJRU5ErkJggg=='/>
+<image x='1536.00' y='88.01' width='31.99' height='395.99' preserveAspectRatio='none' xlink:href='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAEACAIAAAAWazDMAAAABmJLR0QA/wD/AP+gvaeTAAAAy0lEQVQ4ja2TwQ7DMAhD7ap/udt+dR9GD1kTqAxE005RyDN2SMvP+wXgAADgBA3AyXs3Ftja3SRpQdedxS7LIScZekaSZbL+rDTKA6pIcVhVCG0kQ5D0CIviwRbh/5F9HUZxDqRHFFm1ni/WI6R4AOn+IH0X80YbSHLpUbQe0T3VVSrEvouFnS8u0hrBJPNmjSB12IqrU0udM6pT/5xl/OG7PVcx6kyk1jsvlwgqucnJt+6Q8rGEO+ghIzx4GNbzq1OPqh3E2Y5DOLsApROxNRE26U4AAAAASUVORK5CYII='/>
 </g>
 	</g>
 <g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
-	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,453.83 L1560.13,453.83 M1536.00,453.83 L1543.86,453.83  '/>	<g transform="translate(1573.24,457.08)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
-		<text><tspan font-family="Arial" >-0.02</tspan></text>
-	</g>
-</g>
-<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
-	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,382.79 L1560.13,382.79 M1536.00,382.79 L1543.86,382.79  '/>	<g transform="translate(1573.24,386.04)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
-		<text><tspan font-family="Arial" >-0.015</tspan></text>
-	</g>
-</g>
-<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
-	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,311.74 L1560.13,311.74 M1536.00,311.74 L1543.86,311.74  '/>	<g transform="translate(1573.24,314.99)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
-		<text><tspan font-family="Arial" >-0.01</tspan></text>
-	</g>
-</g>
-<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
-	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,240.69 L1560.13,240.69 M1536.00,240.69 L1543.86,240.69  '/>	<g transform="translate(1573.24,243.94)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
+	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,473.42 L1560.13,473.42 M1536.00,473.42 L1543.86,473.42  '/>	<g transform="translate(1573.24,476.67)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
 		<text><tspan font-family="Arial" >-0.005</tspan></text>
 	</g>
 </g>
 <g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
-	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,169.64 L1560.13,169.64 M1536.00,169.64 L1543.86,169.64  '/>	<g transform="translate(1573.24,172.89)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
+	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,402.37 L1560.13,402.37 M1536.00,402.37 L1543.86,402.37  '/>	<g transform="translate(1573.24,405.62)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
 		<text><tspan font-family="Arial" >0</tspan></text>
 	</g>
 </g>
 <g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
-	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,98.59 L1560.13,98.59 M1536.00,98.59 L1543.86,98.59  '/>	<g transform="translate(1573.24,101.84)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
+	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,331.32 L1560.13,331.32 M1536.00,331.32 L1543.86,331.32  '/>	<g transform="translate(1573.24,334.57)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
 		<text><tspan font-family="Arial" >0.005</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,260.27 L1560.13,260.27 M1536.00,260.27 L1543.86,260.27  '/>	<g transform="translate(1573.24,263.52)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
+		<text><tspan font-family="Arial" >0.01</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,189.22 L1560.13,189.22 M1536.00,189.22 L1543.86,189.22  '/>	<g transform="translate(1573.24,192.47)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
+		<text><tspan font-family="Arial" >0.015</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1567.99,118.18 L1560.13,118.18 M1536.00,118.18 L1543.86,118.18  '/>	<g transform="translate(1573.24,121.43)" stroke="none" fill="rgb(38,38,38)" font-family="Arial" font-size="10.00"  text-anchor="start">
+		<text><tspan font-family="Arial" >0.02</tspan></text>
 	</g>
 </g>
 <g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
@@ -846,7 +846,7 @@
 </g>
 <g fill="none" color="black" stroke="currentColor" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
 	<g transform="translate(800.00,20.86)" stroke="none" fill="rgb(0,0,0)" font-family=":Bold" font-size="13.00"  text-anchor="middle">
-		<text>P15 -- delta capacitance (direct calibration, GAIN=-0.001734 pF/count)</text>
+		<text>P15 -- capacitance drop (direct calibration, GAIN=-0.001734 pF/count)</text>
 	</g>
 </g>
 <g fill="none" color="black" stroke="rgb(  0,   0,   0)" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">

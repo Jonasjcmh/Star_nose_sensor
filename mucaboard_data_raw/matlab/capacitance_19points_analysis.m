@@ -60,6 +60,13 @@
 % the subtraction), which is exactly the quantity a cross-talk map should
 % show.
 %
+% PLOTTED QUANTITY: the capacitance DROP, -dCp, in pF. A press lowers
+% capacitance, so dCp itself is negative; negating makes contact the
+% HIGH (red) end of the project's standard colormap, with no colormap
+% manipulation. Negation is used rather than abs() so that cells reading
+% slightly BELOW their own baseline stay distinguishable (see the
+% CAPACITANCE DROP comment in STEP 4).
+%
 % Output: results/P<id>/capacitance_delta_hexmap.(fig|svg) -- one per
 % analyzed point, alongside the existing raw-count plots.
 % =========================================================================
@@ -78,18 +85,12 @@ function fig = plot_matrix_as_hexmap(matrix_19x3, surface_names, colorbar_label,
         vmin = color_limits(1);
         vmax = color_limits(2);
     end
-    % INVERTED colormap -- capacitance plots ONLY.
-    % A press LOWERS capacitance (dCp is negative, see GAIN below), so with
-    % the project's standard green->red ramp the contact point -- the most
-    % negative cell -- would come out green, and untouched cells red. That
-    % reads backwards: the point being touched should be the hot one. So
-    % the ramp is flipped here, giving red at the most-negative (strongest
-    % contact) end. The VALUES and the colorbar axis are unchanged -- only
-    % the color-to-value direction is reversed, so the colorbar now runs
-    % red (most negative) -> green (least negative), which is what the
-    % numbers actually say. get_cmap() itself is untouched, so every other
-    % plot in this project keeps its original orientation.
-    cmap = flipud(get_cmap());
+    % Standard project colormap, same orientation as every other plot.
+    % (An earlier version flipped this because dCp is negative for a press,
+    % which put the contact point at the green end. That's now handled at
+    % the DATA level instead -- see CAPACITANCE DROP below -- so no
+    % colormap manipulation is needed here.)
+    cmap = get_cmap();
     n_panels = numel(surface_names);
     panel_left_all = [0.03, 0.35, 0.67];
     panel_width = 0.27;
@@ -329,16 +330,36 @@ for pi = 1:numel(POINT_IDS_TO_ANALYZE)
             per_it(it + 1, :) = nanmean_cols(delta_raw_all(rows, :));
         end
         delta_raw = median_ignore_nan_cols(per_it);
-        DeltaCp(:, s) = (GAIN * delta_raw)';
 
-        fprintf('%-8s: %d/%d iterations; raw delta %.1f..%.1f counts -> dCp %.4f..%.4f pF\n', ...
+        % ---- CAPACITANCE DROP (plotted quantity) ----------------------
+        % GAIN is negative, so a press (positive raw delta) gives a
+        % NEGATIVE dCp -- capacitance goes DOWN under contact. Plotting
+        % dCp directly would put the contact point at the LOW end of the
+        % scale, i.e. green, with untouched cells red -- backwards.
+        %
+        % So the plotted quantity is the capacitance DROP, -dCp: positive
+        % where the press reduced capacitance, and larger at stronger
+        % contact. That puts the contact point at the HIGH (red) end on
+        % the project's standard colormap, with no colormap trickery.
+        %
+        % Negating rather than taking abs() on purpose: a few cells read
+        % slightly BELOW their own baseline during someone else's press
+        % (up to +0.0087 pF, ~21% of the max press magnitude, present on
+        % all 19 points). abs() would fold those onto the positive side,
+        % making a cell that rose indistinguishable from one that fell by
+        % the same amount. Negation keeps them separate, as small negative
+        % drops at the green end, so no information is lost.
+        DeltaCp(:, s) = (-GAIN * delta_raw)';
+
+        fprintf('%-8s: %d/%d iterations; raw delta %.1f..%.1f counts -> Cp drop %.4f..%.4f pF\n', ...
             surface_names{s}, sum(~isnan(per_it(:, 1))), N_ITERATIONS, ...
-            min(delta_raw), max(delta_raw), min(GAIN * delta_raw), max(GAIN * delta_raw));
+            min(delta_raw), max(delta_raw), min(-GAIN * delta_raw), max(-GAIN * delta_raw));
     end
 
     vals = DeltaCp(~isnan(DeltaCp));
     scale = [min(vals), max(vals)];
-    fprintf('  dCp scale: [%.4f, %.4f] pF\n', scale(1), scale(2));
+    fprintf('  Cp drop scale: [%.4f, %.4f] pF  (positive = capacitance reduced by contact)\n', ...
+        scale(1), scale(2));
 
     point_folder = fullfile(results_folder, sprintf('P%02d', PRESSED_POINT));
     if ~exist(point_folder, 'dir')
@@ -346,8 +367,8 @@ for pi = 1:numel(POINT_IDS_TO_ANALYZE)
     end
 
     fig = plot_matrix_as_hexmap(DeltaCp, surface_names, ...
-        'Delta capacitance (pF), press-induced', ...
-        sprintf('P%02d -- delta capacitance (direct calibration, GAIN=%.6f pF/count)', PRESSED_POINT, GAIN), ...
+        'Capacitance drop -dCp (pF): positive = contact lowered Cp', ...
+        sprintf('P%02d -- capacitance drop (direct calibration, GAIN=%.6f pF/count)', PRESSED_POINT, GAIN), ...
         PRESSED_POINT, scale, SHOW_LABELS, point_ids, point_xy);
     save_fig_svg(fig, fullfile(point_folder, 'capacitance_delta_hexmap'));
     close(fig);

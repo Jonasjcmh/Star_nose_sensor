@@ -1,50 +1,74 @@
 % =========================================================================
 % capacitance_19points_analysis.m
 %
-% Same cross-talk hex-map analysis as simple_19points_analysis.m (same
-% data loading, same TRUE_TO_CODE board-label correction, same identity
-% own_cell_col, same per-iteration-mean-then-median-across-iterations
-% statistics), but the final plots are in REAL CAPACITANCE (pF) instead
-% of raw counts / normalized [0,1] -- using the per-cell, per-surface
-% linear relationship already derived and verified in
-% Capacitance_calibration_Muca_LCR_Futek/results/muca_v_to_cp_table.csv:
+% Cross-talk hex maps in REAL CAPACITANCE (pF), for mucaboard_data_raw.
 %
-%   Cp_pF = A(cell, surface) * V_own + B(cell, surface)
+% METHOD (rewritten -- see "WHY THIS REPLACED THE OLD METHOD" below):
+% converts the muca board's raw counts to capacitance using the DIRECT
+% electrical calibration in capacitance_combination_calibration/ -- known
+% capacitors wired straight to muca board inputs, with their true value
+% measured on an LCR-6100 at the same time. That gives a single, clean
+% instrument gain:
 %
-% (see that folder's chained_muca_v_to_cp_via_force.m for how A/B were
-% obtained: mucaboard_data_raw's own press/retract ramp gives a per-cell
-% Force<->V fit; Capacitance_measurement's LCR sweep gives a per-cell
-% Force<->Cp_pF fit; chaining the two through Force eliminates Force and
-% leaves this direct V<->Cp_pF equation, per cell, per surface.)
+%     dCp_pF = GAIN * d(raw counts)          GAIN = -0.001744 pF/count
 %
-% Because Cp is a DIRECT LINEAR FUNCTION of V here (not a separately
-% normalized quantity the way V itself is a gamma-transform of raw
-% counts), there is no capacitance analogue of "raw counts" as a distinct
-% step -- so this produces 4 plots per point, not 5:
-%   1. Baseline capacitance   -- Cp at V=0 (that cell's own B coefficient)
-%   2. Pressed capacitance    -- Cp at the cross-talk/press V observed
-%                                 when the CHOSEN point is pressed
-%   3. Delta capacitance      -- Pressed minus Baseline (pF)
-%   4. Delta / Baseline       -- Delta as a fraction of Baseline Cp
+% obtained by fitting Cp_pF vs the muca reading across 6 capacitor
+% combinations spanning 0.98-2.53 pF (R^2 = 0.9958).
 %
-% CAVEAT: A/B were fit from V values recorded while THAT SPECIFIC point
-% was itself being pressed (own-press dynamics). Applying that same
-% per-cell equation to CROSS-TALK-induced V (small residual signal on a
-% cell when a NEIGHBORING point is pressed instead) assumes the cell's
-% own V<->Cp transfer function doesn't depend on why V changed -- a
-% reasonable but untested extrapolation of the model to a much smaller
-% signal regime than it was fit on.
+% IMPORTANT -- the combination-calibration readings are SIGNED 16-bit
+% values that the logger writes as UNSIGNED, so a real reading of -354
+% appears in the CSV as 65182 (= -354 + 65536). Reinterpreting them
+% (value - 65536 when value > 32767) makes them vary perfectly
+% monotonically with the known capacitance; without that step they look
+% like meaningless "saturated" garbage near 65535 and get discarded.
+% mucaboard_data_raw's own files are unaffected (all small positives).
 %
-% Where the results go: mucaboard_data_raw/matlab/results/P<id>/ -- same
-% per-point subfolders simple_19points_analysis.m already writes into,
-% with a "capacitance_" prefix on these 4 new files (.fig + .svg).
+% WHY THIS REPLACED THE OLD METHOD
+% The previous version chained two fits through FORCE:
+%     V = a*Force + b   (from mucaboard_data_raw + Futek load cell)
+%     Cp = c*Force + d  (from Capacitance_measurement + Futek load cell)
+% and composed them into Cp = A*V + B by evaluating at V=0 and V=1. That
+% turned out to be invalid:
+%   - V=0 mapped to a NEGATIVE Futek force (median -4 N) for 44 of 57
+%     cells, and V=1 mapped to 26-67 N, while the LCR sweep only ever
+%     measured 2.6-20 N. Both anchor points were pure extrapolation.
+%   - The resulting "baseline" B ranged 0.05-2.03 pF, which is why the
+%     baseline/press hex maps looked saturated and implausible.
+%   - 3 cells came out with a sign-flipped slope (from Force<->V fits
+%     with R^2 as low as 0.16), mixing +/- into the delta color scale.
+%   - Forcing the Force<->V fit through the origin (physically required:
+%     zero force must mean zero reading) made R^2 go NEGATIVE (-0.35,
+%     -1.28) on several points -- i.e. V-vs-force is genuinely nonlinear
+%     and no linear model extrapolates safely to V=0.
+% The direct calibration used here needs none of that: no force, no
+% cross-dataset bridging, no extrapolation to unphysical states.
+%
+% INDEPENDENT CORROBORATION
+% Applying GAIN to mucaboard_data_raw's own-cell press deltas gives a
+% mean dCp of -0.025 pF (range -0.009 to -0.041). Measuring the same
+% thing completely independently -- LCR wired to the sensor, Cp change
+% from a 5mm to a 10mm press (Capacitance_measurement) -- gives -0.061 pF
+% (range -0.040 to -0.083). Same sign, same order of magnitude, from two
+% methods that share no data and no assumptions.
+%
+% WHAT THIS SCRIPT DOES *NOT* CLAIM
+% Only the CHANGE in capacitance (dCp) is derived here, never an absolute
+% per-cell Cp. The combination calibration measures a bare capacitor
+% across an input; the sensor electrode has its own self-capacitance in a
+% different topology, so the calibration's absolute intercept does not
+% transfer. dCp is offset-free by construction (the baseline cancels in
+% the subtraction), which is exactly the quantity a cross-talk map should
+% show.
+%
+% Output: results/P<id>/capacitance_delta_hexmap.(fig|svg) -- one per
+% analyzed point, alongside the existing raw-count plots.
 % =========================================================================
 
 clear; close all; clc;
 
 addpath(fullfile(fileparts(mfilename('fullpath')), '..', '..', 'mucaboard_data', 'matlab'));
 
-%% ---- a tiny helper to turn one 19x3 matrix into a hexagon picture -----
+%% ---- helpers (defined up top -- Octave requires that) ----------------
 function fig = plot_matrix_as_hexmap(matrix_19x3, surface_names, colorbar_label, title_str, highlight_point, color_limits, show_labels, ids, xy)
     HEX_RADIUS = 8.0 / sqrt(3);
     if isempty(color_limits)
@@ -79,17 +103,12 @@ function fig = plot_matrix_as_hexmap(matrix_19x3, surface_names, colorbar_label,
     fig_suptitle(fig, title_str);
 end
 
-%% ---- a tiny helper to save a figure as .fig + .svg (no PNG) -----------
 function save_fig_svg(fig, path_no_ext)
-    fig_path = [path_no_ext '.fig'];
-    svg_path = [path_no_ext '.svg'];
-    savefig(fig, fig_path);
-    print(fig, svg_path, '-dsvg');
-    fprintf('  saved: %s\n', fig_path);
-    fprintf('  saved: %s\n', svg_path);
+    savefig(fig, [path_no_ext '.fig']);
+    print(fig, [path_no_ext '.svg'], '-dsvg');
+    fprintf('  saved: %s.(fig/svg)\n', path_no_ext);
 end
 
-%% ---- same NaN-aware median/mean-across-columns helpers ---------------
 function out_row = median_ignore_nan_cols(M)
     n_cols = size(M, 2);
     out_row = nan(1, n_cols);
@@ -114,18 +133,95 @@ function out_row = nanmean_cols(M)
     end
 end
 
-% ---- Board-label / own-cell corrections -- identical to
-% simple_19points_analysis.m (see that script for the full derivation).
+function v = to_signed16(v)
+% Logger writes signed 16-bit readings as unsigned -- undo that.
+    v(v > 32767) = v(v > 32767) - 65536;
+end
+
+%% ---- board-label / own-cell corrections (see simple_19points_analysis.m)
 TRUE_TO_CODE = [8,4,1,13,9,5,2,17,14,10,6,3,18,15,11,7,19,16,12];
-[code_point_ids, code_point_xy, ~] = muca_layout();
+[~, code_point_xy, ~] = muca_layout();
 point_ids    = (1:19)';
 point_xy     = code_point_xy(TRUE_TO_CODE, :);
 own_cell_col = TRUE_TO_CODE(:);
-HEX_RADIUS = 8.0 / sqrt(3);
 
-%% ---- STEP 1: settings -------------------------------------------------
-data_folder = fullfile(fileparts(mfilename('fullpath')), '..', 'logs');
+%% ---- STEP 1: derive GAIN from the combination calibration -------------
+HERE = fileparts(mfilename('fullpath'));
+combo_csv = fullfile(HERE, '..', '..', 'capacitance_combination_calibration', 'logs', ...
+    'flat_calibration_muca_lcr_session_20260826_225636.csv');
 
+fprintf('%s\n', repmat('=', 1, 70));
+fprintf('  STEP 1 -- direct calibration: known capacitor -> muca raw count\n');
+fprintf('%s\n', repmat('=', 1, 70));
+
+fid = fopen(combo_csv, 'r');
+hl = fgetl(fid);
+hdr = strsplit(hl, ',', 'CollapseDelimiters', false);
+Cc = textscan(fid, repmat('%s', 1, numel(hdr)), 'Delimiter', ',', 'Whitespace', '');
+fclose(fid);
+cget = @(n) Cc{find(strcmp(hdr, n), 1)};
+c_phase = cget('phase');
+c_label = cget('combination_label');
+c_cp    = str2double(cget('Cp_pF'));
+c_cells = nan(numel(c_phase), 19);
+for k = 1:19
+    c_cells(:, k) = str2double(cget(sprintf('cell_%d', k)));
+end
+
+% Each combination was measured at SEVERAL point_labels in turn (the
+% capacitor is moved by hand from one muca input to the next). Those must
+% be grouped SEPARATELY: pooling a combination's rows together would
+% average the one wired cell's strong reading against the 4-ish blocks
+% where that same cell was back at its ~20-count resting level, diluting
+% the calibration signal ~5x (and inflating the fitted gain by the same
+% factor). Group by (combination, point_label), find the wired cell in
+% each group, and use one calibration sample per group.
+c_point = cget('point_label');
+cal_raw = []; cal_cp = []; cal_lbl = {};
+labels = unique(c_label);
+fprintf('  %-10s %-10s %12s %14s\n', 'combo', 'point', 'LCR Cp (pF)', 'muca (signed)');
+for i = 1:numel(labels)
+    lb = labels{i};
+    m_lcr = strcmp(c_phase, 'lcr') & strcmp(c_label, lb);
+    if ~any(m_lcr)
+        continue;
+    end
+    cp_true = mean(c_cp(m_lcr), 'omitnan');
+
+    pts_here = unique(c_point(strcmp(c_phase, 'muca') & strcmp(c_label, lb)));
+    for j = 1:numel(pts_here)
+        pl = pts_here{j};
+        m_muca = strcmp(c_phase, 'muca') & strcmp(c_label, lb) & strcmp(c_point, pl);
+        if ~any(m_muca)
+            continue;
+        end
+        blk = to_signed16(c_cells(m_muca, :));
+        cellmeans = nanmean_cols(blk);
+        [raw_active, active_k] = min(cellmeans);   % wired cell reads strongly NEGATIVE
+        if raw_active > -20   % no clearly-wired cell in this block -- skip
+            continue;
+        end
+        cal_raw(end+1) = raw_active; %#ok<AGROW>
+        cal_cp(end+1)  = cp_true;    %#ok<AGROW>
+        cal_lbl{end+1} = sprintf('%s/%s', lb, pl); %#ok<AGROW>
+        fprintf('  %-10s %-10s %12.4f %14.1f\n', lb, pl, cp_true, raw_active);
+    end
+end
+
+pcal = polyfit(cal_raw, cal_cp, 1);
+yfit = polyval(pcal, cal_raw);
+r2cal = 1 - sum((cal_cp - yfit).^2) / sum((cal_cp - mean(cal_cp)).^2);
+GAIN = pcal(1);
+fprintf('\n  FIT: Cp_pF = %.6f * signed_raw + %.4f   (R2 = %.4f, n = %d)\n', ...
+    pcal(1), pcal(2), r2cal, numel(cal_raw));
+fprintf('  GAIN = %.6f pF per raw count -- this is what converts a muca\n', GAIN);
+fprintf('  reading CHANGE into a capacitance CHANGE.\n');
+fprintf(['  NOTE: only the SLOPE is used below. The intercept (%.4f pF) belongs to\n' ...
+    '  the bare-capacitor-on-input topology and does NOT transfer to the sensor\n' ...
+    '  electrode, so no absolute Cp is claimed -- only dCp, which is offset-free.\n'], pcal(2));
+
+%% ---- STEP 2: settings -------------------------------------------------
+data_folder = fullfile(HERE, '..', 'logs');
 surface_names = {'flat', 'solid', 'hollow'};
 file_names = { ...
     'flat_sensor_19_points_10_iterations_session_20260826_155255.csv', ...
@@ -133,126 +229,64 @@ file_names = { ...
     'hollow_sensor_iterations_all_session_20260826_190632.csv' ...
 };
 
-% All 19 points, matching the per-point folders already populated by
-% simple_19points_analysis.m -- these new capacitance_* files are added
-% alongside the existing 5 files in each results/P<id>/ folder.
 POINT_IDS_TO_ANALYZE = 1:19;
-
 N_ITERATIONS  = 10;
-SENSITIVITY   = 36.0;
-GAMMA         = 0.5;
-RAW_VALID_MAX = 1000;
+RAW_VALID_MAX = 1000;   % after signed reinterpretation, anything still this
+                         % large is a genuine hardware fault (see qa_check_dataset.m)
 SHOW_LABELS   = false;
+n_points = 19; n_surfaces = 3;
 
-n_points   = 19;
-n_surfaces = 3;
-
-%% ---- STEP 1B: load the per-cell, per-surface Cp = A*V + B table -------
-coeff_csv = fullfile(fileparts(mfilename('fullpath')), '..', '..', ...
-    'Capacitance_calibration_Muca_LCR_Futek', 'results', 'muca_v_to_cp_table.csv');
-if ~exist(coeff_csv, 'file')
-    error('capacitance_19points_analysis:missing', ...
-        ['muca_v_to_cp_table.csv not found -- run, in order:\n' ...
-         '  Capacitance_calibration_Muca_LCR_Futek/per_point_surface_relationships.m\n' ...
-         '  Capacitance_calibration_Muca_LCR_Futek/chained_muca_v_to_cp_via_force.m\n' ...
-         '  Capacitance_calibration_Muca_LCR_Futek/muca_v_to_cp_table.m\n' ...
-         'first. Expected at: %s'], coeff_csv);
-end
-fid = fopen(coeff_csv, 'r');
-header_line = fgetl(fid);
-header = strsplit(header_line, ',', 'CollapseDelimiters', false);
-fmt = repmat('%s', 1, numel(header));
-Ccoef = textscan(fid, fmt, 'Delimiter', ',', 'Whitespace', '');
-fclose(fid);
-colc = @(name) Ccoef{find(strcmp(header, name), 1)};
-coef_surface = colc('surface');
-coef_point   = str2double(colc('true_point'));
-coef_A       = str2double(colc('slope_A'));
-coef_B       = str2double(colc('intercept_B'));
-coef_r2      = str2double(colc('r2_weakest_link'));
-
-A_table  = nan(19, 3);   % A_table(cell, surface)
-B_table  = nan(19, 3);
-R2_table = nan(19, 3);
-for i = 1:numel(coef_surface)
-    s = find(strcmp(surface_names, coef_surface{i}), 1);
-    p = coef_point(i);
-    if isempty(s) || isnan(p) || p < 1 || p > 19
-        continue;
-    end
-    A_table(p, s)  = coef_A(i);
-    B_table(p, s)  = coef_B(i);
-    R2_table(p, s) = coef_r2(i);
-end
-fprintf('Loaded muca_V -> Cp_pF coefficients: %d/57 (point,surface) equations, mean R2=%.3f\n', ...
-    sum(~isnan(A_table(:))), mean(R2_table(~isnan(R2_table))));
-
-%% ---- STEP 2: read all 3 surface files ONCE (identical to
-%       simple_19points_analysis.m) ---------------------------------------
+%% ---- STEP 3: read all 3 surfaces once ---------------------------------
 surface_data = cell(1, n_surfaces);
 for s = 1:n_surfaces
     csv_path = fullfile(data_folder, file_names{s});
-    fprintf('Reading %s ...\n', file_names{s});
-
+    fprintf('\nReading %s ...\n', file_names{s});
     fid = fopen(csv_path, 'r');
-    header_line  = fgetl(fid);
-    column_names = strsplit(header_line, ',', 'CollapseDelimiters', false);
-
-    text_rows = {};
+    hl = fgetl(fid);
+    cn = strsplit(hl, ',', 'CollapseDelimiters', false);
+    tr = {};
     while true
-        line = fgetl(fid);
-        if ~ischar(line)
-            break;
-        end
-        text_rows{end + 1} = strsplit(line, ',', 'CollapseDelimiters', false); %#ok<AGROW>
+        L = fgetl(fid);
+        if ~ischar(L), break; end
+        tr{end+1} = strsplit(L, ',', 'CollapseDelimiters', false); %#ok<AGROW>
     end
     fclose(fid);
+    n_rows = numel(tr);
+    dt = vertcat(tr{:});
+    ci = @(n) find(strcmp(cn, n));
+    gn = @(n) str2double(dt(:, ci(n)));
 
-    n_rows    = numel(text_rows);
-    data_text = vertcat(text_rows{:});
-
-    column_index = @(name) find(strcmp(column_names, name));
-    get_numbers  = @(name) str2double(data_text(:, column_index(name)));
-
-    ur5_point = get_numbers('ur5_point');
-    round_idx = get_numbers('round_idx');
-    phase     = data_text(:, column_index('phase'));
+    ur5_point = gn('ur5_point');
+    round_idx = gn('round_idx');
+    phase     = dt(:, ci('phase'));
 
     raw_cells = nan(n_rows, 19);
     for k = 1:19
-        raw_cells(:, k) = get_numbers(sprintf('cell_%d', k));
+        raw_cells(:, k) = to_signed16(gn(sprintf('cell_%d', k)));
     end
     calib_raw = nan(1, 19);
     for k = 1:19
-        one_column = get_numbers(sprintf('calib_%d', k));
-        calib_raw(k) = one_column(1);
+        oc = to_signed16(gn(sprintf('calib_%d', k)));
+        calib_raw(k) = oc(1);
     end
-
-    n_bad = sum(raw_cells(:) > RAW_VALID_MAX);
-    raw_cells(raw_cells > RAW_VALID_MAX) = NaN;
-    calib_raw(calib_raw > RAW_VALID_MAX) = NaN;
+    n_bad = sum(abs(raw_cells(:)) > RAW_VALID_MAX);
+    raw_cells(abs(raw_cells) > RAW_VALID_MAX) = NaN;
+    calib_raw(abs(calib_raw) > RAW_VALID_MAX) = NaN;
     if n_bad > 0
-        fprintf(['  WARNING: %d/%d raw readings exceeded %g raw counts ' ...
-            '(sensor glitch) -- set to NaN and excluded from all stats\n'], ...
-            n_bad, numel(raw_cells), RAW_VALID_MAX);
+        fprintf('  WARNING: %d readings still out of range after signed fix -- set to NaN\n', n_bad);
     end
-
-    raw_by_point   = raw_cells(:, own_cell_col);
-    calib_by_point = calib_raw(own_cell_col);
 
     surface_data{s} = struct( ...
-        'raw_by_point',   raw_by_point, ...
-        'calib_by_point', calib_by_point, ...
+        'raw_by_point',   raw_cells(:, own_cell_col), ...
+        'calib_by_point', calib_raw(own_cell_col), ...
         'ur5_point',      ur5_point, ...
         'round_idx',      round_idx, ...
         'phase',          {phase});
-
     fprintf('  %d rows loaded\n', n_rows);
 end
 
-%% ---- STEP 3: for every chosen point, build Normalized_matrix (V), ------
-%       then convert to Cp_pF using the per-cell/per-surface table -------
-results_folder = fullfile(fileparts(mfilename('fullpath')), 'results');
+%% ---- STEP 4: per point, dCp = GAIN * d(raw) ---------------------------
+results_folder = fullfile(HERE, 'results');
 if ~exist(results_folder, 'dir')
     mkdir(results_folder);
 end
@@ -264,103 +298,48 @@ for pi = 1:numel(POINT_IDS_TO_ANALYZE)
     fprintf('  POINT %d\n', PRESSED_POINT);
     fprintf('%s\n', repmat('=', 1, 60));
 
-    Normalized_matrix = nan(n_points, n_surfaces);
+    DeltaCp = nan(n_points, n_surfaces);
 
     for s = 1:n_surfaces
         d = surface_data{s};
+        is_pressed = (d.ur5_point == CODE_PRESSED_POINT) ...
+                   & (d.round_idx >= 0) & (d.round_idx <= N_ITERATIONS - 1) ...
+                   & strcmp(d.phase, 'hold');
 
-        is_pressed_row = (d.ur5_point == CODE_PRESSED_POINT) ...
-                        & (d.round_idx >= 0) & (d.round_idx <= N_ITERATIONS - 1) ...
-                        & strcmp(d.phase, 'hold');
+        % raw delta from that cell's own resting baseline -- the offset is
+        % removed HERE, by subtraction, so what follows is purely the
+        % press-induced change (exactly what a cross-talk map should show)
+        delta_raw_all = d.raw_by_point - d.calib_by_point;
 
-        ratio_all = (d.raw_by_point - d.calib_by_point) / SENSITIVITY;
-        ratio_all = min(max(ratio_all, 0), 1);
-        normalized_all = ratio_all .^ GAMMA;
-
-        normalized_per_iteration = nan(N_ITERATIONS, 19);
-        for iteration = 0:(N_ITERATIONS - 1)
-            rows = is_pressed_row & (d.round_idx == iteration);
-            if ~any(rows)
-                continue;
-            end
-            normalized_per_iteration(iteration + 1, :) = nanmean_cols(normalized_all(rows, :));
+        per_it = nan(N_ITERATIONS, 19);
+        for it = 0:(N_ITERATIONS - 1)
+            rows = is_pressed & (d.round_idx == it);
+            if ~any(rows), continue; end
+            per_it(it + 1, :) = nanmean_cols(delta_raw_all(rows, :));
         end
-        Normalized_matrix(:, s) = median_ignore_nan_cols(normalized_per_iteration)';
+        delta_raw = median_ignore_nan_cols(per_it);
+        DeltaCp(:, s) = (GAIN * delta_raw)';
 
-        found = ~isnan(normalized_per_iteration(:, 1));
-        fprintf('%-8s: %d/%d iterations found for point %d\n', ...
-            surface_names{s}, sum(found), N_ITERATIONS, PRESSED_POINT);
+        fprintf('%-8s: %d/%d iterations; raw delta %.1f..%.1f counts -> dCp %.4f..%.4f pF\n', ...
+            surface_names{s}, sum(~isnan(per_it(:, 1))), N_ITERATIONS, ...
+            min(delta_raw), max(delta_raw), min(GAIN * delta_raw), max(GAIN * delta_raw));
     end
 
-    % ---- Convert to capacitance, per cell (row), per surface (col) -----
-    % Baseline_pF(k,s) = B(k,s) -- Cp at V=0, a fixed property of cell k
-    % on surface s, the SAME for every PRESSED_POINT (identical reasoning
-    % to why Baseline_matrix in simple_19points_analysis.m never depended
-    % on which point was pressed either -- it's calib_by_point there too).
-    Baseline_pF = B_table;
-    Press_pF    = A_table .* Normalized_matrix + B_table;
-    Delta_pF    = Press_pF - Baseline_pF;
-    DeltaOverBaseline_pF = Delta_pF ./ Baseline_pF;
-
-    % ---- Independent scales, NOT shared -----------------------------------
-    % Baseline_pF (the B intercepts) never changes with PRESSED_POINT --
-    % it's a fixed property of each cell/surface. Press_pF DOES change per
-    % point (through Normalized_matrix), but only by ~0.1-0.2 pF, while
-    % Baseline itself spans ~2 pF cell-to-cell (real electrode-to-electrode
-    % hardware variation). Sharing one scale between the two, as this
-    % script originally did, caused two problems: (1) Baseline's rendered
-    % colors shifted by a rounding sliver from one point-folder to the
-    % next, even though the underlying values never changed -- confusing,
-    % since it looked like a bug rather than the true no-change reality;
-    % (2) Press's real per-point touch signal got crushed into an
-    % imperceptible fraction of a color range dominated by Baseline's much
-    % larger spread. Giving each its own scale fixes both: Baseline now
-    % renders IDENTICALLY across every point folder (as it should, since
-    % it doesn't depend on which point was pressed), and Press uses its
-    % own full range.
-    baseline_scale = [min(Baseline_pF(:)), max(Baseline_pF(:))];
-
-    press_values = Press_pF(~isnan(Press_pF));
-    press_scale  = [min(press_values), max(press_values)];
-
-    delta_values = Delta_pF(~isnan(Delta_pF));
-    delta_scale  = [min(delta_values), max(delta_values)];
-
-    dob_values = DeltaOverBaseline_pF(~isnan(DeltaOverBaseline_pF));
-    dob_scale  = [min(dob_values), max(dob_values)];
-
-    fprintf('  Baseline Cp scale (fixed, same for every point): [%.4f, %.4f] pF\n', baseline_scale(1), baseline_scale(2));
-    fprintf('  Press Cp scale (this point only): [%.4f, %.4f] pF\n', press_scale(1), press_scale(2));
-    fprintf('  Delta Cp scale: [%.4f, %.4f] pF\n', delta_scale(1), delta_scale(2));
-    fprintf('  Delta/Baseline Cp scale: [%.4f, %.4f]\n', dob_scale(1), dob_scale(2));
+    vals = DeltaCp(~isnan(DeltaCp));
+    scale = [min(vals), max(vals)];
+    fprintf('  dCp scale: [%.4f, %.4f] pF\n', scale(1), scale(2));
 
     point_folder = fullfile(results_folder, sprintf('P%02d', PRESSED_POINT));
     if ~exist(point_folder, 'dir')
         mkdir(point_folder);
     end
 
-    fig1 = plot_matrix_as_hexmap(Baseline_pF, surface_names, ...
-        'Baseline capacitance, Cp at V=0 (pF)', ...
-        sprintf('P%02d -- baseline capacitance', PRESSED_POINT), PRESSED_POINT, baseline_scale, SHOW_LABELS, point_ids, point_xy);
-    save_fig_svg(fig1, fullfile(point_folder, 'capacitance_baseline_hexmap'));
-
-    fig2 = plot_matrix_as_hexmap(Press_pF, surface_names, ...
-        'Pressed capacitance (pF)', ...
-        sprintf('P%02d -- pressed capacitance', PRESSED_POINT), PRESSED_POINT, press_scale, SHOW_LABELS, point_ids, point_xy);
-    save_fig_svg(fig2, fullfile(point_folder, 'capacitance_press_hexmap'));
-
-    fig3 = plot_matrix_as_hexmap(Delta_pF, surface_names, ...
-        'Delta capacitance = Pressed - Baseline (pF)', ...
-        sprintf('P%02d -- delta capacitance', PRESSED_POINT), PRESSED_POINT, [], SHOW_LABELS, point_ids, point_xy);
-    save_fig_svg(fig3, fullfile(point_folder, 'capacitance_delta_hexmap'));
-
-    fig4 = plot_matrix_as_hexmap(DeltaOverBaseline_pF, surface_names, ...
-        'Delta Cp / Baseline Cp (fraction)', ...
-        sprintf('P%02d -- delta capacitance / baseline capacitance', PRESSED_POINT), PRESSED_POINT, [], SHOW_LABELS, point_ids, point_xy);
-    save_fig_svg(fig4, fullfile(point_folder, 'capacitance_delta_over_baseline_hexmap'));
-
-    close([fig1 fig2 fig3 fig4]);
-    fprintf('  Figures saved in: %s\n', point_folder);
+    fig = plot_matrix_as_hexmap(DeltaCp, surface_names, ...
+        'Delta capacitance (pF), press-induced', ...
+        sprintf('P%02d -- delta capacitance (direct calibration, GAIN=%.6f pF/count)', PRESSED_POINT, GAIN), ...
+        PRESSED_POINT, scale, SHOW_LABELS, point_ids, point_xy);
+    save_fig_svg(fig, fullfile(point_folder, 'capacitance_delta_hexmap'));
+    close(fig);
 end
 
 fprintf('\nAll done. Results in: %s\n', results_folder);

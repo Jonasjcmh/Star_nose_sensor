@@ -78,7 +78,18 @@ function fig = plot_matrix_as_hexmap(matrix_19x3, surface_names, colorbar_label,
         vmin = color_limits(1);
         vmax = color_limits(2);
     end
-    cmap = get_cmap();
+    % INVERTED colormap -- capacitance plots ONLY.
+    % A press LOWERS capacitance (dCp is negative, see GAIN below), so with
+    % the project's standard green->red ramp the contact point -- the most
+    % negative cell -- would come out green, and untouched cells red. That
+    % reads backwards: the point being touched should be the hot one. So
+    % the ramp is flipped here, giving red at the most-negative (strongest
+    % contact) end. The VALUES and the colorbar axis are unchanged -- only
+    % the color-to-value direction is reversed, so the colorbar now runs
+    % red (most negative) -> green (least negative), which is what the
+    % numbers actually say. get_cmap() itself is untouched, so every other
+    % plot in this project keeps its original orientation.
+    cmap = flipud(get_cmap());
     n_panels = numel(surface_names);
     panel_left_all = [0.03, 0.35, 0.67];
     panel_width = 0.27;

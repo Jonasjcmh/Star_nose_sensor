@@ -1,2 +1,3 @@
 Capacitance_measurement/logs/two_point_iterations_ALL19_*_sensor.csv filter=lfs diff=lfs merge=lfs -text
+Capacitance_measurement/logs/two_point_iterations_ALL19_*.csv filter=lfs diff=lfs merge=lfs -text
 Interdome_touch/logs/*.csv filter=lfs diff=lfs merge=lfs -text

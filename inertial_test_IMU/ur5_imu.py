@@ -40,6 +40,9 @@ ACCELERATION    = 0.3      # m/s²
 # reference pose rather than a press depth below a surface.
 DEFAULT_HEIGHT_MM = 30.0   # plane in which the trajectory is executed
 TRAVEL_HEIGHT_MM  = 60.0   # extra-clear height used to travel to the start point
+CALIB_HEIGHT_MM   = -20.0  # plane (below reference) where the yaw is calibrated
+                           # before each run; only on confirm does the tool rise
+                           # to the commanded work height.
 
 # ── Reference pose (centre of the working area; matches ur5_friction.py) ───────
 REFERENCE_POSE = [
@@ -66,10 +69,17 @@ _state = {
     'wp':       0,           # current waypoint index (1-based)
     'wp_total': 0,           # total waypoints in the active trajectory
     'yaw':      None,        # target yaw (deg) of the current waypoint, if any
+    'awaiting_confirm': False,  # True while paused at start for yaw confirmation
 }
 
 _rtde_r_ref = [None]
 _stop_flag  = threading.Event()
+
+# Start-orientation confirmation: when enabled, the robot pauses at the first
+# waypoint and re-points to the live yaw until confirm_start() is signalled, so
+# the operator can verify / adjust the initial heading before the path runs.
+_confirm_enabled = [True]
+_confirm_evt     = threading.Event()
 
 # Live central-point offset (mm), applied to EVERY waypoint. Adjustable at
 # runtime from the visualizer (arrow keys / mouse) exactly like friction_live.
@@ -118,6 +128,17 @@ def get_height_mm():
 def request_stop():
     """Ask the trajectory to stop after the current waypoint and return home."""
     _stop_flag.set()
+    _confirm_evt.set()          # unblock a start-orientation wait, if any
+
+
+def set_confirm_enabled(on):
+    """Enable/disable the start-orientation confirmation pause."""
+    _confirm_enabled[0] = bool(on)
+
+
+def confirm_start():
+    """Operator confirmed the start orientation — let the trajectory proceed."""
+    _confirm_evt.set()
 
 
 def get_state():
@@ -130,6 +151,7 @@ def get_state():
             'wp':       _state['wp'],
             'wp_total': _state['wp_total'],
             'yaw':      _state['yaw'],
+            'awaiting_confirm': _state['awaiting_confirm'],
         }
 
 
@@ -167,15 +189,6 @@ def get_yaw_offset():
         return _yaw_offset[0]
 
 
-def _effective_yaw(base_yaw_deg):
-    """Combine a waypoint's yaw with the manual offset.
-    Returns None when there is nothing to apply (keeps reference orientation)."""
-    off = get_yaw_offset()
-    if base_yaw_deg is None:
-        return off if (APPLY_YAW and abs(off) > 1e-9) else None
-    return base_yaw_deg + off
-
-
 # ── Orientation helpers (rotation-vector ↔ matrix, base-Z yaw) ─────────────────
 
 def _rotvec_to_matrix(rv):
@@ -207,14 +220,28 @@ def _matrix_to_rotvec(R):
 # Reference orientation matrix, computed once from REFERENCE_POSE.
 _R_REF = _rotvec_to_matrix(REFERENCE_POSE[3:6])
 
+# Orientation that yaw=0 maps to ("calibration origin"), stored as a rotation
+# vector so it can be used verbatim (no matrix round-trip). Defaults to the
+# reference orientation; run_trajectory replaces it with the measured wrist-3=0
+# pose after the start zeroing, so every calibrated / waypoint yaw is applied
+# relative to that mechanical zero.
+_YAW_BASE_RV = [list(REFERENCE_POSE[3:6])]
+
 
 def _yaw_rotvec(yaw_deg):
-    """Rotation vector for the tool yawed about base Z by (yaw - YAW_REF_DEG)."""
+    """Rotation vector for the tool yawed about base Z by (yaw - YAW_REF_DEG),
+    relative to the current yaw-calibration base orientation."""
     a = np.radians(yaw_deg - YAW_REF_DEG)
+    # At (near) the zero point, return the stored base rotvec verbatim. The
+    # base orientation is a ~180° rotation, where matrix→rotvec is sign-
+    # ambiguous; round-tripping it there can flip the orientation and kick
+    # wrist 3 off zero, so skip the round-trip entirely.
+    if abs(a) < 1e-9:
+        return list(_YAW_BASE_RV[0])
     Rz = np.array([[np.cos(a), -np.sin(a), 0.0],
                    [np.sin(a),  np.cos(a), 0.0],
                    [0.0,        0.0,       1.0]])
-    return _matrix_to_rotvec(Rz @ _R_REF)
+    return _matrix_to_rotvec(Rz @ _rotvec_to_matrix(_YAW_BASE_RV[0]))
 
 
 # ── Pose construction ─────────────────────────────────────────────────────────
@@ -232,6 +259,10 @@ def _build_pose(x_mm, y_mm, z_mm, yaw_deg=None):
     pose[2] += z_mm / 1000.0
     if yaw_deg is not None and APPLY_YAW:
         pose[3], pose[4], pose[5] = _yaw_rotvec(yaw_deg)
+    else:
+        # No yaw requested → hold the yaw-calibration base orientation (equals
+        # the reference orientation until the wrist-3 zero redefines it).
+        pose[3], pose[4], pose[5] = _YAW_BASE_RV[0]
     return pose
 
 
@@ -298,11 +329,26 @@ def _connect_control():
     return None
 
 
-def _return_home(rtde_c):
+def _zero_wrist3(rtde_c, rtde_r):
+    """Rotate only joint 6 (wrist 3) to exactly 0 rad."""
+    try:
+        q = list(rtde_r.getActualQ())
+        q[5] = 0.0
+        rtde_c.moveJ(q, 1.0, 0.5)
+        return True
+    except Exception as e:
+        print(f"[ur5] Wrist-3 zero failed: {e}")
+        return False
+
+
+def _return_home(rtde_c, rtde_r=None):
     try:
         print("[ur5] Returning to home ...")
         rtde_c.moveL(_home_pose(), VELOCITY_TRAVEL, ACCELERATION)
-        print("[ur5] At home")
+        # Leave the wrist parked at its mechanical zero for the next run.
+        if rtde_r is not None:
+            _zero_wrist3(rtde_c, rtde_r)
+        print("[ur5] At home (wrist 3 = 0)")
     except Exception as e:
         print(f"[ur5] Home failed: {e}")
 
@@ -364,24 +410,76 @@ def run_trajectory(pts, height_mm=DEFAULT_HEIGHT_MM,
         return
 
     try:
+        # Fresh orientation reference for this run; the wrist-3 zero below
+        # redefines yaw=0 as the mechanical zero.
+        _YAW_BASE_RV[0] = list(REFERENCE_POSE[3:6])
+        set_yaw_offset(0.0)          # yaw calibration always starts from 0
+
         # Home, then travel above the first waypoint at extra clearance.
         print("[ur5] Moving to home position ...")
         rtde_c.moveL(_home_pose(), VELOCITY_TRAVEL, ACCELERATION)
 
         x0, y0 = _offset_clamped(pts[0][0], pts[0][1])
-        yaw0 = _effective_yaw(pts[0][2] if len(pts[0]) >= 3 else None)
-        print(f"[ur5] Travelling above start ({x0:+.1f}, {y0:+.1f}) mm"
-              + (f", yaw {yaw0:+.0f}°" if yaw0 is not None and APPLY_YAW else "")
-              + " ...")
-        # Reach the start yaw during the approach so sliding begins settled.
-        rtde_c.moveL(_build_pose(x0, y0, TRAVEL_HEIGHT_MM, yaw0),
+        print(f"[ur5] Travelling above start ({x0:+.1f}, {y0:+.1f}) mm ...")
+        rtde_c.moveL(_build_pose(x0, y0, TRAVEL_HEIGHT_MM),
                      VELOCITY_TRAVEL, ACCELERATION)
-        print(f"[ur5] Descending to work plane (+{_height[0]:.0f} mm) ...")
-        rtde_c.moveL(_build_pose(x0, y0, _height[0], yaw0),
+        print(f"[ur5] Descending to calibration plane ({CALIB_HEIGHT_MM:+.0f} mm) ...")
+        rtde_c.moveL(_build_pose(x0, y0, CALIB_HEIGHT_MM),
                      VELOCITY_TRAVEL, ACCELERATION)
-
         if _stop_flag.is_set():
             return
+
+        # ── Wrist-3 zero → mechanical yaw origin ──────────────────────────────
+        # Rotate only joint 6 (wrist 3) to exactly 0 rad, then record the
+        # resulting TCP orientation as the yaw-calibration base so every yaw is
+        # measured from this repeatable zero.
+        if _zero_wrist3(rtde_c, rtde_r):
+            try:
+                _YAW_BASE_RV[0] = list(rtde_r.getActualTCPPose()[3:6])
+                print("[ur5] Wrist 3 zeroed — yaw calibration origin set.")
+            except Exception as e:
+                print(f"[ur5] Could not read calibration pose ({e})")
+
+        # ── Calibrate / confirm the yaw at the -20 mm plane ───────────────────
+        # Hold at the first waypoint and re-point to the live yaw (rotating from
+        # the wrist-3 zero) whenever it changes, until the operator confirms.
+        if _confirm_enabled[0]:
+            _confirm_evt.clear()
+            with _lock:
+                _state['awaiting_confirm'] = True
+            print(f"[ur5] Calibrate yaw at {CALIB_HEIGHT_MM:+.0f} mm — adjust, "
+                  "then confirm to rise to the work plane ...")
+            last = None
+            while not _confirm_evt.is_set() and not _stop_flag.is_set():
+                yaw_now = get_yaw_offset()
+                cx, cy = _offset_clamped(pts[0][0], pts[0][1])
+                if (cx, cy, yaw_now) != last:
+                    rtde_c.moveL(_build_pose(cx, cy, CALIB_HEIGHT_MM, yaw_now),
+                                 VELOCITY_TRAVEL, ACCELERATION)
+                    last = (cx, cy, yaw_now)
+                with _lock:
+                    _state['yaw'] = yaw_now
+                time.sleep(0.05)
+            with _lock:
+                _state['awaiting_confirm'] = False
+            if _stop_flag.is_set():
+                return
+            print("[ur5] Yaw confirmed.")
+
+        # ── On confirm: rise to the commanded work height, calibrated yaw ─────
+        calib_yaw = get_yaw_offset()
+        x0, y0 = _offset_clamped(pts[0][0], pts[0][1])
+        print(f"[ur5] Rising to work plane (+{_height[0]:.0f} mm) ...")
+        rtde_c.moveL(_build_pose(x0, y0, _height[0], calib_yaw),
+                     VELOCITY_TRAVEL, ACCELERATION)
+        if _stop_flag.is_set():
+            return
+
+        # Waypoint yaws are applied RELATIVE to the start waypoint's authored
+        # yaw, so the path begins exactly at the calibrated orientation (no jump)
+        # and only the trajectory's own yaw changes are layered on top.
+        base0 = pts[0][2] if len(pts[0]) >= 3 else None
+        b0 = base0 if base0 is not None else 0.0
 
         print(f"[ur5] Executing trajectory — {n} waypoints  "
               f"speed = {_speed[0] * 1000:.1f} mm/s")
@@ -393,9 +491,11 @@ def run_trajectory(pts, height_mm=DEFAULT_HEIGHT_MM,
                 print("[ur5] Stop requested — ending trajectory")
                 break
             x_mm, y_mm = wp[0], wp[1]
-            # Waypoint yaw plus the live manual yaw offset (both applied fresh
-            # each waypoint so orientation and centre can be tuned live).
-            yaw_eff = _effective_yaw(wp[2] if len(wp) >= 3 else None)
+            # Waypoint yaw relative to the start, plus the calibrated yaw (both
+            # read fresh each waypoint so orientation and centre can be tuned).
+            bw = wp[2] if len(wp) >= 3 else None
+            rel = (bw - b0) if bw is not None else 0.0
+            yaw_eff = rel + get_yaw_offset()
             fx, fy = _offset_clamped(x_mm, y_mm)
             # Live speed / height, read fresh each waypoint.
             rtde_c.moveL(_build_pose(fx, fy, _height[0], yaw_eff),
@@ -413,7 +513,8 @@ def run_trajectory(pts, height_mm=DEFAULT_HEIGHT_MM,
     finally:
         with _lock:
             _state['moving'] = False
-        _return_home(rtde_c)
+        _YAW_BASE_RV[0] = list(REFERENCE_POSE[3:6])   # home in reference orient
+        _return_home(rtde_c, rtde_r)
         try:
             rtde_c.stopScript()
         except Exception:

@@ -16,6 +16,7 @@ Keyboard (window focused)
   - / =        smaller / larger central-point step
   n            reset central point to the reference origin (0,0)
   space        RUN the selected trajectory  /  STOP if already running
+  c            CONFIRM the calibrated yaw → rise to work height and run
   backspace    stop and return home
   r            re-scan the JSON library folder
   mouse        click / drag on the XY panel to place the central point
@@ -25,6 +26,16 @@ The manual yaw offset sets the initial orientation — previewed as the red
 heading arrow at the start point while idle — and every waypoint's yaw is then
 applied relative to it. Switching trajectory while running restarts the motion;
 centre and yaw changes apply live without restarting.
+
+Yaw calibration at the start (default ON, disable with --no-confirm)
+--------------------------------------------------------------------
+At the start of every run the robot travels to the first waypoint, descends to
+the CALIBRATION plane (-20 mm, below the reference) and zeroes WRIST 3 so yaw
+starts from a repeatable mechanical zero. It then PAUSES there: adjust the yaw
+with [ / ] ({ / } for big steps) — the tool re-points live so you can verify /
+align it. Press `c` (or type "confirm") to accept; only then does the tool rise
+to the commanded work height and slide into the trajectory. Waypoint yaws are
+applied relative to the calibrated start, so the path begins without a jump.
 
 Library
 -------
@@ -74,6 +85,7 @@ _lock = threading.Lock()
 _live = {
     'x_mm': 0.0, 'y_mm': 0.0, 'z_mm': 0.0, 'yaw': None,
     'wp': 0, 'wp_total': 0, 'moving': False, 'done': False, 'elapsed': 0.0,
+    'awaiting_confirm': False,
 }
 _trail_x, _trail_y = [], []
 _x_buf = np.zeros(HIST_WIN)
@@ -86,6 +98,11 @@ _center_offset = [0.0, 0.0]
 # then follows each waypoint's yaw relative to it.
 _yaw_offset = [0.0]
 YAW_STEP_DEG = 5.0
+
+# Height (mm, below reference) at which the yaw is calibrated before each run;
+# mirrors ur5_imu.CALIB_HEIGHT_MM for the simulated path. On confirm the tool
+# rises to the commanded work height.
+CALIB_HEIGHT_MM = -20.0
 
 # Interactive control state (all mutated from the key handler).
 _ctrl = {
@@ -101,7 +118,10 @@ _plan = {'base': [(0.0, 0.0)], 'yaw0': None, 'label': '', 'absolute': False}
 # Library + config, filled by main().
 _LIB = []
 _cfg = {'use_robot': False, 'size': traj.DEFAULT_SPAN_MM, 'lib_dir': '',
-        'speed_mps': 0.03, 'height_mm': 30.0}
+        'speed_mps': 0.03, 'height_mm': 30.0, 'confirm': True}
+
+# Signals the operator's "confirm start orientation" in simulation (--no-robot).
+_sim_confirm = threading.Event()
 
 # Typed command console ("pseudo terminal") — Enter opens it, type e.g.
 # "speed 40" / "height 25", Enter submits, Esc closes.
@@ -295,6 +315,9 @@ def _run_command(text):
         if c in ('stop', 'halt', 'home'):
             _stop_home()
             return 'stopped'
+        if c in ('confirm', 'ok', 'c'):
+            _confirm_start()
+            return 'start orientation confirmed'
         if c in ('sel', 'select', 'traj') and len(p) > 1:
             arg = p[1]
             if arg.isdigit():
@@ -334,10 +357,19 @@ def _toggle_run():
             _ctrl['restart'] = False
 
 
+def _confirm_start():
+    """Confirm the start orientation so a paused run proceeds into the path."""
+    _sim_confirm.set()
+    if _cfg['use_robot']:
+        import ur5_imu as ur5
+        ur5.confirm_start()
+
+
 def _stop_home():
     with _lock:
         _ctrl['run_req'] = False
         _ctrl['restart'] = False
+    _sim_confirm.set()            # release a pending sim confirmation wait
     if _cfg['use_robot']:
         import ur5_imu as ur5
         ur5.request_stop()
@@ -373,10 +405,12 @@ def _sampler_loop(use_robot):
             z_mm = (tcp[2] - ur5.REFERENCE_POSE[2]) * 1000.0
             moving   = st['moving']; wp = st['wp']
             wp_total = st['wp_total']; done = st['done']; yaw = st.get('yaw')
+            awaiting = st.get('awaiting_confirm', False)
         else:
             x_mm = _live['x_mm']; y_mm = _live['y_mm']; z_mm = _live['z_mm']
             moving = _live['moving']; wp = _live['wp']
             wp_total = _live['wp_total']; done = _live['done']; yaw = _live['yaw']
+            awaiting = _live['awaiting_confirm']
 
         _x_buf[:-1] = _x_buf[1:];  _x_buf[-1] = x_mm
         _y_buf[:-1] = _y_buf[1:];  _y_buf[-1] = y_mm
@@ -389,6 +423,7 @@ def _sampler_loop(use_robot):
         with _lock:
             _live.update(x_mm=x_mm, y_mm=y_mm, z_mm=z_mm, yaw=yaw,
                          moving=moving, wp=wp, wp_total=wp_total, done=done,
+                         awaiting_confirm=awaiting,
                          elapsed=time.time() - _t0[0])
 
         rem = 0.05 - (time.perf_counter() - t0)
@@ -399,17 +434,40 @@ def _sampler_loop(use_robot):
 def _sim_run(pts):
     """Simulate motion through pts, cancellable on stop / switch.
     Reads live speed / height from _cfg each waypoint."""
+    # Calibrate the yaw at the -20 mm plane and wait for the operator to confirm
+    # (mirrors the robot: wrist-3 zero origin, yaw measured from 0). On confirm
+    # the tool rises to the commanded work height and the path runs.
+    if _cfg['confirm']:
+        sx, sy = _clamp_center(pts[0][0] + _center_offset[0],
+                               pts[0][1] + _center_offset[1])
+        with _lock:
+            _live['x_mm'] = sx; _live['y_mm'] = sy
+            _live['z_mm'] = CALIB_HEIGHT_MM; _live['wp'] = 0
+            _live['yaw'] = _yaw_offset[0]
+            _live['moving'] = False; _live['awaiting_confirm'] = True
+        _sim_confirm.clear()
+        while not (_sim_confirm.is_set() or _stop_evt.is_set()
+                   or _ctrl['restart'] or not _ctrl['run_req']):
+            with _lock:
+                _live['yaw'] = _yaw_offset[0]       # live calibration preview
+            time.sleep(0.05)
+        with _lock:
+            _live['awaiting_confirm'] = False
+        if (_stop_evt.is_set() or _ctrl['restart'] or not _ctrl['run_req']):
+            return
+    # Waypoint yaws are applied relative to the start waypoint's authored yaw so
+    # the path begins exactly at the calibrated orientation (matches the robot).
+    base0 = pts[0][2] if len(pts[0]) >= 3 else None
+    b0 = base0 if base0 is not None else 0.0
     with _lock:
         _live['moving'] = True
     for i, wp in enumerate(pts):
         if _stop_evt.is_set() or _ctrl['restart'] or not _ctrl['run_req']:
             break
         x, y = wp[0], wp[1]
-        base_yaw = wp[2] if len(wp) >= 3 else None
-        if base_yaw is None:
-            yaw = _yaw_offset[0] if abs(_yaw_offset[0]) > 1e-9 else None
-        else:
-            yaw = base_yaw + _yaw_offset[0]
+        bw = wp[2] if len(wp) >= 3 else None
+        rel = (bw - b0) if bw is not None else 0.0
+        yaw = rel + _yaw_offset[0]
         ox, oy = _clamp_center(x + _center_offset[0], y + _center_offset[1])
         with _lock:
             _live['x_mm'] = ox; _live['y_mm'] = oy
@@ -449,6 +507,7 @@ def _runner_loop(use_robot):
 
         _trail_x.clear(); _trail_y.clear()
         _t0[0] = time.time()
+        _apply_yaw(0.0)          # every run calibrates yaw from the wrist-3 zero
         with _lock:
             _ctrl['running'] = True; _ctrl['restart'] = False
             _live['wp_total'] = len(pts); _live['done'] = False
@@ -571,6 +630,7 @@ def build_dashboard(lim, size_mm, height_mm, use_robot=False):
         '- / =   centre step -/+\n'
         'n       reset centre\n'
         'space   run / stop\n'
+        'c       confirm yaw -> rise + run\n'
         'backspace   stop + home\n'
         'r       rescan JSON folder\n'
         'enter   console: speed / height ...\n'
@@ -658,6 +718,7 @@ def build_dashboard(lim, size_mm, height_mm, use_robot=False):
         elif k == '-':           _ctrl['step'] = max(0.5, step / 2.0)
         elif k in ('=', '+'):    _ctrl['step'] = min(40.0, step * 2.0)
         elif k == ' ':           _toggle_run()
+        elif k == 'c':           _confirm_start()
         elif k == 'backspace':   _stop_home()
         elif k == 'r':           _rescan()
 
@@ -684,6 +745,7 @@ def build_dashboard(lim, size_mm, height_mm, use_robot=False):
             x = _live['x_mm']; y = _live['y_mm']; z = _live['z_mm']
             yaw = _live['yaw']; wp = _live['wp']; wp_total = _live['wp_total']
             moving = _live['moving']; done = _live['done']; elapsed = _live['elapsed']
+            awaiting = _live['awaiting_confirm']
             base = list(_plan['base']); plabel = _plan['label']
             absolute = _plan['absolute']; yaw0 = _plan['yaw0']
             sel = _ctrl['sel']; step = _ctrl['step']
@@ -702,11 +764,15 @@ def build_dashboard(lim, size_mm, height_mm, use_robot=False):
         pos_dot.set_data([px], [py])
 
         # Yaw heading arrow. While moving it tracks the live effective yaw at the
-        # tool; while idle it previews the INITIAL orientation (start yaw + the
-        # manual offset) at the fixed start point, so you can set it by hand.
+        # tool; while calibrating it shows the yaw measured from the wrist-3 zero
+        # (starts at 0); while idle it previews the start-point orientation.
         hl = 14.0
         if moving:
             ang, hx, hy = yaw, px, py
+        elif awaiting:
+            ang = yaw_off                          # calibrated from wrist-3 zero
+            hx = (base[0][0] + ox) if base else ox
+            hy = (base[0][1] + oy) if base else oy
         else:
             ang = (yaw0 + yaw_off) if yaw0 is not None else (
                 yaw_off if abs(yaw_off) > 1e-9 else None)
@@ -728,8 +794,10 @@ def build_dashboard(lim, size_mm, height_mm, use_robot=False):
 
         xline.set_ydata(_x_buf);  yline.set_ydata(_y_buf)
 
-        state = ('▶ RUNNING' if moving else
-                 ('… starting' if run_req else ('✓ done' if done else '· idle')))
+        state = (f'⏸ CALIBRATE YAW @ {CALIB_HEIGHT_MM:+.0f}mm — [ ], c=go up'
+                 if awaiting else
+                 ('▶ RUNNING' if moving else
+                  ('… starting' if run_req else ('✓ done' if done else '· idle'))))
         frac = (wp / wp_total) if wp_total else 0.0
         xy_title.set_text(f'[{sel + 1}/{len(_LIB)}]  {plabel}'
                           f'{"   (UR frame)" if absolute else ""}')
@@ -748,7 +816,8 @@ def build_dashboard(lim, size_mm, height_mm, use_robot=False):
             f'yaw = {("%+7.1f" % yaw) if yaw is not None else "   --":>8} deg\n\n'
             f'centre = ({ox:+.1f}, {oy:+.1f})\n'
             f'wp {wp:>4d}/{wp_total}   t={elapsed:5.1f}s')
-        read_txt.set_color(TRAIL_C if moving else ('#888888' if not done else ACCENT))
+        read_txt.set_color('#ffbf00' if awaiting else
+                           (TRAIL_C if moving else ('#888888' if not done else ACCENT)))
 
         if _console['on']:
             console_txt.set_text(f'cmd> {_console["buf"]}█    {_console["msg"]}')
@@ -790,6 +859,8 @@ def parse_args():
                    help='work-plane height above reference in mm (default 30)')
     p.add_argument('--no-robot', action='store_true',
                    help='simulate motion (display only, no robot)')
+    p.add_argument('--no-confirm', action='store_true',
+                   help='skip the start-orientation confirmation pause')
     p.add_argument('--list', action='store_true',
                    help='list the library and exit')
     return p.parse_args()
@@ -813,10 +884,12 @@ def main():
     use_robot = not args.no_robot
     import ur5_imu as ur5
     height = args.height if args.height is not None else ur5.DEFAULT_HEIGHT_MM
+    confirm = not args.no_confirm
     _cfg.update(use_robot=use_robot, size=args.size, lib_dir=args.lib_dir,
-                speed_mps=args.speed / 1000.0, height_mm=height)
+                speed_mps=args.speed / 1000.0, height_mm=height, confirm=confirm)
     ur5.set_speed(args.speed / 1000.0)
     ur5.set_height_mm(height)
+    ur5.set_confirm_enabled(confirm)
 
     # Initial selection
     sel = 0
@@ -838,6 +911,7 @@ def main():
     print(f'  Library    : {len(_LIB)} trajectories  (JSON dir: {args.lib_dir})')
     print(f'  Selected   : {_ctrl["label"]}')
     print(f'  Speed      : {args.speed:.0f} mm/s   Height: +{height:.0f} mm')
+    print(f'  Yaw calib  : {"ON — wrist-3 zero @ %+.0f mm, press c to rise + run" % CALIB_HEIGHT_MM if confirm else "OFF (--no-confirm)"}')
     print(f'  Robot      : {"ON — " + os.environ.get("UR_ROBOT_IP", ur5.ROBOT_IP) if use_robot else "OFF (--no-robot, simulated)"}')
     print('  Keys       : , . prev/next   [ ] yaw-offset   arrows centre   '
           'space run/stop   backspace home   r rescan')

@@ -11,7 +11,11 @@ that claim without any hardware attached:
   3. analyze_gain_sweep.py recovers that ground truth and correctly flags the
      gain that rails;
   4. ../plot_muca_bars.py and ../plot_muca_combo_grid.py — written for the OLD
-     format — parse the new file unmodified.
+     format — parse the new file unmodified;
+  5. every Muca library call in firmware/Muca_Raw_gain/Muca_Raw_gain.ino is a
+     function the library actually DEFINES — Muca.h declares some methods that
+     Muca.cpp never implements (`getFWVersion()` is one), and those only fail
+     at LINK time, long after the sketch looks fine.
 
 Run it after touching either collector, or after changing sensor_raw.py's
 USED_CELLS.
@@ -174,6 +178,70 @@ def test_legacy_plotters(csv_path):
         # clean up inside the repo.
 
 
+# Functions Muca.cpp actually defines (upstream master, verified against source).
+# Muca.h additionally DECLARES getFWVersion, printInfo, setNumTouchPoints and
+# setResolution; of those, only printInfo is implemented. Anything declared but
+# not defined links with "undefined reference to `Muca::<name>()'".
+MUCA_DEFINED = {
+    'readRegister', 'setRegister', 'getRegister', 'getRegisters',
+    'setConfig', 'setGain', 'printAllRegisters', 'printInfo', 'autocal',
+    'selectLines', 'init', 'update', 'updated', 'getTouch', 'getTouchData',
+    'setTouchPoints', 'getNumberOfTouches', 'setReportRate', 'useRawData',
+    'getRawData',
+}
+MUCA_DECLARED_NOT_DEFINED = {'getFWVersion', 'setNumTouchPoints', 'setResolution'}
+
+MUCA_LIB_CANDIDATES = [
+    '~/Documents/Arduino/libraries/Muca/Muca.cpp',
+    '~/Arduino/libraries/Muca/Muca.cpp',
+    '~/Library/Arduino15/libraries/Muca/Muca.cpp',
+]
+
+
+def defined_in_installed_library():
+    """Parse the installed Muca.cpp if we can find it; else fall back to the
+    verified upstream list. Returns (set_of_names, source_description)."""
+    for cand in MUCA_LIB_CANDIDATES:
+        path = os.path.expanduser(cand)
+        if os.path.isfile(path):
+            try:
+                src = open(path, errors='replace').read()
+            except OSError:
+                continue
+            names = set(re.findall(r'\bMuca::(\w+)\s*\(', src))
+            names.add('updated')          # #define updated() update()
+            if names:
+                return names, path
+    return set(MUCA_DEFINED), 'upstream source (no local library found)'
+
+
+def test_firmware_symbols():
+    print("\n[5] Firmware calls only functions the library defines")
+    sketch = os.path.join(HERE, 'firmware', 'Muca_Raw_gain', 'Muca_Raw_gain.ino')
+    if not os.path.isfile(sketch):
+        print("  SKIP  Muca_Raw_gain.ino not found")
+        return
+
+    src = open(sketch, errors='replace').read()
+    # Strip comments so the explanatory notes don't count as calls.
+    src = re.sub(r'/\*.*?\*/', '', src, flags=re.S)
+    src = re.sub(r'//[^\n]*', '', src)
+
+    called = set(re.findall(r'\bmuca\.(\w+)\s*\(', src))
+    defined, source = defined_in_installed_library()
+    print(f"        checked against: {source}")
+
+    missing = sorted(called - defined)
+    check(not missing,
+          f"all {len(called)} library calls resolve"
+          + (f" -- MISSING: {', '.join(missing)}" if missing else ""))
+
+    used_bad = sorted(called & MUCA_DECLARED_NOT_DEFINED)
+    check(not used_bad,
+          "no declared-but-undefined method is called"
+          + (f" -- would fail at link: {', '.join(used_bad)}" if used_bad else ""))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--keep', action='store_true',
@@ -197,6 +265,7 @@ def main():
 
     test_analyzer(csv_path, os.path.join(tmpdir, 'results'))
     test_legacy_plotters(csv_path)
+    test_firmware_symbols()
 
     if args.keep:
         print(f"\n  Artefacts kept in {tmpdir}")

@@ -120,6 +120,24 @@ lines as data — which is what `sensor_raw.py` already does — is unaffected.
 boot*. Flashing this sketch alone therefore changes nothing measurable; the
 sweep sets the gain explicitly at every step.
 
+### A gotcha in the Muca library
+
+`Muca.h` declares several methods that `Muca.cpp` never implements. Calling one
+compiles cleanly and then fails at **link** time:
+
+```
+undefined reference to `Muca::getFWVersion()'
+collect2: error: ld returned 1 exit status
+```
+
+`getFWVersion()`, `setNumTouchPoints()` and `setResolution()` are all declared
+but not defined upstream. This sketch therefore reads the firmware-ID register
+directly (`muca.getRegister(0xA6)`) instead of calling `getFWVersion()`.
+`selftest_dataset_format.py` check [5] guards against this: it extracts every
+`muca.<method>(` call from the sketch and verifies it against the functions
+your *installed* `Muca.cpp` actually defines, so this class of error is caught
+before you reach the IDE.
+
 ### Why a new Python serial module
 
 Only one process can own a serial port, and `sensor_raw.py` /

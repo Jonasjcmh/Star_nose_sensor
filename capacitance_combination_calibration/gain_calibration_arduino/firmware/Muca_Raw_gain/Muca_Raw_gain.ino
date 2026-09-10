@@ -199,6 +199,21 @@ void applyRate(int rate) {
 // Reporting
 // ---------------------------------------------------------------------------
 
+// NOTE — do NOT call muca.getFWVersion().
+// Muca.h DECLARES `int getFWVersion();` but Muca.cpp never DEFINES it. Calling
+// it compiles fine and then fails at link time with:
+//     undefined reference to `Muca::getFWVersion()'
+// That is an upstream bug in the library, not something wrong with this sketch.
+// We read the firmware-ID register directly instead, through getRegister(),
+// which IS defined. 0xA6 is the FT5x06/FT5x16 family's firmware-ID register;
+// it is reported here purely as a "which board/firmware am I talking to"
+// fingerprint, so an unexpected value is informational, not an error.
+#define FIRMWARE_ID_REG  0xA6
+
+int readFirmwareId() {
+  return muca.getRegister(FIRMWARE_ID_REG);
+}
+
 void printInfoLine() {
   Serial.print(F("# INFO sketch=Muca_Raw_gain cells="));
   Serial.print(NUM_TX * NUM_RX);
@@ -206,8 +221,8 @@ void printInfoLine() {
   Serial.print(NUM_TX);
   Serial.print(F(" rx="));
   Serial.print(NUM_RX);
-  Serial.print(F(" fw="));
-  Serial.print(muca.getFWVersion());
+  Serial.print(F(" fwreg=0x"));
+  Serial.print(readFirmwareId(), HEX);
   Serial.print(F(" gain="));
   if (currentGain < 0) Serial.print(F("default")); else Serial.print(currentGain);
   Serial.print(F(" rate="));

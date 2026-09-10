@@ -1,0 +1,2 @@
+gain,n_points,sensitivity,slope,r2,span_pct,intercept,rail_margin,noise,resolution_pF,clip_frac,intercept_ok,usable
+native,5,553.75550630601,-553.75550630601,0.9959000992938261,1.3061722743572137,65725.71547830297,353.0,1.394169652068971,0.002571037547481601,0.0,False,False

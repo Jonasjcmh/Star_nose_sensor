@@ -50,7 +50,16 @@ Usage
   python imu_live.py --traj spiral --size 120
   python imu_live.py --json trajectories_ur/star_5_arm_hand_drawn.json
   python imu_live.py --lib-dir imported_trajectories
+  python imu_live.py --z-amp 5 --z-period 40    # wavy Z along the path
   python imu_live.py --list
+
+Sinusoidal Z
+------------
+--z-amp / --z-period (or the console "zwave AMP PERIOD", "zamp", "zper") add a
+sine wave to the work-plane height while running. The PERIOD is in mm of path
+arc-length (distance travelled), not waypoints, so the waviness looks the same
+regardless of how densely the trajectory is sampled:  z = height + amp·sin(
+2π·distance / period). Amplitude 0 disables it.
 """
 import os
 import sys
@@ -118,7 +127,8 @@ _plan = {'base': [(0.0, 0.0)], 'yaw0': None, 'label': '', 'absolute': False}
 # Library + config, filled by main().
 _LIB = []
 _cfg = {'use_robot': False, 'size': traj.DEFAULT_SPAN_MM, 'lib_dir': '',
-        'speed_mps': 0.03, 'height_mm': 30.0, 'confirm': True}
+        'speed_mps': 0.03, 'height_mm': 30.0, 'confirm': True,
+        'z_amp': 0.0, 'z_period': 50.0}
 
 # Signals the operator's "confirm start orientation" in simulation (--no-robot).
 _sim_confirm = threading.Event()
@@ -288,6 +298,35 @@ def _set_height(mm):
     return v
 
 
+def _push_z_wave():
+    if _cfg['use_robot']:
+        import ur5_imu as ur5
+        ur5.set_z_wave(_cfg['z_amp'], _cfg['z_period'])
+
+
+def _set_z_amp(mm):
+    """Set the sinusoidal Z amplitude (mm, 0 = off); applies mid-run on robot."""
+    _cfg['z_amp'] = max(0.0, min(50.0, float(mm)))
+    _push_z_wave()
+    return _cfg['z_amp']
+
+
+def _set_z_period(mm):
+    """Set the sinusoidal Z period (mm of path distance); applies mid-run."""
+    _cfg['z_period'] = max(1.0, float(mm))
+    _push_z_wave()
+    return _cfg['z_period']
+
+
+def _z_wave_offset(dist_mm):
+    """Z offset (mm) at a cumulative path distance (mm) — mirrors ur5_imu so the
+    simulated and real motions match."""
+    a = _cfg['z_amp']; p = _cfg['z_period']
+    if a <= 0.0 or p <= 1e-6:
+        return 0.0
+    return a * np.sin(2.0 * np.pi * dist_mm / p)
+
+
 def _run_command(text):
     """Parse a console command line. Returns a short status message."""
     s = text.strip()
@@ -300,6 +339,18 @@ def _run_command(text):
             return f'speed = {_set_speed(p[1]):.0f} mm/s'
         if c in ('height', 'hgt', 'h', 'z') and len(p) > 1:
             return f'height = {_set_height(p[1]):.0f} mm'
+        if c in ('zamp', 'amp') and len(p) > 1:
+            return f'z-wave amp = {_set_z_amp(p[1]):.1f} mm'
+        if c in ('zper', 'period', 'zperiod') and len(p) > 1:
+            return f'z-wave period = {_set_z_period(p[1]):.0f} mm'
+        if c == 'zwave':
+            if len(p) > 1 and p[1].lower() in ('off', 'none', '0'):
+                _set_z_amp(0.0)
+                return 'z-wave off'
+            if len(p) > 2:
+                a = _set_z_amp(p[1]); q = _set_z_period(p[2])
+                return f'z-wave = {a:.1f} mm / {q:.0f} mm'
+            return f'z-wave = {_cfg["z_amp"]:.1f} mm / {_cfg["z_period"]:.0f} mm'
         if c == 'step' and len(p) > 1:
             _ctrl['step'] = max(0.5, min(40.0, float(p[1])))
             return f'centre step = {_ctrl["step"]:.1f} mm'
@@ -459,19 +510,25 @@ def _sim_run(pts):
     # the path begins exactly at the calibrated orientation (matches the robot).
     base0 = pts[0][2] if len(pts[0]) >= 3 else None
     b0 = base0 if base0 is not None else 0.0
+    # Cumulative path distance (mm) drives the sinusoidal Z (density-independent).
+    dist_mm = 0.0
+    px, py = pts[0][0], pts[0][1]
     with _lock:
         _live['moving'] = True
     for i, wp in enumerate(pts):
         if _stop_evt.is_set() or _ctrl['restart'] or not _ctrl['run_req']:
             break
         x, y = wp[0], wp[1]
+        dist_mm += np.hypot(x - px, y - py)
+        px, py = x, y
         bw = wp[2] if len(wp) >= 3 else None
         rel = (bw - b0) if bw is not None else 0.0
         yaw = rel + _yaw_offset[0]
         ox, oy = _clamp_center(x + _center_offset[0], y + _center_offset[1])
         with _lock:
             _live['x_mm'] = ox; _live['y_mm'] = oy
-            _live['z_mm'] = _cfg['height_mm']; _live['wp'] = i + 1
+            _live['z_mm'] = _cfg['height_mm'] + _z_wave_offset(dist_mm)
+            _live['wp'] = i + 1
             _live['yaw'] = yaw
         if i + 1 < len(pts):
             seg = np.hypot(pts[i + 1][0] - x, pts[i + 1][1] - y)
@@ -808,6 +865,7 @@ def build_dashboard(lim, size_mm, height_mm, use_robot=False):
             f'traj [{sel + 1}/{len(_LIB)}]\n'
             f'speed  = {_cfg["speed_mps"] * 1000:>5.0f} mm/s\n'
             f'height = {_cfg["height_mm"]:>5.0f} mm\n'
+            f'z-wave = {_cfg["z_amp"]:>4.1f} mm / {_cfg["z_period"]:.0f} mm\n'
             f'yaw off = {yaw_off:+6.1f} deg\n'
             f'step    = {step:>4.1f} mm\n\n'
             f'X = {x:+8.1f} mm\n'
@@ -824,7 +882,7 @@ def build_dashboard(lim, size_mm, height_mm, use_robot=False):
             console_txt.set_color('#33e666')
         else:
             hint = _console['msg'] or ('Enter = console  (e.g.  speed 40   '
-                                       'height 25)')
+                                       'height 25   zwave 5 40)')
             console_txt.set_text(hint)
             console_txt.set_color('#888888')
 
@@ -857,6 +915,10 @@ def parse_args():
                    help='trajectory speed in mm/s (default 30)')
     p.add_argument('--height', type=float, default=None,
                    help='work-plane height above reference in mm (default 30)')
+    p.add_argument('--z-amp', type=float, default=0.0,
+                   help='sinusoidal Z amplitude in mm (0 = off, default 0)')
+    p.add_argument('--z-period', type=float, default=50.0,
+                   help='sinusoidal Z period in mm of path distance (default 50)')
     p.add_argument('--no-robot', action='store_true',
                    help='simulate motion (display only, no robot)')
     p.add_argument('--no-confirm', action='store_true',
@@ -885,11 +947,15 @@ def main():
     import ur5_imu as ur5
     height = args.height if args.height is not None else ur5.DEFAULT_HEIGHT_MM
     confirm = not args.no_confirm
+    z_amp = max(0.0, min(50.0, args.z_amp))
+    z_period = max(1.0, args.z_period)
     _cfg.update(use_robot=use_robot, size=args.size, lib_dir=args.lib_dir,
-                speed_mps=args.speed / 1000.0, height_mm=height, confirm=confirm)
+                speed_mps=args.speed / 1000.0, height_mm=height, confirm=confirm,
+                z_amp=z_amp, z_period=z_period)
     ur5.set_speed(args.speed / 1000.0)
     ur5.set_height_mm(height)
     ur5.set_confirm_enabled(confirm)
+    ur5.set_z_wave(z_amp, z_period)
 
     # Initial selection
     sel = 0
@@ -911,12 +977,13 @@ def main():
     print(f'  Library    : {len(_LIB)} trajectories  (JSON dir: {args.lib_dir})')
     print(f'  Selected   : {_ctrl["label"]}')
     print(f'  Speed      : {args.speed:.0f} mm/s   Height: +{height:.0f} mm')
+    print(f'  Z-wave     : {("%.1f mm amplitude / %.0f mm period" % (z_amp, z_period)) if z_amp > 0 else "OFF (amplitude 0)"}')
     print(f'  Yaw calib  : {"ON — wrist-3 zero @ %+.0f mm, press c to rise + run" % CALIB_HEIGHT_MM if confirm else "OFF (--no-confirm)"}')
     print(f'  Robot      : {"ON — " + os.environ.get("UR_ROBOT_IP", ur5.ROBOT_IP) if use_robot else "OFF (--no-robot, simulated)"}')
     print('  Keys       : , . prev/next   [ ] yaw-offset   arrows centre   '
           'space run/stop   backspace home   r rescan')
     print('  Console    : Enter opens it — e.g.  "speed 40"  "height 25"  '
-          '"stop"')
+          '"zwave 5 40"  "stop"')
     print('=' * 62)
 
     threading.Thread(target=_runner_loop, args=(use_robot,),

@@ -100,6 +100,16 @@ _clamp_half = [WORKAREA_MAX_MM / 2.0]
 _speed  = [VELOCITY_MOVE]
 _height = [DEFAULT_HEIGHT_MM]
 
+# Sinusoidal Z oscillation layered on top of the work-plane height. Amplitude
+# in mm; period in mm of path ARC-LENGTH (distance travelled), so the waviness
+# is the same regardless of how finely the path is sampled. 0 amplitude = off.
+_z_amp    = [0.0]
+_z_period = [50.0]
+
+# Hard safety band (mm) for the final commanded Z (height + wave), about the
+# reference pose.
+Z_SAFE_MM = 50.0
+
 
 def set_speed(mps):
     """Set the live trajectory speed (m/s)."""
@@ -121,6 +131,27 @@ def set_height_mm(mm):
 def get_height_mm():
     with _lock:
         return _height[0]
+
+
+def set_z_wave(amp_mm, period_mm):
+    """Set the sinusoidal Z oscillation: amplitude (mm) and period (mm of path
+    arc-length). amp<=0 disables it; period is kept strictly positive."""
+    with _lock:
+        _z_amp[0]    = max(0.0, float(amp_mm))
+        _z_period[0] = max(1e-6, float(period_mm))
+
+
+def get_z_wave():
+    with _lock:
+        return _z_amp[0], _z_period[0]
+
+
+def _z_wave_offset(dist_mm):
+    """Z offset (mm) at a given cumulative path distance (mm)."""
+    a, p = get_z_wave()
+    if a <= 0.0:
+        return 0.0
+    return a * np.sin(2.0 * np.pi * dist_mm / p)
 
 
 # ── Public helpers ────────────────────────────────────────────────────────────
@@ -486,19 +517,28 @@ def run_trajectory(pts, height_mm=DEFAULT_HEIGHT_MM,
         with _lock:
             _state['moving'] = True
 
+        # Cumulative path distance (mm) drives the sinusoidal Z so the waviness
+        # is density-independent (same shape for coarse or fine sampling).
+        dist_mm = 0.0
+        px, py = pts[0][0], pts[0][1]
         for i, wp in enumerate(pts):
             if _stop_flag.is_set():
                 print("[ur5] Stop requested — ending trajectory")
                 break
             x_mm, y_mm = wp[0], wp[1]
+            dist_mm += np.hypot(x_mm - px, y_mm - py)
+            px, py = x_mm, y_mm
             # Waypoint yaw relative to the start, plus the calibrated yaw (both
             # read fresh each waypoint so orientation and centre can be tuned).
             bw = wp[2] if len(wp) >= 3 else None
             rel = (bw - b0) if bw is not None else 0.0
             yaw_eff = rel + get_yaw_offset()
             fx, fy = _offset_clamped(x_mm, y_mm)
-            # Live speed / height, read fresh each waypoint.
-            rtde_c.moveL(_build_pose(fx, fy, _height[0], yaw_eff),
+            # Live speed / height + sinusoidal Z, read fresh each waypoint, with
+            # a hard safety clamp on the final commanded height.
+            z_mm = _height[0] + _z_wave_offset(dist_mm)
+            z_mm = max(-Z_SAFE_MM, min(Z_SAFE_MM, z_mm))
+            rtde_c.moveL(_build_pose(fx, fy, z_mm, yaw_eff),
                          _speed[0], ACCELERATION)
             with _lock:
                 _state['wp'] = i + 1

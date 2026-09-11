@@ -77,6 +77,8 @@ line at the bottom of the window, then:
 |---------|--------|
 | `speed 40` (`s 40`) | set trajectory speed to 40 mm/s |
 | `height 25` (`h 25`) | set work-plane height to 25 mm |
+| `zwave 5 40` | sinusoidal Z: 5 mm amplitude, 40 mm period (`zwave off` disables) |
+| `zamp 5` / `zper 40` | set the Z amplitude / period individually |
 | `step 2` | central-point key step (mm) |
 | `yaw 90` | set the manual yaw offset (deg) |
 | `traj star` / `sel 14` | select a trajectory by name or number |
@@ -119,6 +121,47 @@ One knob, `--size`, sets the **diameter** for round shapes (circle, spiral)
 and the **covered span** for the rest (raster, square, cross, lines, figure-8).
 Anything above 230 mm is clamped to the working-area limit. Shape-specific
 extras: `--turns` (spiral), `--lines` (raster), `--steps` (waypoint density).
+
+## Sinusoidal Z oscillation
+
+The tool height can wave up and down while the path runs, on top of the flat
+work plane:
+
+```
+z(distance) = height + amplitude · sin(2π · distance / period)
+```
+
+Set it from the CLI (`--z-amp <mm> --z-period <mm>`), the console
+(`zwave AMP PERIOD`, or `zamp` / `zper`), or leave amplitude at **0** to disable
+it (default). It works both on the robot and in `--no-robot`, and — like speed
+and height — updates **live**, re-read every waypoint.
+
+**The period is measured in mm of path arc-length (distance travelled), not in
+waypoints or time.** This is deliberate: the Z profile is then tied to *where*
+the tool is along the path, so the same trajectory sampled coarsely or finely
+produces the *same* wave. A 40 mm period gives one full up-down cycle every
+40 mm of travel regardless of point density or speed.
+
+Considerations:
+
+- **Density-independence vs. smoothness.** The wave *value* at a given point is
+  density-independent, but the motion is still `moveL` straight segments between
+  waypoints. To render the sine smoothly you need several waypoints **per
+  period** — with a short period on a sparsely sampled path the wave is
+  under-sampled (it looks faceted / aliased even though the peaks land in the
+  right place). Increase `--steps`, or keep `period` comfortably larger than the
+  waypoint spacing.
+- **Safety clamp.** The final commanded height (`height + wave`) is hard-clamped
+  to **±50 mm** about the reference pose (`Z_SAFE_MM` in `ur5_imu.py`). With
+  `height 30` and a large amplitude the top of the wave clips flat at +50 mm, so
+  keep `amplitude ≲ 50 − height`. Amplitude itself is capped at 50 mm.
+- **When it is applied.** Only during trajectory execution. The approach,
+  travel, the −20 mm yaw-calibration pause, and the return-home move are *not*
+  waved — the tool starts each run flat at `height` (distance 0 → `sin 0 = 0`),
+  so there is no Z jump when the path begins.
+- **On curved paths** the distance is the sum of straight waypoint chords, so a
+  very coarse curve slightly under-measures true arc length; finer sampling
+  converges (sub-0.1 mm differences in practice).
 
 ## Importing JSON trajectories
 
@@ -222,7 +265,8 @@ their original scale.
 - Robot IP defaults to `177.22.22.2`; override with the `UR_ROBOT_IP` env var.
 - Motion happens in a plane at `--height` mm **above** the reference pose
   (default 30 mm), with travel moves at 60 mm clearance. Nothing is pressed
-  into a surface.
+  into a surface. With a sinusoidal Z (see above) the commanded height is
+  clamped to ±50 mm about the reference.
 - The reference pose is the centre of the working area
   (`REFERENCE_POSE` in `ur5_imu.py`, shared with `ur5_friction.py`).
 - Every trajectory — generated or imported — is clamped to 23 cm × 23 cm

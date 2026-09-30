@@ -1,0 +1,384 @@
+<?xml version="1.0" encoding="utf-8"  standalone="no"?>
+<svg 
+ viewBox="0 0 1900 528"
+ xmlns="http://www.w3.org/2000/svg"
+ xmlns:xlink="http://www.w3.org/1999/xlink"
+>
+
+<title>Gnuplot</title>
+<desc>Produced by GNUPLOT 6.0 patchlevel 4 </desc>
+
+<g id="gnuplot_canvas">
+
+<rect x="0" y="0" width="1900" height="528" fill="#ffffff"/>
+<defs>
+
+	<circle id='gpDot' r='0.5' stroke-width='0.5' stroke='currentColor'/>
+	<path id='gpPt0' stroke-width='0.324' stroke='currentColor' d='M-1,0 h2 M0,-1 v2'/>
+	<path id='gpPt1' stroke-width='0.324' stroke='currentColor' d='M-1,-1 L1,1 M1,-1 L-1,1'/>
+	<path id='gpPt2' stroke-width='0.324' stroke='currentColor' d='M-1,0 L1,0 M0,-1 L0,1 M-1,-1 L1,1 M-1,1 L1,-1'/>
+	<rect id='gpPt3' stroke-width='0.324' stroke='currentColor' x='-1' y='-1' width='2' height='2'/>
+	<rect id='gpPt4' stroke-width='0.324' stroke='currentColor' fill='currentColor' x='-1' y='-1' width='2' height='2'/>
+	<circle id='gpPt5' stroke-width='0.324' stroke='currentColor' cx='0' cy='0' r='1'/>
+	<use xlink:href='#gpPt5' id='gpPt6' fill='currentColor' stroke='none'/>
+	<path id='gpPt7' stroke-width='0.324' stroke='currentColor' d='M0,-1.33 L-1.33,0.67 L1.33,0.67 z'/>
+	<use xlink:href='#gpPt7' id='gpPt8' fill='currentColor' stroke='none'/>
+	<use xlink:href='#gpPt7' id='gpPt9' stroke='currentColor' transform='rotate(180)'/>
+	<use xlink:href='#gpPt9' id='gpPt10' fill='currentColor' stroke='none'/>
+	<use xlink:href='#gpPt3' id='gpPt11' stroke='currentColor' transform='rotate(45)'/>
+	<use xlink:href='#gpPt11' id='gpPt12' fill='currentColor' stroke='none'/>
+	<path id='gpPt13' stroke-width='0.324' stroke='currentColor' d='M0,1.330 L1.265,0.411 L0.782,-1.067 L-0.782,-1.076 L-1.265,0.411 z'/>
+	<use xlink:href='#gpPt13' id='gpPt14' fill='currentColor' stroke='none'/>
+	<filter id='textbox' filterUnits='objectBoundingBox' x='0' y='0' height='1' width='1'>
+	  <feFlood flood-color='#FFFFFF' flood-opacity='1' result='bgnd'/>
+	  <feComposite in='SourceGraphic' in2='bgnd' operator='atop'/>
+	</filter>
+	<filter id='greybox' filterUnits='objectBoundingBox' x='0' y='0' height='1' width='1'>
+	  <feFlood flood-color='lightgrey' flood-opacity='1' result='grey'/>
+	  <feComposite in='SourceGraphic' in2='grey' operator='atop'/>
+	</filter>
+</defs>
+<g fill="none" color="#FFFFFF" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+	<g id="gnuplot_plot_1a"  fill="none"><title>gnuplot_plot_1a</title>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+<image x='89.00' y='31.01' width='1696.89' height='418.00' preserveAspectRatio='none' xlink:href='data:image/png;base64,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'/>
+</g>
+	</g>
+	<g id="gnuplot_plot_2a"  fill="none"><title>gnuplot_plot_2a</title>
+<g fill="none" color="#FFFFFF" stroke="rgb(148,   0, 211)" stroke-width="1.60" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.60" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M132.98,42.01 L193.59,64.01 L200.94,64.01 L263.39,86.01 L270.74,86.01 L330.63,108.01 L337.98,108.01 L395.29,130.01
+		L402.63,130.01 L461.41,152.01 L468.76,152.01 L529.75,174.01 L537.09,174.01 L601.75,196.01 L609.10,196.01 L666.04,218.01
+		L673.39,218.01 L735.48,240.01 L742.82,240.01 L803.07,262.01 L810.42,262.01 L872.14,284.01 L879.48,284.01 L911.08,295.01
+		M911.08,31.01 L942.67,42.01 L950.02,42.01 L981.61,31.01 M981.61,295.01 L1013.20,284.01 L1020.55,284.01 L1081.91,262.01
+		L1089.26,262.01 L1149.83,240.01 L1157.18,240.01 L1219.26,218.01 L1226.61,218.01 L1283.19,196.01 L1290.53,196.01 L1355.19,174.01
+		L1362.54,174.01 L1423.53,152.01 L1430.87,152.01 L1489.65,130.01 L1497.00,130.01 L1554.31,108.01 L1561.65,108.01 L1621.89,86.01
+		L1629.24,86.01 L1691.70,64.01 L1699.04,64.01 L1759.65,42.01 L1767.00,42.01  '/></g>
+	</g>
+	<g id="gnuplot_plot_3a"  fill="none"><title>gnuplot_plot_3a</title>
+<g fill="none" color="#FFFFFF" stroke="rgb(  0,   0,   0)" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(255, 255, 255)'  d='M89.00,295.01 L1788.99,295.01  '/></g>
+	</g>
+<g fill="none" color="#FFFFFF" stroke="rgb(255, 255, 255)" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,42.01 L97.65,42.01 M1788.99,42.01 L1780.34,42.01  '/>	<g transform="translate(83.23,45.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >a1</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,64.01 L97.65,64.01 M1788.99,64.01 L1780.34,64.01  '/>	<g transform="translate(83.23,67.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >a2</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,86.01 L97.65,86.01 M1788.99,86.01 L1780.34,86.01  '/>	<g transform="translate(83.23,89.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >a3</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,108.01 L97.65,108.01 M1788.99,108.01 L1780.34,108.01  '/>	<g transform="translate(83.23,111.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >b4</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,130.01 L97.65,130.01 M1788.99,130.01 L1780.34,130.01  '/>	<g transform="translate(83.23,133.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >c5</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,152.01 L97.65,152.01 M1788.99,152.01 L1780.34,152.01  '/>	<g transform="translate(83.23,155.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >d5</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,174.01 L97.65,174.01 M1788.99,174.01 L1780.34,174.01  '/>	<g transform="translate(83.23,177.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >e5</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,196.01 L97.65,196.01 M1788.99,196.01 L1780.34,196.01  '/>	<g transform="translate(83.23,199.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >e4</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,218.01 L97.65,218.01 M1788.99,218.01 L1780.34,218.01  '/>	<g transform="translate(83.23,221.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >e3</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,240.01 L97.65,240.01 M1788.99,240.01 L1780.34,240.01  '/>	<g transform="translate(83.23,243.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >d2</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,262.01 L97.65,262.01 M1788.99,262.01 L1780.34,262.01  '/>	<g transform="translate(83.23,265.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >c1</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,284.01 L97.65,284.01 M1788.99,284.01 L1780.34,284.01  '/>	<g transform="translate(83.23,287.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >b1</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,306.01 L97.65,306.01 M1788.99,306.01 L1780.34,306.01  '/>	<g transform="translate(83.23,309.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >b2</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,328.01 L97.65,328.01 M1788.99,328.01 L1780.34,328.01  '/>	<g transform="translate(83.23,331.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >b3</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,350.01 L97.65,350.01 M1788.99,350.01 L1780.34,350.01  '/>	<g transform="translate(83.23,353.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >c2</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,372.01 L97.65,372.01 M1788.99,372.01 L1780.34,372.01  '/>	<g transform="translate(83.23,375.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >c3</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,394.01 L97.65,394.01 M1788.99,394.01 L1780.34,394.01  '/>	<g transform="translate(83.23,397.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >c4</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,416.01 L97.65,416.01 M1788.99,416.01 L1780.34,416.01  '/>	<g transform="translate(83.23,419.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >d3</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,438.01 L97.65,438.01 M1788.99,438.01 L1780.34,438.01  '/>	<g transform="translate(83.23,441.59)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="end">
+		<text><tspan font-family="Helvetica" >d4</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M89.00,449.01 L89.00,440.36 M89.00,31.01 L89.00,39.66  '/>	<g transform="translate(89.00,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >0</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M162.30,449.01 L162.30,440.36 M162.30,31.01 L162.30,39.66  '/>	<g transform="translate(162.30,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >10</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M235.60,449.01 L235.60,440.36 M235.60,31.01 L235.60,39.66  '/>	<g transform="translate(235.60,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >20</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M308.90,449.01 L308.90,440.36 M308.90,31.01 L308.90,39.66  '/>	<g transform="translate(308.90,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >30</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M382.20,449.01 L382.20,440.36 M382.20,31.01 L382.20,39.66  '/>	<g transform="translate(382.20,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >40</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M455.50,449.01 L455.50,440.36 M455.50,31.01 L455.50,39.66  '/>	<g transform="translate(455.50,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >50</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M528.80,449.01 L528.80,440.36 M528.80,31.01 L528.80,39.66  '/>	<g transform="translate(528.80,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >60</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M602.10,449.01 L602.10,440.36 M602.10,31.01 L602.10,39.66  '/>	<g transform="translate(602.10,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >70</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M675.40,449.01 L675.40,440.36 M675.40,31.01 L675.40,39.66  '/>	<g transform="translate(675.40,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >80</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M748.70,449.01 L748.70,440.36 M748.70,31.01 L748.70,39.66  '/>	<g transform="translate(748.70,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >90</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M822.00,449.01 L822.00,440.36 M822.00,31.01 L822.00,39.66  '/>	<g transform="translate(822.00,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >100</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M895.30,449.01 L895.30,440.36 M895.30,31.01 L895.30,39.66  '/>	<g transform="translate(895.30,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >110</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M968.60,449.01 L968.60,440.36 M968.60,31.01 L968.60,39.66  '/>	<g transform="translate(968.60,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >120</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1041.90,449.01 L1041.90,440.36 M1041.90,31.01 L1041.90,39.66  '/>	<g transform="translate(1041.90,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >130</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1115.20,449.01 L1115.20,440.36 M1115.20,31.01 L1115.20,39.66  '/>	<g transform="translate(1115.20,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >140</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1188.49,449.01 L1188.49,440.36 M1188.49,31.01 L1188.49,39.66  '/>	<g transform="translate(1188.49,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >150</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1261.79,449.01 L1261.79,440.36 M1261.79,31.01 L1261.79,39.66  '/>	<g transform="translate(1261.79,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >160</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1335.09,449.01 L1335.09,440.36 M1335.09,31.01 L1335.09,39.66  '/>	<g transform="translate(1335.09,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >170</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1408.39,449.01 L1408.39,440.36 M1408.39,31.01 L1408.39,39.66  '/>	<g transform="translate(1408.39,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >180</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1481.69,449.01 L1481.69,440.36 M1481.69,31.01 L1481.69,39.66  '/>	<g transform="translate(1481.69,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >190</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1554.99,449.01 L1554.99,440.36 M1554.99,31.01 L1554.99,39.66  '/>	<g transform="translate(1554.99,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >200</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1628.29,449.01 L1628.29,440.36 M1628.29,31.01 L1628.29,39.66  '/>	<g transform="translate(1628.29,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >210</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1701.59,449.01 L1701.59,440.36 M1701.59,31.01 L1701.59,39.66  '/>	<g transform="translate(1701.59,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >220</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1774.89,449.01 L1774.89,440.36 M1774.89,31.01 L1774.89,39.66  '/>	<g transform="translate(1774.89,464.96)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >230</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="rgb(  0,   0,   0)" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g transform="translate(65.40,240.01) rotate(-90.00)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="13.00"  text-anchor="middle">
+		<text><tspan font-family="Helvetica" >cell (ring first, in path order)</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g transform="translate(938.99,484.48)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="14.00"  text-anchor="middle">
+		<text xml:space="preserve">time (s)   [a1 > a2 > a3 > b4 > c5 > d5 > e5 > e4 > e3 > d2 > c1 > b1 > a1, out and back]</text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="0.50" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="0.50" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb( 38,  38,  38)'  d='M89.01,449.00 L1789.00,449.00  '/></g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="0.50" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb( 38,  38,  38)'  d='M89.01,31.00 L1789.00,31.00  '/></g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="0.50" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb( 38,  38,  38)'  d='M89.01,449.00 L89.01,31.00  '/></g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="0.50" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb( 38,  38,  38)'  d='M1789.00,449.00 L1789.00,31.00  '/></g>
+<g fill="none" color="black" stroke="rgb( 38,  38,  38)" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+	<g id="gnuplot_plot_1b"  fill="none"><title>gnuplot_plot_1b</title>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+<image x='1809.00' y='31.01' width='19.99' height='418.00' preserveAspectRatio='none' xlink:href='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAEACAIAAAAWazDMAAAABmJLR0QA/wD/AP+gvaeTAAAAy0lEQVQ4ja2TwQ7DMAhD7ap/udt+dR9GD1kTqAxE005RyDN2SMvP+wXgAADgBA3AyXs3Ftja3SRpQdedxS7LIScZekaSZbL+rDTKA6pIcVhVCG0kQ5D0CIviwRbh/5F9HUZxDqRHFFm1ni/WI6R4AOn+IH0X80YbSHLpUbQe0T3VVSrEvouFnS8u0hrBJPNmjSB12IqrU0udM6pT/5xl/OG7PVcx6kyk1jsvlwgqucnJt+6Q8rGEO+ghIzx4GNbzq1OPqh3E2Y5DOLsApROxNRE26U4AAAAASUVORK5CYII='/>
+</g>
+	</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1828.99,449.01 L1820.34,449.01 M1809.00,449.01 L1817.65,449.01  '/>	<g transform="translate(1834.76,452.26)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="10.00"  text-anchor="start">
+		<text><tspan font-family="Helvetica" >0</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1828.99,380.76 L1820.34,380.76 M1809.00,380.76 L1817.65,380.76  '/>	<g transform="translate(1834.76,384.01)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="10.00"  text-anchor="start">
+		<text><tspan font-family="Helvetica" >0.2</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1828.99,312.50 L1820.34,312.50 M1809.00,312.50 L1817.65,312.50  '/>	<g transform="translate(1834.76,315.75)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="10.00"  text-anchor="start">
+		<text><tspan font-family="Helvetica" >0.4</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1828.99,244.25 L1820.34,244.25 M1809.00,244.25 L1817.65,244.25  '/>	<g transform="translate(1834.76,247.50)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="10.00"  text-anchor="start">
+		<text><tspan font-family="Helvetica" >0.6</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1828.99,176.00 L1820.34,176.00 M1809.00,176.00 L1817.65,176.00  '/>	<g transform="translate(1834.76,179.25)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="10.00"  text-anchor="start">
+		<text><tspan font-family="Helvetica" >0.8</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1828.99,107.74 L1820.34,107.74 M1809.00,107.74 L1817.65,107.74  '/>	<g transform="translate(1834.76,110.99)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="10.00"  text-anchor="start">
+		<text><tspan font-family="Helvetica" >1</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb(  0,   0,   0)'  d='M1828.99,39.49 L1820.34,39.49 M1809.00,39.49 L1817.65,39.49  '/>	<g transform="translate(1834.76,42.74)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="10.00"  text-anchor="start">
+		<text><tspan font-family="Helvetica" >1.2</tspan></text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="rgb(  0,   0,   0)" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
+	<g transform="translate(1867.59,240.01) rotate(-90.00)" stroke="none" fill="rgb(38,38,38)" font-family="Helvetica" font-size="11.00"  text-anchor="middle">
+		<text>dC/C0</text>
+	</g>
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="2.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="0.50" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="0.50" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb( 38,  38,  38)'  d='M1809.01,449.00 L1829.00,449.00  '/></g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="0.50" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb( 38,  38,  38)'  d='M1809.01,31.00 L1829.00,31.00  '/></g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="0.50" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb( 38,  38,  38)'  d='M1809.01,449.00 L1809.01,31.00  '/></g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="0.50" stroke-linecap="butt" stroke-linejoin="miter">
+	<path stroke='rgb( 38,  38,  38)'  d='M1829.00,449.00 L1829.00,31.00  '/></g>
+<g fill="none" color="black" stroke="rgb( 38,  38,  38)" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+<g fill="none" color="black" stroke="currentColor" stroke-width="1.00" stroke-linecap="butt" stroke-linejoin="miter">
+</g>
+</g>
+</svg>
+

@@ -140,3 +140,27 @@ Segment a slide downstream with `sliding == 1` (optionally split fwd/rev by
 - Position control only — there is **no** force limit during the slide; pick a
   `depth` the tip and sensor tolerate, and **keep the e-stop within reach**.
 - Use `--dry-run` first to confirm the endpoints and poses before moving.
+
+## Analysis (MATLAB / Octave)
+
+One-way sessions (`linear_displacement.py`):
+
+| Script | Output |
+|--------|--------|
+| `plot_linear_response.m` | `results/response_vs_position/` — start/end cell dC/C0 vs time |
+| `plot_linear_hexmap_frames.m` | `results/hexmap_frames/` — hexmap strips + animation frames |
+| `plot_linear_hexmap_frames_v2.m` | `results/hexmap_frames_v2/` — hexmap + progressive traces |
+
+Bidirectional sessions (`bidirectional_displacement.py`), loaded by
+`bidir_slide_timeline.m` (segment-level `locate` baseline, since the tip stays
+engaged between passes; time-based, since `progress` restarts on the return):
+
+| Script | Output |
+|--------|--------|
+| `plot_bidir_response.m` | `results/bidirectional/response_vs_position/` |
+| `plot_bidir_hexmap_frames.m` | `results/bidirectional/hexmap_frames/` — out/back strips + frames |
+| `plot_bidir_hexmap_frames_v2.m` | `results/bidirectional/hexmap_frames_v2/` — round-trip animation |
+
+Videos: `./make_slide_videos.sh -d <results dir> -o <c3|b3|c3_bidir> -c`
+(see `-h`). Run the scripts with Octave via the `octave_test` conda env or in
+MATLAB. `ONLY_SESSIONS` / `ONLY_SEGMENTS` env vars limit what is re-rendered.

@@ -1,0 +1,198 @@
+{
+  "H_a3_b4": {
+    "vertices": [
+      "a3",
+      "b4"
+    ],
+    "vertex_pts": [
+      3,
+      7
+    ],
+    "x_mm": 11.6,
+    "y_mm": 0.8,
+    "disp_x_mm": -4.0,
+    "disp_y_mm": 14.0
+  },
+  "H_b4_c5": {
+    "vertices": [
+      "b4",
+      "c5"
+    ],
+    "vertex_pts": [
+      7,
+      12
+    ],
+    "x_mm": 8.3,
+    "y_mm": -6.4,
+    "disp_x_mm": 4.0,
+    "disp_y_mm": 14.0
+  },
+  "H_a2_b3": {
+    "vertices": [
+      "a2",
+      "b3"
+    ],
+    "vertex_pts": [
+      2,
+      6
+    ],
+    "x_mm": 6.45,
+    "y_mm": 7.55,
+    "disp_x_mm": -8.0,
+    "disp_y_mm": 7.0
+  },
+  "H_b3_c4": {
+    "vertices": [
+      "b3",
+      "c4"
+    ],
+    "vertex_pts": [
+      6,
+      11
+    ],
+    "x_mm": 2.9,
+    "y_mm": -0.1,
+    "disp_x_mm": 0.0,
+    "disp_y_mm": 7.0
+  },
+  "H_c4_d5": {
+    "vertices": [
+      "c4",
+      "d5"
+    ],
+    "vertex_pts": [
+      11,
+      16
+    ],
+    "x_mm": 0.0,
+    "y_mm": -7.7,
+    "disp_x_mm": 8.0,
+    "disp_y_mm": 7.0
+  },
+  "H_a1_b2": {
+    "vertices": [
+      "a1",
+      "b2"
+    ],
+    "vertex_pts": [
+      1,
+      5
+    ],
+    "x_mm": 1.6,
+    "y_mm": 14.2,
+    "disp_x_mm": -12.0,
+    "disp_y_mm": 0.0
+  },
+  "H_b2_c3": {
+    "vertices": [
+      "b2",
+      "c3"
+    ],
+    "vertex_pts": [
+      5,
+      10
+    ],
+    "x_mm": -1.5,
+    "y_mm": 6.7,
+    "disp_x_mm": -4.0,
+    "disp_y_mm": 0.0
+  },
+  "H_c3_d4": {
+    "vertices": [
+      "c3",
+      "d4"
+    ],
+    "vertex_pts": [
+      10,
+      15
+    ],
+    "x_mm": -4.6,
+    "y_mm": -0.8,
+    "disp_x_mm": 4.0,
+    "disp_y_mm": 0.0
+  },
+  "H_d4_e5": {
+    "vertices": [
+      "d4",
+      "e5"
+    ],
+    "vertex_pts": [
+      15,
+      19
+    ],
+    "x_mm": -7.8,
+    "y_mm": -8.4,
+    "disp_x_mm": 12.0,
+    "disp_y_mm": 0.0
+  },
+  "H_b1_c2": {
+    "vertices": [
+      "b1",
+      "c2"
+    ],
+    "vertex_pts": [
+      4,
+      9
+    ],
+    "x_mm": -6.6,
+    "y_mm": 13.3,
+    "disp_x_mm": -8.0,
+    "disp_y_mm": -7.0
+  },
+  "H_c2_d3": {
+    "vertices": [
+      "c2",
+      "d3"
+    ],
+    "vertex_pts": [
+      9,
+      14
+    ],
+    "x_mm": -9.6,
+    "y_mm": 5.7,
+    "disp_x_mm": 0.0,
+    "disp_y_mm": -7.0
+  },
+  "H_d3_e4": {
+    "vertices": [
+      "d3",
+      "e4"
+    ],
+    "vertex_pts": [
+      14,
+      18
+    ],
+    "x_mm": -12.7,
+    "y_mm": -1.9,
+    "disp_x_mm": 8.0,
+    "disp_y_mm": -7.0
+  },
+  "H_c1_d2": {
+    "vertices": [
+      "c1",
+      "d2"
+    ],
+    "vertex_pts": [
+      8,
+      13
+    ],
+    "x_mm": -14.5,
+    "y_mm": 11.9,
+    "disp_x_mm": -4.0,
+    "disp_y_mm": -14.0
+  },
+  "H_d2_e3": {
+    "vertices": [
+      "d2",
+      "e3"
+    ],
+    "vertex_pts": [
+      13,
+      17
+    ],
+    "x_mm": -17.8,
+    "y_mm": 4.5,
+    "disp_x_mm": 4.0,
+    "disp_y_mm": -14.0
+  }
+}

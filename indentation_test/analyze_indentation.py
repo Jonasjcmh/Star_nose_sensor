@@ -107,7 +107,7 @@ def _f(row, key):
         return float('nan')
 
 
-def plot(csv_path, meta_path=None, show=True, smooth=0):
+def plot(csv_path, meta_path=None, show=True, smooth=0, lcr_smooth=None):
     import numpy as np
     import matplotlib
     if not show:
@@ -138,9 +138,29 @@ def plot(csv_path, meta_path=None, show=True, smooth=0):
     os.makedirs(out_dir, exist_ok=True)
     base = os.path.splitext(os.path.basename(csv_path))[0]
     # Smoothed figures get a _sm<N> suffix so they sit alongside the raw ones.
+    # Force/indentation curves follow `smooth` (0 = raw by default). The LCR is
+    # updated at only ~10 Hz so its traces look stepped — smooth those BY DEFAULT
+    # with a window auto-sized to the staircase (override/disable with lcr_smooth).
     smooth = int(smooth or 0)
     tag = f'_sm{smooth}' if smooth > 1 else ''
-    sm  = (lambda a: _movavg(a, smooth))
+    lcr_vals = np.array([_f(r, 'lcr_primary') for r in rows])
+    if lcr_smooth is None:
+        fin = lcr_vals[np.isfinite(lcr_vals)]
+        step = 1
+        if fin.size > 10:
+            ch = np.where(np.diff(fin) != 0)[0]
+            if ch.size > 2:
+                step = int(np.median(np.diff(ch)))
+        lcr_win = int(np.clip(3 * step, 51, 601))
+        if smooth > 1:
+            lcr_win = smooth                 # an explicit global --smooth wins
+    else:
+        lcr_win = int(lcr_smooth)
+    sm     = (lambda a: _movavg(a, smooth))
+    sm_lcr = (lambda a: _movavg(a, lcr_win))
+    if lcr_win > 1:
+        print(f'[plot] LCR traces smoothed with a {lcr_win}-sample window '
+              f'(~{lcr_win} ms) — set --lcr-smooth 0 for raw')
 
     # Group rows by iteration, keeping only the press+hold+retract (indentation ≥ ~0).
     def series(rows_i, ykey):
@@ -201,8 +221,8 @@ def plot(csv_path, meta_path=None, show=True, smooth=0):
                 # so gating on it would wrongly blank the curve — mark not-ok
                 # points faintly instead of dropping them.
                 good = np.isfinite(x) & np.isfinite(y)
-                ax.plot(sm(x[good]), sm(y[good]), '-', color=c, lw=1.4, alpha=0.9,
-                        label=f'iter{it + 1}')
+                ax.plot(sm_lcr(x[good]), sm_lcr(y[good]), '-', color=c, lw=1.4,
+                        alpha=0.9, label=f'iter{it + 1}')
             ax.set_xlabel('indentation (mm)')
             ax.set_ylabel(ylabel)
             ax.set_title(f'Indentation vs {ylabel}   ({base}){"  [smoothed]" if tag else ""}')
@@ -225,8 +245,8 @@ def plot(csv_path, meta_path=None, show=True, smooth=0):
                 fx = np.array([abs(_f(r, 'xjc_Fz')) for r in ri])   # |Fz| (N)
                 yy = np.array([_f(r, ykey) for r in ri])
                 good = np.isfinite(fx) & np.isfinite(yy)
-                ax.plot(sm(fx[good]), sm(yy[good]), '-', color=c, lw=1.2, alpha=0.9,
-                        label=f'iter{it + 1}')
+                ax.plot(sm_lcr(fx[good]), sm_lcr(yy[good]), '-', color=c, lw=1.2,
+                        alpha=0.9, label=f'iter{it + 1}')
             ax.set_xlabel('force  |XJC Fz|  (N)')
             ax.set_ylabel(ylabel)
             ax.set_title(f'{ylabel} vs force (XJC)   ({base}){"  [smoothed]" if tag else ""}')
@@ -278,7 +298,10 @@ def plot(csv_path, meta_path=None, show=True, smooth=0):
                             lw=0.8, color=SDU_BLUE, alpha=0.8, label='XJC Fz')
                 ax.legend(loc='upper right', fontsize=7, frameon=False)
             else:
-                y = sm(np.array([_f(r, key) for r in cyc]))
+                # LCR panels (lcr_*) get the default LCR smoothing; indentation
+                # follows the global --smooth.
+                raw = np.array([_f(r, key) for r in cyc])
+                y = sm_lcr(raw) if key.startswith('lcr_') else sm(raw)
                 ax.plot(t, y, '-', lw=0.8, color=panel_color.get(key, SDU_RED))
             ax.set_ylabel(spec[1], fontsize=9)
             _style(ax)
@@ -309,14 +332,18 @@ def main():
     ap.add_argument('--meta', default=None, help='meta.json (default: alongside the CSV)')
     ap.add_argument('--no-show', action='store_true', help='save PNGs only, do not display')
     ap.add_argument('--smooth', type=int, default=0, metavar='N',
-                    help='Moving-average window in samples (0=off). Smooths the robot '
-                         'µm-jitter and the LCR staircase; try ~101-301 at 1 kHz. '
-                         'Smoothed figures are saved with a _sm<N> suffix.')
+                    help='Moving-average window in samples for the FORCE/indentation '
+                         'curves (0=off). Try ~101-301 at 1 kHz. Smoothed figures get '
+                         'a _sm<N> suffix.')
+    ap.add_argument('--lcr-smooth', type=int, default=None, metavar='N',
+                    help='Moving-average window for the LCR traces (default: auto, '
+                         'sized to the ~10 Hz staircase; use 0 for raw).')
     args = ap.parse_args()
     if not os.path.exists(args.csv):
         print(f'[plot] not found: {args.csv}')
         sys.exit(1)
-    plot(args.csv, args.meta, show=not args.no_show, smooth=args.smooth)
+    plot(args.csv, args.meta, show=not args.no_show,
+         smooth=args.smooth, lcr_smooth=args.lcr_smooth)
 
 
 if __name__ == '__main__':

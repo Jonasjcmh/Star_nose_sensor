@@ -166,3 +166,9 @@ python3 analyze_indentation.py results/<material>/indentation_<material>_<timest
   after another, with iteration boundaries marked (`c1`, `c2`, …)
 
 In the indentation-vs-* figures each ramp iteration is a separate trace.
+
+**Smoothing:** the LCR traces are **smoothed by default** (the meter updates at
+only ~10 Hz so the raw curve is stepped; the window is auto-sized to the
+staircase — use `--lcr-smooth 0` for raw, or a number to override). The
+force/indentation curves are raw unless you pass `--smooth N` (which also writes
+`_sm<N>` copies and tames the robot's ±15 µm feedback jitter).

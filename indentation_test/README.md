@@ -133,10 +133,13 @@ Auto-plotted at the end (unless `--no-plot`) and re-runnable:
 ```bash
 python3 analyze_indentation.py logs/indentation_<timestamp>.csv
 ```
-Produces, in `plots/`:
-- `*_force.png` — indentation vs force (FUTEK, with UR Fz / XJC Fz overlaid)
+Figures are saved **one folder per sample** — `plots/<sample-name>/` (the point
+name from the run metadata), so repeat runs on the same sample collect together:
+- `*_force.png` — indentation vs force (FUTEK, with XJC Fz overlaid)
 - `*_impedance.png` — indentation vs \|Z\| (or Cp)
 - `*_phase.png` — indentation vs phase θ (or Rp)
+- `*_timeseries.png` — **cycles over time**: a multi-panel time series
+  (indentation / force / \|Z\| / phase vs elapsed time) showing each cycle one
+  after another, with iteration boundaries marked (`c1`, `c2`, …)
 
-Each ramp iteration is a separate trace.
-```
+In the indentation-vs-* figures each ramp iteration is a separate trace.

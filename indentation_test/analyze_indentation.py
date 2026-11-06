@@ -46,6 +46,27 @@ SDU_SEQ    = ['#EBC4CE', SDU_RED, '#4A0A1C']   # light tint → SDU red → dark
 SDU_CYCLE  = [SDU_RED, SDU_BLUE, SDU_GREEN, SDU_SAND, SDU_PURPLE, SDU_GREY]
 
 
+def _movavg(a, win):
+    """Centred moving average over `win` samples (edges padded), NaN-aware.
+    Returns the array unchanged if win <= 1. Smooths the robot's µm position
+    jitter and the LCR's ~11 Hz staircase without shifting the curve."""
+    import numpy as np
+    a = np.asarray(a, dtype=float)
+    win = int(win)
+    if win <= 1 or a.size < 2:
+        return a
+    win = min(win, a.size)
+    # NaN-aware running mean: sum valid samples / count of valid samples
+    v = np.isfinite(a)
+    af = np.where(v, a, 0.0)
+    k = np.ones(win)
+    num = np.convolve(af, k, mode='same')
+    den = np.convolve(v.astype(float), k, mode='same')
+    with np.errstate(invalid='ignore', divide='ignore'):
+        out = num / den
+    return out
+
+
 def _style(ax):
     """Apply the SDU look: drop the old crosshatch grid for a subtle light
     horizontal grid, hide the top/right spines, and tint spines/ticks grey."""
@@ -86,7 +107,7 @@ def _f(row, key):
         return float('nan')
 
 
-def plot(csv_path, meta_path=None, show=True):
+def plot(csv_path, meta_path=None, show=True, smooth=0):
     import numpy as np
     import matplotlib
     if not show:
@@ -116,6 +137,10 @@ def plot(csv_path, meta_path=None, show=True):
     out_dir = os.path.dirname(os.path.abspath(csv_path)) or PLOT_DIR
     os.makedirs(out_dir, exist_ok=True)
     base = os.path.splitext(os.path.basename(csv_path))[0]
+    # Smoothed figures get a _sm<N> suffix so they sit alongside the raw ones.
+    smooth = int(smooth or 0)
+    tag = f'_sm{smooth}' if smooth > 1 else ''
+    sm  = (lambda a: _movavg(a, smooth))
 
     # Group rows by iteration, keeping only the press+hold+retract (indentation ≥ ~0).
     def series(rows_i, ykey):
@@ -139,18 +164,19 @@ def plot(csv_path, meta_path=None, show=True):
         ri = by_iter[it]
         c  = cmap(j / max(1, len(iters) - 1))
         x, fu = series(ri, 'futek_force_N')
-        ax1.plot(x, fu, '-', color=c, lw=1.4, alpha=0.9,
+        xs = sm(x)
+        ax1.plot(xs, sm(fu), '-', color=c, lw=1.4, alpha=0.9,
                  label=f'FUTEK iter{it + 1}' if it == iters[0] else None)
         if has_xjc:
             _, fz = series(ri, 'xjc_Fz')
-            ax1.plot(x, fz, '--', color=c, lw=1.0, alpha=0.6,
+            ax1.plot(xs, sm(fz), '--', color=c, lw=1.0, alpha=0.6,
                      label='XJC Fz' if it == iters[0] else None)
     ax1.set_xlabel('indentation (mm)')
     ax1.set_ylabel('force (N)')
-    ax1.set_title(f'Indentation vs force   ({base})')
+    ax1.set_title(f'Indentation vs force   ({base}){"  [smoothed]" if tag else ""}')
     _style(ax1)
     ax1.legend(loc='best', fontsize=8, frameon=False)
-    p1 = os.path.join(out_dir, f"{base}_force.png")
+    p1 = os.path.join(out_dir, f"{base}_force{tag}.png")
     fig1.tight_layout(); fig1.savefig(p1, dpi=130)
     print(f'[plot] {p1}')
 
@@ -175,13 +201,13 @@ def plot(csv_path, meta_path=None, show=True):
                 # so gating on it would wrongly blank the curve — mark not-ok
                 # points faintly instead of dropping them.
                 good = np.isfinite(x) & np.isfinite(y)
-                ax.plot(x[good], y[good], '-', color=c, lw=1.4, alpha=0.9,
+                ax.plot(sm(x[good]), sm(y[good]), '-', color=c, lw=1.4, alpha=0.9,
                         label=f'iter{it + 1}')
             ax.set_xlabel('indentation (mm)')
             ax.set_ylabel(ylabel)
-            ax.set_title(f'Indentation vs {ylabel}   ({base})')
+            ax.set_title(f'Indentation vs {ylabel}   ({base}){"  [smoothed]" if tag else ""}')
             _style(ax); ax.legend(loc='best', fontsize=8, frameon=False)
-            p = os.path.join(out_dir, f'{base}_{suffix}.png')
+            p = os.path.join(out_dir, f'{base}_{suffix}{tag}.png')
             fig.tight_layout(); fig.savefig(p, dpi=130)
             print(f'[plot] {p}'); saved.append(p)
 
@@ -199,13 +225,13 @@ def plot(csv_path, meta_path=None, show=True):
                 fx = np.array([abs(_f(r, 'xjc_Fz')) for r in ri])   # |Fz| (N)
                 yy = np.array([_f(r, ykey) for r in ri])
                 good = np.isfinite(fx) & np.isfinite(yy)
-                ax.plot(fx[good], yy[good], '-', color=c, lw=1.2, alpha=0.9,
+                ax.plot(sm(fx[good]), sm(yy[good]), '-', color=c, lw=1.2, alpha=0.9,
                         label=f'iter{it + 1}')
             ax.set_xlabel('force  |XJC Fz|  (N)')
             ax.set_ylabel(ylabel)
-            ax.set_title(f'{ylabel} vs force (XJC)   ({base})')
+            ax.set_title(f'{ylabel} vs force (XJC)   ({base}){"  [smoothed]" if tag else ""}')
             _style(ax); ax.legend(loc='best', fontsize=8, frameon=False)
-            p = os.path.join(out_dir, f'{base}_{suffix}.png')
+            p = os.path.join(out_dir, f'{base}_{suffix}{tag}.png')
             fig.tight_layout(); fig.savefig(p, dpi=130)
             print(f'[plot] {p}'); saved.append(p)
 
@@ -245,14 +271,14 @@ def plot(csv_path, meta_path=None, show=True):
         for ax, spec in zip(axes, panels):
             key = spec[0]
             if key == '__force__':
-                ax.plot(t, [_f(r, 'futek_force_N') for r in cyc], '-', lw=0.8,
-                        color=SDU_RED, label='FUTEK')
+                ax.plot(t, sm(np.array([_f(r, 'futek_force_N') for r in cyc])), '-',
+                        lw=0.8, color=SDU_RED, label='FUTEK')
                 if has_xjc:
-                    ax.plot(t, [_f(r, 'xjc_Fz') for r in cyc], '-', lw=0.8,
-                            color=SDU_BLUE, alpha=0.8, label='XJC Fz')
+                    ax.plot(t, sm(np.array([_f(r, 'xjc_Fz') for r in cyc])), '-',
+                            lw=0.8, color=SDU_BLUE, alpha=0.8, label='XJC Fz')
                 ax.legend(loc='upper right', fontsize=7, frameon=False)
             else:
-                y = np.array([_f(r, key) for r in cyc])
+                y = sm(np.array([_f(r, key) for r in cyc]))
                 ax.plot(t, y, '-', lw=0.8, color=panel_color.get(key, SDU_RED))
             ax.set_ylabel(spec[1], fontsize=9)
             _style(ax)
@@ -263,8 +289,9 @@ def plot(csv_path, meta_path=None, show=True):
             axes[0].text(tb, axes[0].get_ylim()[1], f' c{it + 1}', fontsize=7,
                          color=SDU_GREY, va='top')
         axes[-1].set_xlabel('time (s)')
-        axes[0].set_title(f'Cycles over time — {len(iters)} cycle(s)   ({base})')
-        pt = os.path.join(out_dir, f'{base}_timeseries.png')
+        axes[0].set_title(f'Cycles over time — {len(iters)} cycle(s)   ({base})'
+                          f'{"  [smoothed]" if tag else ""}')
+        pt = os.path.join(out_dir, f'{base}_timeseries{tag}.png')
         fig.tight_layout(); fig.savefig(pt, dpi=130)
         print(f'[plot] {pt}'); saved.append(pt)
 
@@ -281,11 +308,15 @@ def main():
     ap.add_argument('csv', help='indentation_<timestamp>.csv')
     ap.add_argument('--meta', default=None, help='meta.json (default: alongside the CSV)')
     ap.add_argument('--no-show', action='store_true', help='save PNGs only, do not display')
+    ap.add_argument('--smooth', type=int, default=0, metavar='N',
+                    help='Moving-average window in samples (0=off). Smooths the robot '
+                         'µm-jitter and the LCR staircase; try ~101-301 at 1 kHz. '
+                         'Smoothed figures are saved with a _sm<N> suffix.')
     args = ap.parse_args()
     if not os.path.exists(args.csv):
         print(f'[plot] not found: {args.csv}')
         sys.exit(1)
-    plot(args.csv, args.meta, show=not args.no_show)
+    plot(args.csv, args.meta, show=not args.no_show, smooth=args.smooth)
 
 
 if __name__ == '__main__':

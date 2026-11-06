@@ -2,8 +2,8 @@
   "timestamp": "20261106_140859",
   "csv_file": "indentation_20261106_140859.csv",
   "point": {
-    "source": "calib_session_green_material.json",
-    "name": "green_material",
+    "source": "calib_session_sylgard.json",
+    "name": "sylgard",
     "reused_point": false
   },
   "surface_pose": [
@@ -56,5 +56,6 @@
       -0.04109567652146021,
       -0.35823407471179963
     ]
-  }
+  },
+  "material": "sylgard"
 }

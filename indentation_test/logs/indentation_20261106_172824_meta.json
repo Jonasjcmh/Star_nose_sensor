@@ -1,0 +1,61 @@
+{
+  "timestamp": "20261106_172824",
+  "csv_file": "indentation_20261106_172824.csv",
+  "point": {
+    "source": "calib_session_green_material.json",
+    "name": "green_material",
+    "reused_point": true
+  },
+  "surface_pose": [
+    -0.02864,
+    -0.50131,
+    0.03271,
+    2.346,
+    -2.094,
+    -9e-05
+  ],
+  "reference_pose": [
+    -0.03664,
+    -0.49831,
+    0.06071,
+    2.346,
+    -2.094,
+    -9e-05
+  ],
+  "max_depth_mm": 2.0,
+  "iterations": 11,
+  "ramp_speed_mm_s": 0.1,
+  "hold_s": 0.0,
+  "recover_s": 0.0,
+  "rate_hz": 1000,
+  "max_force_n": 50.0,
+  "robot_ip": "177.22.22.2",
+  "futek_calibration": {
+    "slope_n_per_v": 4.113951054770791,
+    "offset_n": -19.28418747084478,
+    "formula": "F = slope*ai0 + offset"
+  },
+  "lcr": {
+    "function": "ZTD",
+    "enabled": true,
+    "primary_col": "lcr_primary",
+    "secondary_col": "lcr_secondary",
+    "primary_name": "lcr_Z_ohm",
+    "secondary_name": "lcr_phase_deg",
+    "primary_label": "|Z| (Ohm)",
+    "secondary_label": "phase theta (deg)"
+  },
+  "xjc": {
+    "enabled": true,
+    "baud": 115200,
+    "station": 1,
+    "tare_offset": [
+      -0.08931530887881915,
+      0.6930014689763387,
+      -0.7445560216903686,
+      -0.027746396139264107,
+      -0.04105884556969007,
+      -0.3573088198900223
+    ]
+  }
+}

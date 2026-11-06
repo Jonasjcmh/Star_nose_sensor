@@ -7,6 +7,7 @@ indentation_test.py and draws the requested result curves:
   • indentation vs force      (FUTEK load cell, with UR Fz and XJC Fz overlaid)
   • indentation vs impedance  (LCR field0 — |Z| in Z-θ mode, Cp in Cp-Rp mode)
   • indentation vs phase      (LCR field1 — θ in Z-θ mode, Rp in Cp-Rp mode)
+  • impedance / phase vs force (force = XJC |Fz|, since the FUTEK saturates)
   • cycles over time          (multi-panel time series: indentation / force /
                                |Z| / phase vs elapsed time, cycle 1,2,3 … in
                                sequence with iteration boundaries marked)
@@ -179,6 +180,30 @@ def plot(csv_path, meta_path=None, show=True):
             ax.set_xlabel('indentation (mm)')
             ax.set_ylabel(ylabel)
             ax.set_title(f'Indentation vs {ylabel}   ({base})')
+            _style(ax); ax.legend(loc='best', fontsize=8, frameon=False)
+            p = os.path.join(out_dir, f'{base}_{suffix}.png')
+            fig.tight_layout(); fig.savefig(p, dpi=130)
+            print(f'[plot] {p}'); saved.append(p)
+
+    # ── Figures: impedance / phase vs FORCE (force from the XJC) ────────────────
+    # The FUTEK saturates (~19 N), so the force axis uses the XJC's normal force
+    # |Fz| (compression magnitude), which stays valid to its ±50 N range.
+    has_xjc_fin = any(np.isfinite(_f(r, 'xjc_Fz')) for r in rows)
+    if lcr_on and n_fin > 0 and has_xjc_fin:
+        for ykey, ylabel, suffix in (('lcr_primary',   z_label,  'impedance_vs_force'),
+                                     ('lcr_secondary', ph_label, 'phase_vs_force')):
+            fig, ax = plt.subplots(figsize=(7.5, 5.5))
+            for j, it in enumerate(iters):
+                ri = by_iter[it]
+                c  = cmap(j / max(1, len(iters) - 1))
+                fx = np.array([abs(_f(r, 'xjc_Fz')) for r in ri])   # |Fz| (N)
+                yy = np.array([_f(r, ykey) for r in ri])
+                good = np.isfinite(fx) & np.isfinite(yy)
+                ax.plot(fx[good], yy[good], '-', color=c, lw=1.2, alpha=0.9,
+                        label=f'iter{it + 1}')
+            ax.set_xlabel('force  |XJC Fz|  (N)')
+            ax.set_ylabel(ylabel)
+            ax.set_title(f'{ylabel} vs force (XJC)   ({base})')
             _style(ax); ax.legend(loc='best', fontsize=8, frameon=False)
             p = os.path.join(out_dir, f'{base}_{suffix}.png')
             fig.tight_layout(); fig.savefig(p, dpi=130)

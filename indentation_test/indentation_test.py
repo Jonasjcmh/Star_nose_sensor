@@ -66,6 +66,7 @@ _HERE   = os.path.dirname(os.path.abspath(__file__))
 _CAPMEAS = os.path.normpath(os.path.join(_HERE, '..', 'Capacitance_measurement'))
 LOG_DIR  = os.path.join(_HERE, 'logs')
 PLOT_DIR = os.path.join(_HERE, 'plots')
+RESULTS_DIR = os.path.join(_HERE, 'results')   # one sub-folder per material
 sys.path.insert(0, _HERE)       # local xjc_sensor
 sys.path.insert(0, _CAPMEAS)    # shared lcr6100 driver
 
@@ -1000,6 +1001,9 @@ def parse_args():
                    help='Logging / sampling rate in Hz (default: 1000 = 1 ms). Note: '
                         'the LCR (~20-100 Hz) and XJC-poll (~200-300 Hz) hardware '
                         'update slower, so their 1 ms rows repeat the latest reading.')
+    p.add_argument('--material', default=None,
+                   help='Material under test (asked each run if omitted). Goes into the '
+                        'dataset name and its own results/<material>/ folder.')
     p.add_argument('--name', default=None, help='Session/point name for a NEW calibration')
     p.add_argument('--new-point', action='store_true',
                    help='Force a full X/Y + Z jog even if session calibs exist')
@@ -1180,6 +1184,16 @@ def main():
         surface_pose, calib_meta = calibrate(rtde_c, args)
         _SURFACE_Z = surface_pose[2]
 
+        # ── Material under test (changes per test; the calib point may be reused) ─
+        material = args.material
+        while not material:
+            try:
+                material = input('\n  Material under test (e.g. ecoflex_30, green_rubber) > ').strip()
+            except (EOFError, KeyboardInterrupt):
+                raise SystemExit('Aborted — no material given.')
+        material = ''.join(c if (c.isalnum() or c in '-_') else '_' for c in material)
+        print(f'  [material] "{material}"')
+
         # ── Stage 4-6: range + iterations + ramp speed ─────────────────────────
         max_depth = args.max_depth if args.max_depth is not None else _ask_float(
             '\n  Indentation range — max depth (mm) [3.0] > ', 3.0, 0.1, 15.0)
@@ -1199,6 +1213,7 @@ def main():
         # ── Summary ──────────────────────────────────────────────────────────────
         cycle_s = 2.0 * (max_depth / ramp_speed) + hold_s + recover_s
         print('\n' + '=' * 70)
+        print(f'  Material      : {material}')
         print(f'  Point         : {calib_meta["name"]}  '
               f'XY=({surface_pose[0]*1000:+.2f},{surface_pose[1]*1000:+.2f}) mm  '
               f'surface z={surface_pose[2]*1000:+.2f} mm')
@@ -1225,13 +1240,16 @@ def main():
         except (EOFError, KeyboardInterrupt):
             raise SystemExit('Aborted before collection.')
 
-        # ── Output files ──────────────────────────────────────────────────────
-        os.makedirs(LOG_DIR, exist_ok=True)
+        # ── Output files — one folder per material, dataset + plots together ────
+        out_dir = os.path.join(RESULTS_DIR, material)
+        os.makedirs(out_dir, exist_ok=True)
         ts       = datetime.now().strftime('%Y%m%d_%H%M%S')
-        csv_path = os.path.join(LOG_DIR, f'indentation_{ts}.csv')
-        meta_path = os.path.join(LOG_DIR, f'indentation_{ts}_meta.json')
+        base     = f'indentation_{material}_{ts}'
+        csv_path = os.path.join(out_dir, f'{base}.csv')
+        meta_path = os.path.join(out_dir, f'{base}_meta.json')
         meta = {
             'timestamp': ts, 'csv_file': os.path.basename(csv_path),
+            'material': material,
             'point': calib_meta, 'surface_pose': [round(v, 6) for v in surface_pose],
             'reference_pose': list(REFERENCE_POSE),
             'max_depth_mm': max_depth, 'iterations': n_iter,

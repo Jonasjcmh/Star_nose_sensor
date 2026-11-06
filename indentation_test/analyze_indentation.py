@@ -82,11 +82,10 @@ def plot(csv_path, meta_path=None, show=True):
     iters = sorted({int(float(r['iteration'])) for r in rows
                     if r.get('iteration') not in (None, '', '-1')})
 
-    # One output folder per sample/point (from the run metadata), so every run
-    # on the same sample lands together: plots/<sample>/...
-    sample = (meta.get('point', {}) or {}).get('name') or 'sample'
-    sample = ''.join(c if (c.isalnum() or c in '-_') else '_' for c in str(sample))
-    out_dir = os.path.join(PLOT_DIR, sample)
+    # Save the figures NEXT TO the dataset, so each test's CSV + meta + plots
+    # live together in one folder (e.g. results/<material>/). Falls back to the
+    # plots/ dir only if the CSV path has no usable directory.
+    out_dir = os.path.dirname(os.path.abspath(csv_path)) or PLOT_DIR
     os.makedirs(out_dir, exist_ok=True)
     base = os.path.splitext(os.path.basename(csv_path))[0]
 

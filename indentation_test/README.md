@@ -26,19 +26,21 @@ plots indentation-vs-force and indentation-vs-impedance/phase.
 3. **Save/Load calib** — the point (surface pose) is saved to
    `calib_session_<name>.json`. Later runs **load** it to reuse the same point and
    re-jog (usually just **Z**, the normal between-experiments height change).
-4. **Range** — max indentation depth (mm).
-5. **Iterations** — number of ramp cycles.
-6. **Ramp speed** — constant indentation speed in mm/s (default **0.1 mm/s**).
-7. **Holding time** — dwell held **symmetrically** at max depth (pushed) and at
+4. **Material** — asked each run (the calib point can stay the same while the
+   material changes). It goes into the dataset name and its own results folder.
+5. **Range** — max indentation depth (mm).
+6. **Iterations** — number of ramp cycles.
+7. **Ramp speed** — constant indentation speed in mm/s (default **0.1 mm/s**).
+8. **Holding time** — dwell held **symmetrically** at max depth (pushed) and at
    the surface (released, before the next cycle); default **1.0 s**. Use
    `--recover` only if you want to break the symmetry.
-8. **Force cutoff** — overload safety limit in N (default **45 N**; `0` disables).
+9. **Force cutoff** — overload safety limit in N (default **45 N**; `0` disables).
    During the press, a watchdog polls the real force (XJC + robot Fz) every ~2 ms;
    if |Fz| exceeds the limit it **stops the move, retracts to relieve the load,
    and ends the run**. Protects the sensors (XJC ±50 N, FUTEK 10 lb ≈ 44.5 N).
-9. **Collect** — per iteration: press 0→max, hold, retract max→0, hold, as
-   **single constant-velocity moves** at the chosen mm/s, logged continuously to
-   a streaming CSV (flat RAM).
+10. **Collect** — per iteration: press 0→max, hold, retract max→0, hold, as
+    **single constant-velocity moves** at the chosen mm/s, logged continuously to
+    a streaming CSV (flat RAM).
 
 ### Sampling rate (1 ms target) — what each instrument really delivers
 The logger samples all instruments into one row at `--rate` Hz (**default 1000 =
@@ -135,13 +137,24 @@ Default is **poll** mode (float precision), polled in a background thread. Wire
 the sensor through a USB-RS485 adapter (24 V supply shared GND); 115200 8-N-1,
 station 1 by default.
 
-## Results
-Auto-plotted at the end (unless `--no-plot`) and re-runnable:
-```bash
-python3 analyze_indentation.py logs/indentation_<timestamp>.csv
+## Results — one folder per material, dataset + plots together
+Each run writes everything into **`results/<material>/`**, with the material in
+every filename, so a test is fully self-contained:
 ```
-Figures are saved **one folder per sample** — `plots/<sample-name>/` (the point
-name from the run metadata), so repeat runs on the same sample collect together:
+results/<material>/
+  indentation_<material>_<timestamp>.csv          # the dataset
+  indentation_<material>_<timestamp>_meta.json    # run metadata (incl. material)
+  indentation_<material>_<timestamp>_force.png
+  indentation_<material>_<timestamp>_impedance.png
+  indentation_<material>_<timestamp>_phase.png
+  indentation_<material>_<timestamp>_timeseries.png
+```
+Repeat tests on the same material collect in its folder (distinguished by
+timestamp). Plots are auto-made at the end (unless `--no-plot`) and the analyzer
+always writes them **next to the CSV** it's given:
+```bash
+python3 analyze_indentation.py results/<material>/indentation_<material>_<timestamp>.csv
+```
 - `*_force.png` — indentation vs force (FUTEK, with XJC Fz overlaid)
 - `*_impedance.png` — indentation vs \|Z\| (or Cp)
 - `*_phase.png` — indentation vs phase θ (or Rp)

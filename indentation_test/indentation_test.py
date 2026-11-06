@@ -905,10 +905,13 @@ def parse_args():
                    help='Ramp cycles at the point (default: ask, 3)')
     p.add_argument('--ramp-speed', type=float, default=None, dest='ramp_speed',
                    help='Constant indentation ramp speed in mm/s (default: ask, 0.1)')
-    p.add_argument('--hold', type=float, default=1.0,
-                   help='Hold at max depth, seconds (default: 1.0)')
-    p.add_argument('--recover', type=float, default=1.0,
-                   help='Dwell at the surface between iterations, seconds (default: 1.0)')
+    p.add_argument('--hold', type=float, default=None,
+                   help='Holding time in seconds, applied SYMMETRICALLY at max depth '
+                        '(pushed) and at the surface (released) each cycle '
+                        '(default: ask, 1.0)')
+    p.add_argument('--recover', type=float, default=None,
+                   help='Override ONLY the surface/release hold, to break symmetry '
+                        '(default: equal to --hold)')
     p.add_argument('--rate', type=int, default=1000,
                    help='Logging / sampling rate in Hz (default: 1000 = 1 ms). Note: '
                         'the LCR (~20-100 Hz) and XJC-poll (~200-300 Hz) hardware '
@@ -943,6 +946,8 @@ def _run_sim(rtde_c, args):
     n_iter     = args.iterations if args.iterations is not None else 2
     # In sim, default to a brisk ramp so the dry run finishes quickly.
     ramp_speed = args.ramp_speed if args.ramp_speed is not None else 2.0
+    hold_s     = args.hold if args.hold is not None else 0.5
+    recover_s  = args.recover if args.recover is not None else hold_s   # symmetric
 
     lcr    = None if args.no_lcr else _SimLCR(_SURFACE_Z)
     labels = LCR_FUNCTIONS['ZTD']
@@ -962,7 +967,7 @@ def _run_sim(rtde_c, args):
         'point': {'name': 'sim', 'source': 'sim', 'reused_point': False},
         'surface_pose': [round(v, 6) for v in surface_pose],
         'max_depth_mm': max_depth, 'iterations': n_iter, 'ramp_speed_mm_s': ramp_speed,
-        'hold_s': args.hold, 'recover_s': args.recover, 'rate_hz': args.rate,
+        'hold_s': hold_s, 'recover_s': recover_s, 'rate_hz': args.rate,
         'lcr': {'function': 'ZTD(sim)', 'enabled': lcr is not None,
                 'primary_col': 'lcr_primary', 'secondary_col': 'lcr_secondary',
                 'primary_name': labels[0], 'secondary_name': labels[1],
@@ -979,7 +984,7 @@ def _run_sim(rtde_c, args):
 
     start = time.time()
     try:
-        run_ramp(rtde_c, surface_pose, max_depth, n_iter, ramp_speed, args.hold, args.recover)
+        run_ramp(rtde_c, surface_pose, max_depth, n_iter, ramp_speed, hold_s, recover_s)
     except KeyboardInterrupt:
         print('\n  Interrupted.')
     finally:
@@ -1096,9 +1101,14 @@ def main():
             '  Iterations (ramp cycles) [3] > ', 3, 1, 1000)
         ramp_speed = args.ramp_speed if args.ramp_speed is not None else _ask_float(
             '  Ramp speed (mm/s, constant) [0.1] > ', 0.1, 0.001, 50.0)
+        hold_s = args.hold if args.hold is not None else _ask_float(
+            '  Holding time at push & release (s, symmetric) [1.0] > ', 1.0, 0.0, 600.0)
+        # Symmetric by default: the surface/release hold equals the push hold,
+        # unless --recover explicitly overrides it.
+        recover_s = args.recover if args.recover is not None else hold_s
 
         # ── Summary ──────────────────────────────────────────────────────────────
-        cycle_s = 2.0 * (max_depth / ramp_speed) + args.hold + args.recover
+        cycle_s = 2.0 * (max_depth / ramp_speed) + hold_s + recover_s
         print('\n' + '=' * 70)
         print(f'  Point         : {calib_meta["name"]}  '
               f'XY=({surface_pose[0]*1000:+.2f},{surface_pose[1]*1000:+.2f}) mm  '
@@ -1108,7 +1118,10 @@ def main():
               f'→ ~{max_depth/ramp_speed:.0f} s per direction')
         print(f'  Iterations    : {n_iter}   (~{cycle_s:.0f} s/cycle, '
               f'~{n_iter*cycle_s/60:.1f} min total)')
-        print(f'  Hold / recover: {args.hold:.1f} s / {args.recover:.1f} s')
+        hold_txt = (f'{hold_s:.1f} s at push & release (symmetric)'
+                    if recover_s == hold_s else
+                    f'push {hold_s:.1f} s / release {recover_s:.1f} s (asymmetric)')
+        print(f'  Holding time  : {hold_txt}')
         print(f'  Sample rate   : {args.rate} Hz ({1000.0/args.rate:.2f} ms) — logger; '
               f'robot≤500Hz, XJC~200-300Hz, LCR~20-100Hz (slower cols repeat)')
         print(f'  LCR           : {lcr_func}  ({labels[2]} / {labels[3]})')
@@ -1131,7 +1144,7 @@ def main():
             'reference_pose': list(REFERENCE_POSE),
             'max_depth_mm': max_depth, 'iterations': n_iter,
             'ramp_speed_mm_s': ramp_speed,
-            'hold_s': args.hold, 'recover_s': args.recover, 'rate_hz': args.rate,
+            'hold_s': hold_s, 'recover_s': recover_s, 'rate_hz': args.rate,
             'robot_ip': ROBOT_IP,
             'futek_calibration': {'slope_n_per_v': FUTEK_SLOPE_N_PER_V,
                                   'offset_n': FUTEK_OFFSET_N,
@@ -1158,7 +1171,7 @@ def main():
         start = time.time()
         try:
             run_ramp(rtde_c, surface_pose, max_depth, n_iter, ramp_speed,
-                     args.hold, args.recover)
+                     hold_s, recover_s)
         except KeyboardInterrupt:
             print('\n  Interrupted — stopping after the current move ...')
 

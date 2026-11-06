@@ -29,9 +29,12 @@ plots indentation-vs-force and indentation-vs-impedance/phase.
 4. **Range** — max indentation depth (mm).
 5. **Iterations** — number of ramp cycles.
 6. **Ramp speed** — constant indentation speed in mm/s (default **0.1 mm/s**).
-7. **Collect** — per iteration: press 0→max and retract max→0 as **single
-   constant-velocity moves** at the chosen mm/s (with a hold at max), logged
-   continuously to a streaming CSV (flat RAM).
+7. **Holding time** — dwell held **symmetrically** at max depth (pushed) and at
+   the surface (released, before the next cycle); default **1.0 s**. Use
+   `--recover` only if you want to break the symmetry.
+8. **Collect** — per iteration: press 0→max, hold, retract max→0, hold, as
+   **single constant-velocity moves** at the chosen mm/s, logged continuously to
+   a streaming CSV (flat RAM).
 
 ### Sampling rate (1 ms target) — what each instrument really delivers
 The logger samples all instruments into one row at `--rate` Hz (**default 1000 =

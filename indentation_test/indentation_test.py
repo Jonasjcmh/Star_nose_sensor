@@ -79,6 +79,7 @@ VEL_PRESS  = 0.004    # m/s — slow press / retract ramp
 VEL_JOG    = 0.03     # m/s — per-keystroke jog move
 ACCEL      = 0.3      # m/s^2
 SAFE_CLEAR_MM = 20.0  # mm above the surface for the safe/home height
+SAFE_FIX_LIFT_MM = 50.0  # mm — lift straight up after FIXING the point (safety gap)
 
 # Shared start pose — identical to Integration_2/calibrate_ur5.py and
 # Interdome_touch/main.py. Keep these in sync. The Z here is the "initial
@@ -335,31 +336,28 @@ def _getch():
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
     return ch
 
-def _jog(rtde_c, pose, mode):
-    """Interactive jog loop. mode='xy' jogs base X/Y; mode='z' jogs Z.
+def _jog(rtde_c, pose):
+    """Interactive jog loop over ALL THREE axes (base X, Y and Z) at once.
 
-    Returns the updated pose when the operator confirms (Enter), or None if they
-    abort (q). Each keystroke issues a small relative moveL.
+    Returns the updated pose when the operator fixes the position (Enter), or
+    None if they abort (q). Each keystroke issues a small relative moveL.
     """
     steps = [0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0]   # mm
-    si = 4 if mode == 'xy' else 2                   # default 1.0 / 0.25 mm
+    si = 3                                           # default 0.5 mm
     pose = list(pose)
 
-    if mode == 'xy':
-        header = ('  X/Y JOG — position the tip over the target point\n'
-                  '    a / d   : -X / +X      (or Left / Right arrow)\n'
-                  '    w / s   : +Y / -Y      (or Up / Down arrow)\n'
-                  '    - / +   : smaller / bigger step\n'
-                  '    ENTER   : confirm X/Y and continue      q : abort')
-        keymap = {'a': (0, -1), 'd': (0, +1), 's': (1, -1), 'w': (1, +1),
-                  '\x1b[D': (0, -1), '\x1b[C': (0, +1), '\x1b[B': (1, -1), '\x1b[A': (1, +1)}
-    else:
-        header = ('  Z JOG — lower the tip until it just touches the surface\n'
-                  '    s / DOWN : move DOWN (into surface, -Z)\n'
-                  '    w / UP   : move UP   (away from surface, +Z)\n'
-                  '    - / +    : smaller / bigger step\n'
-                  '    ENTER    : set this as surface contact (0 mm)   q : abort')
-        keymap = {'s': (2, -1), 'w': (2, +1), '\x1b[B': (2, -1), '\x1b[A': (2, +1)}
+    header = ('  JOG — position the tip (X, Y and Z together).\n'
+              '  Lower Z until it just touches the surface, then ENTER to fix it.\n'
+              '    a / d   : -X / +X        (or Left / Right arrow)\n'
+              '    w / s   : +Y / -Y        (or Up / Down arrow)\n'
+              '    r / f   : +Z / -Z        (up / down into the surface)\n'
+              '    - / +   : smaller / bigger step\n'
+              '    ENTER   : fix this position as surface contact (0 mm)   q : abort')
+    keymap = {
+        'a': (0, -1), 'd': (0, +1), '\x1b[D': (0, -1), '\x1b[C': (0, +1),   # X  ← →
+        'w': (1, +1), 's': (1, -1), '\x1b[A': (1, +1), '\x1b[B': (1, -1),   # Y  ↑ ↓
+        'r': (2, +1), 'f': (2, -1), 'R': (2, +1), 'F': (2, -1),             # Z  up/down
+    }
 
     print('\n' + '=' * 70)
     print(header)
@@ -418,9 +416,22 @@ def load_session_calib(path):
         d = json.load(f)
     return list(d['surface_pose']), d
 
+def _fix_position_lift(rtde_c, surface_pose):
+    """After the point is fixed, lift straight up SAFE_FIX_LIFT_MM for safety so
+    the tip is not resting on the sample during setup. The surface pose (0 mm)
+    is unchanged; run_ramp re-approaches it when collection starts."""
+    lift = list(surface_pose)
+    lift[2] += SAFE_FIX_LIFT_MM / 1000.0
+    print(f'  [calib] Position fixed — lifting +{SAFE_FIX_LIFT_MM:.0f} mm in Z for safety ...')
+    try:
+        rtde_c.moveL(lift, VEL_TRAVEL, ACCEL)
+    except Exception as e:
+        print(f'  [calib] safety lift rejected ({e})')
+
 def calibrate(rtde_c, args):
-    """Stages 1-3: get the surface-contact pose, by loading a session calib and
-    re-jogging Z, or by a full X/Y + Z jog. Returns (surface_pose, meta)."""
+    """Stages 1-3: get the surface-contact pose, by loading a session calib (then
+    re-jogging) or by a fresh 3-axis jog. After the point is fixed the tool is
+    lifted SAFE_FIX_LIFT_MM for safety. Returns (surface_pose, meta)."""
     sessions = list_session_calibs()
 
     use_existing = False
@@ -456,35 +467,34 @@ def calibrate(rtde_c, args):
         print('  [calib] Moving to the saved X/Y at safe height ...')
         rtde_c.moveL(_safe_pose(surface_pose), VEL_TRAVEL, ACCEL)
         rtde_c.moveL(_pose_at_depth(surface_pose, 0.0), VEL_TRAVEL, ACCEL)
-        ans = input('\n  Re-jog Z (adjust the height) before this experiment? [Y/n] > ').strip().lower()
+        ans = input('\n  Re-jog the position (X/Y/Z) before this experiment? [Y/n] > ').strip().lower()
         if ans in ('', 'y', 'yes'):
-            new_pose = _jog(rtde_c, _pose_at_depth(surface_pose, 0.0), 'z')
+            new_pose = _jog(rtde_c, _pose_at_depth(surface_pose, 0.0))
             if new_pose is None:
-                raise SystemExit('[calib] aborted during Z jog')
+                raise SystemExit('[calib] aborted during jog')
             surface_pose = new_pose
-            if input('  Save the adjusted Z back to this calibration? [y/N] > ').strip().lower() == 'y':
+            if input('  Save the adjusted position back to this calibration? [y/N] > ').strip().lower() == 'y':
                 save_session_calib(meta['name'], surface_pose, meta.get('notes', ''))
+        _fix_position_lift(rtde_c, surface_pose)
         return surface_pose, {'source': os.path.basename(chosen_path), 'name': meta['name'],
                               'reused_point': True}
 
-    # ── New point: full X/Y then Z jog from the reference pose ────────────────
+    # ── New point: one 3-axis jog from the reference pose ─────────────────────
     print('\n  [calib] New point — starting from the reference pose.')
     start = list(REFERENCE_POSE)
     start[2] += SAFE_CLEAR_MM / 1000.0      # start a bit above the reference Z
     rtde_c.moveL(start, VEL_TRAVEL, ACCEL)
 
-    xy_pose = _jog(rtde_c, start, 'xy')
-    if xy_pose is None:
-        raise SystemExit('[calib] aborted during X/Y jog')
-    surface_pose = _jog(rtde_c, xy_pose, 'z')
+    surface_pose = _jog(rtde_c, start)
     if surface_pose is None:
-        raise SystemExit('[calib] aborted during Z jog')
+        raise SystemExit('[calib] aborted during jog')
 
     name = (args.name or input('\n  Name this point/session (e.g. ecoflex_dome_a) > ').strip()
             or datetime.now().strftime('point_%Y%m%d_%H%M%S'))
     name = ''.join(c if (c.isalnum() or c in '-_') else '_' for c in name)
     notes = input('  Notes (optional) > ').strip()
     save_session_calib(name, surface_pose, notes)
+    _fix_position_lift(rtde_c, surface_pose)
     return surface_pose, {'source': f'calib_session_{name}.json', 'name': name,
                           'reused_point': False}
 

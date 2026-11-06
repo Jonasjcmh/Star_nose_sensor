@@ -14,20 +14,23 @@ plots indentation-vs-force and indentation-vs-impedance/phase.
 | Derived | `cmd_depth_mm`, `indentation_mm` | commanded vs actual (from TCP z − surface z) |
 
 ## Workflow (interactive stages)
-1. **Position (X/Y jog)** — keyboard-jog the TCP in base X/Y over the target.
-2. **Surface (Z jog)** — jog Z down to first contact; that pose is indentation 0 mm
-   (coincident with the shared `REFERENCE_POSE` / UR-control frame).
-3. **Save/Load calib** — the point (surface pose) is saved to
-   `calib_session_<name>.json`. Later runs **load** it to reuse the same X/Y and
-   only re-jog **Z** (the normal between-experiments height change).
-4. **Range** — max indentation depth (mm).
-5. **Iterations** — number of ramp cycles.
-6. **Collect** — per iteration: press 0→max (continuous), hold, retract max→0,
+1. **Position (3-axis jog)** — keyboard-jog the TCP in base **X, Y and Z together**;
+   lower Z until the tip just touches the surface. That pose is indentation 0 mm
+   (coincident with the shared `REFERENCE_POSE` / UR-control frame). When you
+   **fix** the position the tool lifts **+5 cm in Z for safety** (the 0 mm pose is
+   kept; the run re-approaches it automatically).
+2. **Save/Load calib** — the point (surface pose) is saved to
+   `calib_session_<name>.json`. Later runs **load** it to reuse the same point and
+   re-jog (usually just **Z**, the normal between-experiments height change).
+3. **Range** — max indentation depth (mm).
+4. **Iterations** — number of ramp cycles.
+5. **Collect** — per iteration: press 0→max (continuous), hold, retract max→0,
    logging continuously to a streaming CSV (flat RAM).
 
-### Jog keys
-- **X/Y:** `a`/`d` = −X/+X, `w`/`s` = +Y/−Y (or arrow keys) · `-`/`+` step · `ENTER` confirm · `q` abort
-- **Z:** `s`/`↓` down (into surface), `w`/`↑` up · `-`/`+` step · `ENTER` sets contact · `q` abort
+### Jog keys (single 3-axis loop)
+`a`/`d` = −X/+X (or ←/→) · `w`/`s` = +Y/−Y (or ↑/↓) · `r`/`f` = +Z/−Z (up / down
+into the surface) · `-`/`+` = step size · **ENTER** fixes the point (then lifts
++5 cm) · `q` aborts.
 
 ## Run
 ```bash

@@ -38,9 +38,11 @@ plots indentation-vs-force and indentation-vs-impedance/phase.
    During the press, a watchdog polls the real force (XJC + robot Fz) every ~2 ms;
    if |Fz| exceeds the limit it **stops the move, retracts to relieve the load,
    and ends the run**. Protects the sensors (XJC ±50 N, FUTEK 10 lb ≈ 44.5 N).
-10. **Collect** — per iteration: press 0→max, hold, retract max→0, hold, as
-    **single constant-velocity moves** at the chosen mm/s, logged continuously to
-    a streaming CSV (flat RAM).
+10. **Collect** — per iteration: press 0→max, hold, retract max→0, hold, at a
+    **constant velocity**, logged continuously to a streaming CSV (flat RAM).
+    The motion uses **`speedL`** (velocity control — true constant velocity, the
+    default) or **`moveL`** (point-to-point), selectable with `--motion`. The
+    force cutoff is folded into the speedL monitoring loop.
 
 ### Sampling rate (1 ms target) — what each instrument really delivers
 The logger samples all instruments into one row at `--rate` Hz (**default 1000 =

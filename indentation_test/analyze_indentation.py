@@ -31,6 +31,33 @@ import argparse
 _HERE    = os.path.dirname(os.path.abspath(__file__))
 PLOT_DIR = os.path.join(_HERE, 'plots')
 
+# ── SDU (University of Southern Denmark) brand palette ─────────────────────────
+# Best-effort hex values from the SDU visual identity — edit here if your design
+# guide differs; everything below uses these constants.
+SDU_RED    = '#B5123E'   # primary SDU bordeaux-red
+SDU_BLUE   = '#114B5F'   # deep blue (secondary)
+SDU_GREEN  = '#0E7C61'   # green accent
+SDU_SAND   = '#E8A33D'   # sand/orange accent
+SDU_PURPLE = '#5A2A82'   # purple accent
+SDU_GREY   = '#6E6E6E'   # neutral grey (spines / ticks / labels)
+SDU_GRID   = '#E7E2DD'   # very light warm grey — the replacement gridline colour
+SDU_SEQ    = ['#EBC4CE', SDU_RED, '#4A0A1C']   # light tint → SDU red → dark (per-cycle ramp)
+SDU_CYCLE  = [SDU_RED, SDU_BLUE, SDU_GREEN, SDU_SAND, SDU_PURPLE, SDU_GREY]
+
+
+def _style(ax):
+    """Apply the SDU look: drop the old crosshatch grid for a subtle light
+    horizontal grid, hide the top/right spines, and tint spines/ticks grey."""
+    ax.set_axisbelow(True)
+    ax.grid(False)
+    ax.grid(True, axis='y', color=SDU_GRID, linewidth=0.8, zorder=0)
+    for side in ('top', 'right'):
+        ax.spines[side].set_visible(False)
+    for side in ('left', 'bottom'):
+        ax.spines[side].set_color(SDU_GREY)
+    ax.tick_params(colors=SDU_GREY, labelcolor='#333333')
+    ax.title.set_color(SDU_RED)
+
 
 def _load_meta(meta_path):
     if meta_path and os.path.exists(meta_path):
@@ -101,9 +128,12 @@ def plot(csv_path, meta_path=None, show=True):
     # Which force channels are present / non-trivial.
     has_xjc = meta.get('xjc', {}).get('enabled', True)
 
+    # Per-cycle colour ramp in SDU red (light tint → SDU red → dark).
+    from matplotlib.colors import LinearSegmentedColormap
+    cmap = LinearSegmentedColormap.from_list('sdu_seq', SDU_SEQ)
+
     # ── Figure 1: indentation vs force ─────────────────────────────────────────
     fig1, ax1 = plt.subplots(figsize=(7.5, 5.5))
-    cmap = plt.get_cmap('viridis')
     for j, it in enumerate(iters):
         ri = by_iter[it]
         c  = cmap(j / max(1, len(iters) - 1))
@@ -117,8 +147,8 @@ def plot(csv_path, meta_path=None, show=True):
     ax1.set_xlabel('indentation (mm)')
     ax1.set_ylabel('force (N)')
     ax1.set_title(f'Indentation vs force   ({base})')
-    ax1.grid(alpha=0.3)
-    ax1.legend(loc='best', fontsize=8)
+    _style(ax1)
+    ax1.legend(loc='best', fontsize=8, frameon=False)
     p1 = os.path.join(out_dir, f"{base}_force.png")
     fig1.tight_layout(); fig1.savefig(p1, dpi=130)
     print(f'[plot] {p1}')
@@ -149,7 +179,7 @@ def plot(csv_path, meta_path=None, show=True):
             ax.set_xlabel('indentation (mm)')
             ax.set_ylabel(ylabel)
             ax.set_title(f'Indentation vs {ylabel}   ({base})')
-            ax.grid(alpha=0.3); ax.legend(loc='best', fontsize=8)
+            _style(ax); ax.legend(loc='best', fontsize=8, frameon=False)
             p = os.path.join(out_dir, f'{base}_{suffix}.png')
             fig.tight_layout(); fig.savefig(p, dpi=130)
             print(f'[plot] {p}'); saved.append(p)
@@ -185,26 +215,28 @@ def plot(csv_path, meta_path=None, show=True):
             if len(idx):
                 bounds.append((t[idx[0]], it))
 
+        panel_color = {'indentation_mm': SDU_BLUE, 'lcr_primary': SDU_GREEN,
+                       'lcr_secondary': SDU_PURPLE}
         for ax, spec in zip(axes, panels):
             key = spec[0]
             if key == '__force__':
                 ax.plot(t, [_f(r, 'futek_force_N') for r in cyc], '-', lw=0.8,
-                        color='#1f77b4', label='FUTEK')
+                        color=SDU_RED, label='FUTEK')
                 if has_xjc:
                     ax.plot(t, [_f(r, 'xjc_Fz') for r in cyc], '-', lw=0.8,
-                            color='#d62728', alpha=0.7, label='XJC Fz')
-                ax.legend(loc='upper right', fontsize=7)
+                            color=SDU_BLUE, alpha=0.8, label='XJC Fz')
+                ax.legend(loc='upper right', fontsize=7, frameon=False)
             else:
                 y = np.array([_f(r, key) for r in cyc])
-                ax.plot(t, y, '-', lw=0.8, color='#2ca02c')
+                ax.plot(t, y, '-', lw=0.8, color=panel_color.get(key, SDU_RED))
             ax.set_ylabel(spec[1], fontsize=9)
-            ax.grid(alpha=0.3)
+            _style(ax)
             for tb, it in bounds:
-                ax.axvline(tb, color='0.6', lw=0.7, ls='--', alpha=0.6)
+                ax.axvline(tb, color=SDU_GREY, lw=0.7, ls='--', alpha=0.5)
         # label the iterations across the top panel
         for tb, it in bounds:
             axes[0].text(tb, axes[0].get_ylim()[1], f' c{it + 1}', fontsize=7,
-                         color='0.3', va='top')
+                         color=SDU_GREY, va='top')
         axes[-1].set_xlabel('time (s)')
         axes[0].set_title(f'Cycles over time — {len(iters)} cycle(s)   ({base})')
         pt = os.path.join(out_dir, f'{base}_timeseries.png')

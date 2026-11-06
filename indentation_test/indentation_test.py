@@ -129,7 +129,8 @@ def _ft_reader(rtde_r):
                 _state['ai0'] = float(ai0)
         except Exception:
             pass
-        time.sleep(0.004)   # ~250 Hz
+        time.sleep(0.001)   # ~1 ms — keep the cache fresh for 1 kHz logging
+                            # (RTDE itself tops out at 500 Hz on the UR5e)
 
 def get_robot_state():
     with _state_lock:
@@ -347,11 +348,13 @@ def _jog(rtde_c, pose):
     pose = list(pose)
 
     header = ('  JOG — position the tip (X, Y and Z together).\n'
-              '  Lower Z until it just touches the surface, then ENTER to fix it.\n'
+              '  Watch the FUTEK + XJC Fz read-out: lower Z until the force just\n'
+              '  begins to rise above ~0 — that is the surface contact point.\n'
               '    a / d   : -X / +X        (or Left / Right arrow)\n'
               '    w / s   : +Y / -Y        (or Up / Down arrow)\n'
               '    r / f   : +Z / -Z        (up / down into the surface)\n'
               '    - / +   : smaller / bigger step\n'
+              '    b       : zero the force baseline here (set current force = Δ0)\n'
               '    ENTER   : fix this position as surface contact (0 mm)   q : abort')
     keymap = {
         'a': (0, -1), 'd': (0, +1), '\x1b[D': (0, -1), '\x1b[C': (0, +1),   # X  ← →
@@ -363,10 +366,22 @@ def _jog(rtde_c, pose):
     print(header)
     print('=' * 70)
 
+    # Force baseline (in air): Δ from here makes the contact point easy to spot.
+    def _forces():
+        rs = get_robot_state()
+        futek = ai0_to_futek_n(rs['ai0'])
+        xj = get_xjc_state()
+        return futek, (xj['values'][2] if xj['ok'] else float('nan')), xj['ok']
+    base_fu, base_xz, _ = _forces()
+
     while True:
         st = get_robot_state()['tcp']
-        print(f'\r  step={steps[si]:5.2f} mm   TCP x={st[0]*1000:+8.2f} '
-              f'y={st[1]*1000:+8.2f} z={st[2]*1000:+8.2f} mm   ', end='', flush=True)
+        fu, xz, xok = _forces()
+        xtxt = (f'{xz:+6.2f}N (Δ{xz - base_xz:+5.2f})' if xok else '  --  (no XJC)')
+        print(f'\r  step={steps[si]:4.2f}mm  z={st[2]*1000:+7.2f} '
+              f'x={st[0]*1000:+7.2f} y={st[1]*1000:+7.2f}mm | '
+              f'FUTEK {fu:+6.2f}N (Δ{fu - base_fu:+5.2f}) | '
+              f'XJC Fz {xtxt}   ', end='', flush=True)
         ch = _getch()
         if ch in ('\r', '\n'):
             print()
@@ -378,6 +393,9 @@ def _jog(rtde_c, pose):
             si = min(si + 1, len(steps) - 1); continue
         if ch in ('-', '_'):
             si = max(si - 1, 0); continue
+        if ch in ('b', 'B'):
+            base_fu, base_xz, _ = _forces()
+            print('\n  [jog] force baseline zeroed here'); continue
         if ch not in keymap:
             continue
         axis, sign = keymap[ch]
@@ -500,27 +518,53 @@ def calibrate(rtde_c, args):
 
 
 # ── Continuous-ramp indentation ─────────────────────────────────────────────────
-def run_ramp(rtde_c, surface_pose, max_depth_mm, n_iter, step_mm,
+def _ramp_cmd_depth(d0, d1, duration_s, stop_evt):
+    """Linearly drive cmd_depth_mm from d0 to d1 over duration_s, to match the
+    constant-velocity moveL running concurrently. Runs in a daemon thread."""
+    t0 = time.perf_counter()
+    while not stop_evt.is_set():
+        frac = 1.0 if duration_s <= 0 else min(1.0, (time.perf_counter() - t0) / duration_s)
+        set_wf(cmd_depth_mm=d0 + (d1 - d0) * frac)
+        if frac >= 1.0:
+            break
+        time.sleep(0.002)
+
+def _constant_velocity_move(rtde_c, target_pose, d0, d1, max_depth_mm, ramp_speed_mm_s):
+    """Blocking moveL at a constant ramp_speed, while a helper thread advances
+    cmd_depth_mm linearly over the move's expected duration."""
+    duration_s = abs(d1 - d0) / max(1e-6, ramp_speed_mm_s)
+    stop_evt = threading.Event()
+    th = threading.Thread(target=_ramp_cmd_depth,
+                          args=(d0, d1, duration_s, stop_evt), daemon=True)
+    th.start()
+    rtde_c.moveL(target_pose, ramp_speed_mm_s / 1000.0, ACCEL)   # mm/s → m/s
+    stop_evt.set()
+    th.join(0.2)
+    set_wf(cmd_depth_mm=d1)
+
+def run_ramp(rtde_c, surface_pose, max_depth_mm, n_iter, ramp_speed_mm_s,
              hold_s, recover_s):
-    """Press 0→max in `step_mm` micro-moves (slow), hold, retract max→0, logging
-    continuously via the background logger. Repeated `n_iter` times."""
-    n_steps = max(1, int(round(max_depth_mm / step_mm)))
-    depths  = [max_depth_mm * k / n_steps for k in range(n_steps + 1)]
+    """Press 0→max and retract max→0 as SINGLE constant-velocity moves (true
+    `ramp_speed_mm_s`), logged continuously by the background logger. The robot
+    moveL is blocking, so the ~max_depth/speed-second descent is captured at the
+    full logger rate. Repeated `n_iter` times."""
+    pressed = _pose_at_depth(surface_pose, max_depth_mm)
+    surface = _pose_at_depth(surface_pose, 0.0)
+    cycle_s = 2.0 * (max_depth_mm / max(1e-6, ramp_speed_mm_s)) + hold_s + recover_s
 
     # Make sure we start exactly at the surface (indentation 0).
     set_wf(phase='approach', cmd_depth_mm=0.0)
-    rtde_c.moveL(_pose_at_depth(surface_pose, 0.0), VEL_TRAVEL, ACCEL)
+    rtde_c.moveL(surface, VEL_TRAVEL, ACCEL)
 
     for it in range(n_iter):
         print('-' * 70)
         print(f'  Iteration {it + 1}/{n_iter}  —  ramp 0 → {max_depth_mm:.2f} mm '
-              f'({n_steps} steps of {step_mm:.3f} mm)')
+              f'@ {ramp_speed_mm_s:.3f} mm/s  (~{cycle_s:.0f} s/cycle)')
 
-        # press (ramp down)
+        # press (constant-velocity ramp down)
         set_wf(iteration=it, phase='press')
-        for d in depths:
-            set_wf(cmd_depth_mm=d)
-            rtde_c.moveL(_pose_at_depth(surface_pose, d), VEL_PRESS, ACCEL)
+        _constant_velocity_move(rtde_c, pressed, 0.0, max_depth_mm,
+                                max_depth_mm, ramp_speed_mm_s)
 
         # hold at max
         set_wf(phase='hold', cmd_depth_mm=max_depth_mm)
@@ -530,11 +574,10 @@ def run_ramp(rtde_c, surface_pose, max_depth_mm, n_iter, step_mm,
               f'UR Fz={st["ft"][2]:+.2f} N   XJC Fz={xj["values"][2]:+.2f} N')
         time.sleep(hold_s)
 
-        # retract (ramp up)
+        # retract (constant-velocity ramp up)
         set_wf(phase='retract')
-        for d in reversed(depths):
-            set_wf(cmd_depth_mm=d)
-            rtde_c.moveL(_pose_at_depth(surface_pose, d), VEL_PRESS, ACCEL)
+        _constant_velocity_move(rtde_c, surface, max_depth_mm, 0.0,
+                                max_depth_mm, ramp_speed_mm_s)
 
         # recover at the surface
         set_wf(phase='recover', cmd_depth_mm=0.0)
@@ -556,19 +599,28 @@ def _sim_force_n(depth_mm):
     return 2.0 * depth_mm + 0.3 * depth_mm * depth_mm
 
 class _SimController:
-    """Stand-in for rtde_control: moveL just updates the shared robot state with
-    a synthetic wrench/AI0 derived from the commanded indentation depth."""
+    """Stand-in for rtde_control: moveL interpolates from the current pose to the
+    target at `vel` (m/s), updating the shared robot state with a synthetic
+    wrench/AI0 along the way — so the background logger captures a real ramp."""
     def __init__(self, surface_z):
         self._sz = surface_z
-    def moveL(self, pose, vel=0.0, accel=0.0):
+    def _apply(self, pose):
         depth = (self._sz - pose[2]) * 1000.0
         F = _sim_force_n(max(0.0, depth)) + _rnd.uniform(-0.03, 0.03)
-        ai0 = (F - FUTEK_OFFSET_N) / FUTEK_SLOPE_N_PER_V
         with _state_lock:
             _state['tcp'] = list(pose)
             _state['ft']  = [0.0, 0.0, -F, 0.0, 0.0, 0.0]
-            _state['ai0'] = ai0
-        time.sleep(0.003)   # mimic a short blocking move so the logger samples it
+            _state['ai0'] = (F - FUTEK_OFFSET_N) / FUTEK_SLOPE_N_PER_V
+    def moveL(self, pose, vel=0.05, accel=0.0):
+        with _state_lock:
+            cur = list(_state['tcp'])
+        dist = sum((pose[i] - cur[i]) ** 2 for i in range(3)) ** 0.5
+        dur  = dist / max(1e-6, vel)
+        n    = max(1, int(dur / 0.01))        # ~10 ms interpolation increments
+        for k in range(1, n + 1):
+            f = k / n
+            self._apply([cur[i] + (pose[i] - cur[i]) * f for i in range(6)])
+            time.sleep(min(0.01, dur / n))
     def stopScript(self):
         pass
 
@@ -758,7 +810,36 @@ def setup_lcr(args, port):
     labels = LCR_FUNCTIONS.get(func, DEFAULT_LCR_LABELS)
     print(f'[LCR] Logging field0 → {labels[2]}   field1 → {labels[3]}')
     lcr.start_polling()
-    time.sleep(0.5)
+
+    # ── Health check: confirm the meter returns numbers AND time its rate ──────
+    # The driver already polls FETC? flat-out (no delay), so this rate IS the
+    # meter's fastest. The only lever is the front-panel Speed setting.
+    import math as _math
+    f0 = f1 = float('nan')
+    ok = False
+    for _ in range(10):
+        time.sleep(0.2)
+        f0, f1, ok = lcr.get_latest()
+        if _math.isfinite(f0):
+            break
+    if _math.isfinite(f0):
+        n0 = lcr.measurement_count
+        time.sleep(1.0)
+        lcr_hz = lcr.measurement_count - n0
+        print(f'[LCR] Live reading OK: {labels[2]}={f0:.4g}  {labels[3]}={f1:.4g}  '
+              f'(status_ok={bool(ok)})')
+        print(f'[LCR] Update rate ≈ {lcr_hz} Hz (as fast as the meter allows). '
+              + ('Set front-panel Speed=FAST to raise it.' if lcr_hz < 30 else 'Looks good.'))
+    else:
+        print('[LCR] ⚠ No numeric reading from the meter (fields are NaN).')
+        print('      Check the front panel: not showing an error (E01), a valid')
+        print('      Function selected, FETC? supported, and the probes connected.')
+        if input('  Continue anyway with the LCR (y), or disable it (N)? > ').strip().lower() != 'y':
+            try:
+                lcr.disconnect()
+            except Exception:
+                pass
+            return None, DEFAULT_LCR_LABELS, 'disabled'
     return lcr, labels, (func or 'unknown')
 
 def setup_xjc(args, port):
@@ -822,14 +903,16 @@ def parse_args():
                    help='Indentation range: max depth in mm (default: ask, 3.0)')
     p.add_argument('--iterations', type=int, default=None,
                    help='Ramp cycles at the point (default: ask, 3)')
-    p.add_argument('--step', type=float, default=0.05,
-                   help='Ramp micro-step in mm (default: 0.05)')
+    p.add_argument('--ramp-speed', type=float, default=None, dest='ramp_speed',
+                   help='Constant indentation ramp speed in mm/s (default: ask, 0.1)')
     p.add_argument('--hold', type=float, default=1.0,
                    help='Hold at max depth, seconds (default: 1.0)')
     p.add_argument('--recover', type=float, default=1.0,
                    help='Dwell at the surface between iterations, seconds (default: 1.0)')
-    p.add_argument('--rate', type=int, default=60,
-                   help='Logging rate in Hz (default: 60)')
+    p.add_argument('--rate', type=int, default=1000,
+                   help='Logging / sampling rate in Hz (default: 1000 = 1 ms). Note: '
+                        'the LCR (~20-100 Hz) and XJC-poll (~200-300 Hz) hardware '
+                        'update slower, so their 1 ms rows repeat the latest reading.')
     p.add_argument('--name', default=None, help='Session/point name for a NEW calibration')
     p.add_argument('--new-point', action='store_true',
                    help='Force a full X/Y + Z jog even if session calibs exist')
@@ -856,9 +939,10 @@ def parse_args():
 def _run_sim(rtde_c, args):
     """Full collect → CSV → plot pipeline against synthetic signals."""
     surface_pose = list(REFERENCE_POSE)
-    max_depth = args.max_depth if args.max_depth is not None else 3.0
-    n_iter    = args.iterations if args.iterations is not None else 2
-    step_mm   = max(0.01, args.step)
+    max_depth  = args.max_depth if args.max_depth is not None else 3.0
+    n_iter     = args.iterations if args.iterations is not None else 2
+    # In sim, default to a brisk ramp so the dry run finishes quickly.
+    ramp_speed = args.ramp_speed if args.ramp_speed is not None else 2.0
 
     lcr    = None if args.no_lcr else _SimLCR(_SURFACE_Z)
     labels = LCR_FUNCTIONS['ZTD']
@@ -866,8 +950,8 @@ def _run_sim(rtde_c, args):
     if xjc is not None:
         threading.Thread(target=_xjc_reader, args=(xjc,), daemon=True).start()
 
-    print(f'[sim] max_depth={max_depth} mm  iterations={n_iter}  step={step_mm} mm  '
-          f'rate={args.rate} Hz')
+    print(f'[sim] max_depth={max_depth} mm  iterations={n_iter}  '
+          f'ramp_speed={ramp_speed} mm/s  rate={args.rate} Hz')
 
     os.makedirs(LOG_DIR, exist_ok=True)
     ts        = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -877,7 +961,7 @@ def _run_sim(rtde_c, args):
         'timestamp': ts, 'csv_file': os.path.basename(csv_path), 'simulated': True,
         'point': {'name': 'sim', 'source': 'sim', 'reused_point': False},
         'surface_pose': [round(v, 6) for v in surface_pose],
-        'max_depth_mm': max_depth, 'iterations': n_iter, 'step_mm': step_mm,
+        'max_depth_mm': max_depth, 'iterations': n_iter, 'ramp_speed_mm_s': ramp_speed,
         'hold_s': args.hold, 'recover_s': args.recover, 'rate_hz': args.rate,
         'lcr': {'function': 'ZTD(sim)', 'enabled': lcr is not None,
                 'primary_col': 'lcr_primary', 'secondary_col': 'lcr_secondary',
@@ -895,7 +979,7 @@ def _run_sim(rtde_c, args):
 
     start = time.time()
     try:
-        run_ramp(rtde_c, surface_pose, max_depth, n_iter, step_mm, args.hold, args.recover)
+        run_ramp(rtde_c, surface_pose, max_depth, n_iter, ramp_speed, args.hold, args.recover)
     except KeyboardInterrupt:
         print('\n  Interrupted.')
     finally:
@@ -975,22 +1059,18 @@ def main():
     labels = DEFAULT_LCR_LABELS
     lcr_func = 'disabled'
     try:
-        # ── Stages 1-3: calibration (jog) ──────────────────────────────────────
-        surface_pose, calib_meta = calibrate(rtde_c, args)
-        _SURFACE_Z = surface_pose[2]
+        # ── Safe in-air pose first (so the XJC tares UNLOADED and the jog's live
+        #    force read-out starts from a clean baseline) ──────────────────────
+        home = list(REFERENCE_POSE)
+        home[2] += SAFE_CLEAR_MM / 1000.0
+        print('[robot] Moving to a safe start height ...')
+        rtde_c.moveL(home, VEL_TRAVEL, ACCEL)
 
-        # ── Stage 4-5: range + iterations ──────────────────────────────────────
-        max_depth = args.max_depth if args.max_depth is not None else _ask_float(
-            '\n  Indentation range — max depth (mm) [3.0] > ', 3.0, 0.1, 15.0)
-        n_iter = args.iterations if args.iterations is not None else _ask_int(
-            '  Iterations (ramp cycles) [3] > ', 3, 1, 1000)
-        step_mm = max(0.01, args.step)
-
-        # ── Instruments: auto-detect which serial devices are connected ─────────
+        # ── Instruments BEFORE the jog: auto-detect + connect, start the XJC
+        #    poll thread so its Fz is live while you look for the contact point ─
         report = detect_instruments(args, robot_connected=True)
         lcr_port, xjc_port = report['lcr'], report['xjc']
         leftover = list(report['unknown'])
-        # If a sensor wasn't identified but unknown ports remain, offer them.
         if lcr_port is None and leftover and not args.no_lcr:
             lcr_port = _select_serial_port('LCR-6100 — pick from unidentified ports', leftover)
             if lcr_port in leftover:
@@ -1003,16 +1083,34 @@ def main():
         if xjc is not None:
             xjc_thread = threading.Thread(target=_xjc_reader, args=(xjc,), daemon=True)
             xjc_thread.start()
+            time.sleep(0.3)   # let the first few polls land before the jog
+
+        # ── Stages 1-3: calibration (jog with live FUTEK + XJC Fz read-out) ────
+        surface_pose, calib_meta = calibrate(rtde_c, args)
+        _SURFACE_Z = surface_pose[2]
+
+        # ── Stage 4-6: range + iterations + ramp speed ─────────────────────────
+        max_depth = args.max_depth if args.max_depth is not None else _ask_float(
+            '\n  Indentation range — max depth (mm) [3.0] > ', 3.0, 0.1, 15.0)
+        n_iter = args.iterations if args.iterations is not None else _ask_int(
+            '  Iterations (ramp cycles) [3] > ', 3, 1, 1000)
+        ramp_speed = args.ramp_speed if args.ramp_speed is not None else _ask_float(
+            '  Ramp speed (mm/s, constant) [0.1] > ', 0.1, 0.001, 50.0)
 
         # ── Summary ──────────────────────────────────────────────────────────────
+        cycle_s = 2.0 * (max_depth / ramp_speed) + args.hold + args.recover
         print('\n' + '=' * 70)
         print(f'  Point         : {calib_meta["name"]}  '
               f'XY=({surface_pose[0]*1000:+.2f},{surface_pose[1]*1000:+.2f}) mm  '
               f'surface z={surface_pose[2]*1000:+.2f} mm')
-        print(f'  Max depth     : {max_depth:.2f} mm   step {step_mm:.3f} mm')
-        print(f'  Iterations    : {n_iter}')
+        print(f'  Max depth     : {max_depth:.2f} mm')
+        print(f'  Ramp speed    : {ramp_speed:.3f} mm/s (constant) '
+              f'→ ~{max_depth/ramp_speed:.0f} s per direction')
+        print(f'  Iterations    : {n_iter}   (~{cycle_s:.0f} s/cycle, '
+              f'~{n_iter*cycle_s/60:.1f} min total)')
         print(f'  Hold / recover: {args.hold:.1f} s / {args.recover:.1f} s')
-        print(f'  Log rate      : {args.rate} Hz')
+        print(f'  Sample rate   : {args.rate} Hz ({1000.0/args.rate:.2f} ms) — logger; '
+              f'robot≤500Hz, XJC~200-300Hz, LCR~20-100Hz (slower cols repeat)')
         print(f'  LCR           : {lcr_func}  ({labels[2]} / {labels[3]})')
         print(f'  XJC           : {"poll" if xjc else "disabled"}')
         print('=' * 70)
@@ -1031,7 +1129,8 @@ def main():
             'timestamp': ts, 'csv_file': os.path.basename(csv_path),
             'point': calib_meta, 'surface_pose': [round(v, 6) for v in surface_pose],
             'reference_pose': list(REFERENCE_POSE),
-            'max_depth_mm': max_depth, 'iterations': n_iter, 'step_mm': step_mm,
+            'max_depth_mm': max_depth, 'iterations': n_iter,
+            'ramp_speed_mm_s': ramp_speed,
             'hold_s': args.hold, 'recover_s': args.recover, 'rate_hz': args.rate,
             'robot_ip': ROBOT_IP,
             'futek_calibration': {'slope_n_per_v': FUTEK_SLOPE_N_PER_V,
@@ -1058,15 +1157,28 @@ def main():
 
         start = time.time()
         try:
-            run_ramp(rtde_c, surface_pose, max_depth, n_iter, step_mm,
+            run_ramp(rtde_c, surface_pose, max_depth, n_iter, ramp_speed,
                      args.hold, args.recover)
         except KeyboardInterrupt:
             print('\n  Interrupted — stopping after the current move ...')
 
         _log_stop.set()
         time.sleep(0.2)
+        elapsed = time.time() - start
         n_rows = close_dataset()
-        print(f'\n  Completed in {time.time() - start:.1f} s   rows={n_rows}')
+        print(f'\n  Completed in {elapsed:.1f} s   rows={n_rows}')
+        # Achieved rates — so you can see what each instrument REALLY delivered
+        # versus the 1 ms target (hardware-limited for the LCR and XJC-poll).
+        if elapsed > 0:
+            print(f'  Achieved sample rate : {n_rows/elapsed:7.1f} Hz  (logger; target {args.rate} Hz)')
+            if xjc is not None:
+                print(f'  XJC poll rate        : {xjc.frames/elapsed:7.1f} Hz  '
+                      f'({xjc.errors} bad frames)')
+            if lcr is not None:
+                try:
+                    print(f'  LCR measurement rate : {lcr.measurement_count/elapsed:7.1f} Hz')
+                except Exception:
+                    pass
         print(f'  Dataset : {csv_path}')
         print(f'  Metadata: {meta_path}')
 
@@ -1083,11 +1195,17 @@ def main():
         _log_stop.set()
         _xjc_stop.set()
         _ft_stop.set()
-        print('\n[robot] Lifting to a safe height ...')
+        print('\n[robot] Returning to the initial position ...')
         try:
+            # First lift straight up off the surface, THEN travel back to the
+            # initial/home pose the run started from (REFERENCE_POSE + clearance).
             cur = get_robot_state()['tcp']
-            cur[2] += SAFE_CLEAR_MM / 1000.0      # straight up, off the surface
+            cur[2] += SAFE_CLEAR_MM / 1000.0
             rtde_c.moveL(cur, VEL_TRAVEL, ACCEL)
+            home = list(REFERENCE_POSE)
+            home[2] += SAFE_CLEAR_MM / 1000.0
+            rtde_c.moveL(home, VEL_TRAVEL, ACCEL)
+            print('[robot] At initial position.')
         except Exception:
             pass
         try:

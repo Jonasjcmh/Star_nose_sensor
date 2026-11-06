@@ -14,23 +14,46 @@ plots indentation-vs-force and indentation-vs-impedance/phase.
 | Derived | `cmd_depth_mm`, `indentation_mm` | commanded vs actual (from TCP z − surface z) |
 
 ## Workflow (interactive stages)
-1. **Position (3-axis jog)** — keyboard-jog the TCP in base **X, Y and Z together**;
-   lower Z until the tip just touches the surface. That pose is indentation 0 mm
-   (coincident with the shared `REFERENCE_POSE` / UR-control frame). When you
+1. **Instruments up first** — the tool moves to a safe in-air height, the LCR/XJC
+   are detected and connected, and the **XJC is tared unloaded**, so its Fz is
+   live and near zero before you touch anything.
+2. **Position (3-axis jog)** — keyboard-jog the TCP in base **X, Y and Z together**.
+   The jog shows a **live FUTEK + XJC Fz read-out**: lower Z until the force just
+   begins to rise above ~0 — that's the surface contact point (indentation 0 mm,
+   coincident with the shared `REFERENCE_POSE` / UR-control frame). When you
    **fix** the position the tool lifts **+5 cm in Z for safety** (the 0 mm pose is
    kept; the run re-approaches it automatically).
-2. **Save/Load calib** — the point (surface pose) is saved to
+3. **Save/Load calib** — the point (surface pose) is saved to
    `calib_session_<name>.json`. Later runs **load** it to reuse the same point and
    re-jog (usually just **Z**, the normal between-experiments height change).
-3. **Range** — max indentation depth (mm).
-4. **Iterations** — number of ramp cycles.
-5. **Collect** — per iteration: press 0→max (continuous), hold, retract max→0,
-   logging continuously to a streaming CSV (flat RAM).
+4. **Range** — max indentation depth (mm).
+5. **Iterations** — number of ramp cycles.
+6. **Ramp speed** — constant indentation speed in mm/s (default **0.1 mm/s**).
+7. **Collect** — per iteration: press 0→max and retract max→0 as **single
+   constant-velocity moves** at the chosen mm/s (with a hold at max), logged
+   continuously to a streaming CSV (flat RAM).
 
-### Jog keys (single 3-axis loop)
+### Sampling rate (1 ms target) — what each instrument really delivers
+The logger samples all instruments into one row at `--rate` Hz (**default 1000 =
+1 ms**). Each instrument's reader runs as fast as its hardware allows and the row
+repeats the latest cached value for the slower ones:
+
+| Source | Realistic update rate |
+|---|---|
+| Logger (CSV rows) | ~1 kHz target (Python-bound; end-of-run prints the achieved Hz) |
+| Robot RTDE (pose/wrench/AI0 → FUTEK) | ≤ 500 Hz (UR5e RTDE ceiling) |
+| XJC (poll mode) | ~200–300 Hz (serial round-trip at 115200 baud) |
+| LCR-6100 (`FETC?`) | ~20–100 Hz (meter-limited) |
+
+True 1 ms *new* samples from the XJC would need stream mode; the LCR simply can't
+go that fast. The run prints the **actual achieved rate** per instrument at the end.
+
+### Jog keys (single 3-axis loop, with live force)
 `a`/`d` = −X/+X (or ←/→) · `w`/`s` = +Y/−Y (or ↑/↓) · `r`/`f` = +Z/−Z (up / down
-into the surface) · `-`/`+` = step size · **ENTER** fixes the point (then lifts
-+5 cm) · `q` aborts.
+into the surface) · `-`/`+` = step size · `b` = zero the force baseline here (so
+Δ reads 0) · **ENTER** fixes the point (then lifts +5 cm) · `q` aborts.
+The status line shows `FUTEK ±N (Δ±N)` and `XJC Fz ±N (Δ±N)` — hover just above
+the surface, press `b` to zero, then ease Z down until Δ lifts off zero.
 
 ## Run
 ```bash
@@ -41,7 +64,7 @@ python3 indentation_test.py --new-point        # force a full X/Y + Z jog
 UR_ROBOT_IP=127.0.0.1 python3 indentation_test.py
 ```
 Useful flags: `--lcr-port /dev/ttyUSB0 --xjc-port /dev/ttyUSB1 --xjc-station 1 --xjc-baud 115200`,
-`--step 0.05 --hold 1 --recover 1 --rate 60`, `--no-lcr`, `--no-plot`.
+`--ramp-speed 0.1 --hold 1 --recover 1 --rate 1000`, `--no-lcr`, `--no-plot`.
 
 ## Check what's connected (no motion)
 Every run auto-detects which instruments are present: it pings the robot (RTDE)
@@ -79,6 +102,20 @@ At startup the script reads the meter's function (`:FUNC:IMP?`), prints it, and
 offers to switch to **Z-θ** (impedance + phase). The two logged fields and the
 plot axis labels follow whatever mode you end up in (stored in the run
 `*_meta.json`). Set frequency / level / speed on the front panel as usual.
+
+After polling starts it runs a **live health check** — it reads the meter a few
+times and prints the actual numbers (`[LCR] Live reading OK: ...`). If the fields
+come back NaN it warns and lets you disable the LCR or continue. The plots show
+**every finite reading**; they do *not* gate on the meter's pass/fail (NG) bit,
+which is often 0 for perfectly valid impedance measurements (that bit is a
+comparator/binning flag, not a validity flag). If a past run's LCR curves look
+empty, re-run `analyze_indentation.py` on its CSV — the fixed analyzer will draw
+them.
+
+## End of run
+When the experiment finishes (or on Ctrl-C / error) the tool lifts off the
+surface and **returns to the initial position** (the `REFERENCE_POSE` + clearance
+height the run started from), then releases the robot.
 
 ## XJC sensor
 `xjc_sensor.py` is a self-contained reconstruction of the driver documented in

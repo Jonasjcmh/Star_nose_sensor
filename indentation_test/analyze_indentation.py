@@ -116,39 +116,34 @@ def plot(csv_path, meta_path=None, show=True):
 
     saved = [p1]
     # ── Figures 2 & 3: indentation vs impedance / phase ────────────────────────
-    if lcr_on:
-        fig2, ax2 = plt.subplots(figsize=(7.5, 5.5))
-        for j, it in enumerate(iters):
-            ri = by_iter[it]
-            c  = cmap(j / max(1, len(iters) - 1))
-            x, z = series(ri, 'lcr_primary')
-            # only plot rows where the LCR reading was valid
-            ok = np.array([_f(r, 'lcr_ok') for r in ri]) > 0.5
-            ax2.plot(x[ok], z[ok], '-', color=c, lw=1.4, alpha=0.9,
-                     label=f'iter{it + 1}')
-        ax2.set_xlabel('indentation (mm)')
-        ax2.set_ylabel(z_label)
-        ax2.set_title(f'Indentation vs {z_label}   ({base})')
-        ax2.grid(alpha=0.3); ax2.legend(loc='best', fontsize=8)
-        p2 = os.path.join(PLOT_DIR, f'{base}_impedance.png')
-        fig2.tight_layout(); fig2.savefig(p2, dpi=130)
-        print(f'[plot] {p2}'); saved.append(p2)
+    # Count finite LCR samples so we can warn instead of drawing an empty axes.
+    n_fin = sum(1 for r in rows if np.isfinite(_f(r, 'lcr_primary')))
+    if lcr_on and n_fin == 0:
+        print('[plot] ⚠ LCR was enabled but every lcr_primary is NaN — the meter '
+              'returned no numbers. Skipping the impedance/phase plots.')
 
-        fig3, ax3 = plt.subplots(figsize=(7.5, 5.5))
-        for j, it in enumerate(iters):
-            ri = by_iter[it]
-            c  = cmap(j / max(1, len(iters) - 1))
-            x, ph = series(ri, 'lcr_secondary')
-            ok = np.array([_f(r, 'lcr_ok') for r in ri]) > 0.5
-            ax3.plot(x[ok], ph[ok], '-', color=c, lw=1.4, alpha=0.9,
-                     label=f'iter{it + 1}')
-        ax3.set_xlabel('indentation (mm)')
-        ax3.set_ylabel(ph_label)
-        ax3.set_title(f'Indentation vs {ph_label}   ({base})')
-        ax3.grid(alpha=0.3); ax3.legend(loc='best', fontsize=8)
-        p3 = os.path.join(PLOT_DIR, f'{base}_phase.png')
-        fig3.tight_layout(); fig3.savefig(p3, dpi=130)
-        print(f'[plot] {p3}'); saved.append(p3)
+    if lcr_on and n_fin > 0:
+        for ykey, ylabel, suffix in (('lcr_primary',   z_label,  'impedance'),
+                                     ('lcr_secondary', ph_label, 'phase')):
+            fig, ax = plt.subplots(figsize=(7.5, 5.5))
+            for j, it in enumerate(iters):
+                ri = by_iter[it]
+                c  = cmap(j / max(1, len(iters) - 1))
+                x, y = series(ri, ykey)
+                # Plot every FINITE reading. The meter's lcr_ok bundles a pass/
+                # fail (NG) bit that can be 0 for perfectly valid measurements,
+                # so gating on it would wrongly blank the curve — mark not-ok
+                # points faintly instead of dropping them.
+                good = np.isfinite(x) & np.isfinite(y)
+                ax.plot(x[good], y[good], '-', color=c, lw=1.4, alpha=0.9,
+                        label=f'iter{it + 1}')
+            ax.set_xlabel('indentation (mm)')
+            ax.set_ylabel(ylabel)
+            ax.set_title(f'Indentation vs {ylabel}   ({base})')
+            ax.grid(alpha=0.3); ax.legend(loc='best', fontsize=8)
+            p = os.path.join(PLOT_DIR, f'{base}_{suffix}.png')
+            fig.tight_layout(); fig.savefig(p, dpi=130)
+            print(f'[plot] {p}'); saved.append(p)
 
     if show:
         plt.show()

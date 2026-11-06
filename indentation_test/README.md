@@ -32,7 +32,11 @@ plots indentation-vs-force and indentation-vs-impedance/phase.
 7. **Holding time** — dwell held **symmetrically** at max depth (pushed) and at
    the surface (released, before the next cycle); default **1.0 s**. Use
    `--recover` only if you want to break the symmetry.
-8. **Collect** — per iteration: press 0→max, hold, retract max→0, hold, as
+8. **Force cutoff** — overload safety limit in N (default **45 N**; `0` disables).
+   During the press, a watchdog polls the real force (XJC + robot Fz) every ~2 ms;
+   if |Fz| exceeds the limit it **stops the move, retracts to relieve the load,
+   and ends the run**. Protects the sensors (XJC ±50 N, FUTEK 10 lb ≈ 44.5 N).
+9. **Collect** — per iteration: press 0→max, hold, retract max→0, hold, as
    **single constant-velocity moves** at the chosen mm/s, logged continuously to
    a streaming CSV (flat RAM).
 

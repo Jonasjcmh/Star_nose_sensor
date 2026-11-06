@@ -77,7 +77,9 @@ ROBOT_IP   = os.environ.get('UR_ROBOT_IP', '177.22.22.2')
 VEL_TRAVEL = 0.05     # m/s — travel / lift
 VEL_PRESS  = 0.004    # m/s — slow press / retract ramp
 VEL_JOG    = 0.03     # m/s — per-keystroke jog move
+VEL_RELIEF = 0.01     # m/s — retract to relieve load after a force-limit abort
 ACCEL      = 0.3      # m/s^2
+DEFAULT_MAX_FORCE_N = 45.0   # overload cutoff (N); XJC ±50N, FUTEK 10lb≈44.5N
 SAFE_CLEAR_MM = 20.0  # mm above the surface for the safe/home height
 SAFE_FIX_LIFT_MM = 50.0  # mm — lift straight up after FIXING the point (safety gap)
 
@@ -177,6 +179,17 @@ def set_wf(**kw):
 def get_wf():
     with _wf_lock:
         return dict(_wf)
+
+
+def peak_abs_force():
+    """Largest |Fz| seen by the real force sensors right now (N). Uses the XJC
+    (when valid) and the robot's own TCP Fz; ignores the FUTEK because it
+    saturates (its amplifier rails) well below the sensor-protection range."""
+    st = get_robot_state()
+    xj = get_xjc_state()
+    f_ur  = abs(st['ft'][2])
+    f_xjc = abs(xj['values'][2]) if xj['ok'] else 0.0
+    return max(f_ur, f_xjc)
 
 
 # ── LCR helpers (function query / switch via the shared driver's serial port) ──
@@ -529,25 +542,56 @@ def _ramp_cmd_depth(d0, d1, duration_s, stop_evt):
             break
         time.sleep(0.002)
 
-def _constant_velocity_move(rtde_c, target_pose, d0, d1, max_depth_mm, ramp_speed_mm_s):
-    """Blocking moveL at a constant ramp_speed, while a helper thread advances
-    cmd_depth_mm linearly over the move's expected duration."""
+def _constant_velocity_move(rtde_c, target_pose, d0, d1, ramp_speed_mm_s,
+                            max_force_n=0.0):
+    """Move to target_pose at a constant ramp_speed while advancing cmd_depth_mm
+    linearly. If max_force_n > 0, the move runs ASYNCHRONOUSLY and a watchdog
+    polls the real force every ~2 ms; when |Fz| (XJC or UR) exceeds the limit it
+    calls stopL() and returns True (overload). Otherwise returns False.
+
+    Falls back to a plain blocking moveL (no mid-move cutoff) if the installed
+    ur_rtde doesn't accept the asynchronous flag."""
     duration_s = abs(d1 - d0) / max(1e-6, ramp_speed_mm_s)
+    speed_mps  = ramp_speed_mm_s / 1000.0
     stop_evt = threading.Event()
     th = threading.Thread(target=_ramp_cmd_depth,
                           args=(d0, d1, duration_s, stop_evt), daemon=True)
     th.start()
-    rtde_c.moveL(target_pose, ramp_speed_mm_s / 1000.0, ACCEL)   # mm/s → m/s
-    stop_evt.set()
-    th.join(0.2)
-    set_wf(cmd_depth_mm=d1)
+    overload = False
+    try:
+        if max_force_n and max_force_n > 0:
+            rtde_c.moveL(target_pose, speed_mps, ACCEL, True)   # asynchronous
+            target_z = target_pose[2]
+            t_end = time.time() + duration_s * 1.5 + 3.0
+            while time.time() < t_end:
+                if peak_abs_force() >= max_force_n:
+                    try:
+                        rtde_c.stopL(2.0)
+                    except Exception:
+                        pass
+                    overload = True
+                    break
+                if abs(get_robot_state()['tcp'][2] - target_z) <= 8e-5:
+                    break                                       # reached target
+                time.sleep(0.002)
+        else:
+            rtde_c.moveL(target_pose, speed_mps, ACCEL)         # blocking, no cutoff
+    except TypeError:
+        rtde_c.moveL(target_pose, speed_mps, ACCEL)             # old API: no async flag
+    finally:
+        stop_evt.set()
+        th.join(0.2)
+    if not overload:
+        set_wf(cmd_depth_mm=d1)
+    return overload
 
 def run_ramp(rtde_c, surface_pose, max_depth_mm, n_iter, ramp_speed_mm_s,
-             hold_s, recover_s):
+             hold_s, recover_s, max_force_n=0.0):
     """Press 0→max and retract max→0 as SINGLE constant-velocity moves (true
-    `ramp_speed_mm_s`), logged continuously by the background logger. The robot
-    moveL is blocking, so the ~max_depth/speed-second descent is captured at the
-    full logger rate. Repeated `n_iter` times."""
+    `ramp_speed_mm_s`), logged continuously by the background logger. Repeated
+    `n_iter` times. If `max_force_n` > 0 the press is force-guarded: exceeding it
+    aborts the press, retracts to relieve the load, and stops the run.
+    Returns True if an overload abort happened."""
     pressed = _pose_at_depth(surface_pose, max_depth_mm)
     surface = _pose_at_depth(surface_pose, 0.0)
     cycle_s = 2.0 * (max_depth_mm / max(1e-6, ramp_speed_mm_s)) + hold_s + recover_s
@@ -558,13 +602,24 @@ def run_ramp(rtde_c, surface_pose, max_depth_mm, n_iter, ramp_speed_mm_s,
 
     for it in range(n_iter):
         print('-' * 70)
+        guard = f'force-guard {max_force_n:.0f} N' if max_force_n else 'no force guard'
         print(f'  Iteration {it + 1}/{n_iter}  —  ramp 0 → {max_depth_mm:.2f} mm '
-              f'@ {ramp_speed_mm_s:.3f} mm/s  (~{cycle_s:.0f} s/cycle)')
+              f'@ {ramp_speed_mm_s:.3f} mm/s  (~{cycle_s:.0f} s/cycle)  [{guard}]')
 
-        # press (constant-velocity ramp down)
+        # press (constant-velocity ramp down, force-guarded)
         set_wf(iteration=it, phase='press')
-        _constant_velocity_move(rtde_c, pressed, 0.0, max_depth_mm,
-                                max_depth_mm, ramp_speed_mm_s)
+        if _constant_velocity_move(rtde_c, pressed, 0.0, max_depth_mm,
+                                   ramp_speed_mm_s, max_force_n):
+            f = peak_abs_force()
+            print(f'\n  ⚠ [SAFETY] force limit {max_force_n:.0f} N exceeded '
+                  f'(|Fz|≈{f:.1f} N) — retracting to relieve load and stopping the run.')
+            set_wf(phase='retract')
+            try:
+                rtde_c.moveL(surface, VEL_RELIEF, ACCEL)
+            except Exception:
+                pass
+            set_wf(phase='idle')
+            return True
 
         # hold at max
         set_wf(phase='hold', cmd_depth_mm=max_depth_mm)
@@ -572,12 +627,21 @@ def run_ramp(rtde_c, surface_pose, max_depth_mm, n_iter, ramp_speed_mm_s,
         xj = get_xjc_state()
         print(f'     [hold] FUTEK={ai0_to_futek_n(st["ai0"]):+.2f} N   '
               f'UR Fz={st["ft"][2]:+.2f} N   XJC Fz={xj["values"][2]:+.2f} N')
+        # guard the hold too, in case the load creeps up at depth
+        if max_force_n and peak_abs_force() >= max_force_n:
+            print(f'\n  ⚠ [SAFETY] force limit exceeded at hold — retracting and stopping.')
+            set_wf(phase='retract')
+            try:
+                rtde_c.moveL(surface, VEL_RELIEF, ACCEL)
+            except Exception:
+                pass
+            set_wf(phase='idle')
+            return True
         time.sleep(hold_s)
 
-        # retract (constant-velocity ramp up)
+        # retract (constant-velocity ramp up; relieving load, so no cutoff)
         set_wf(phase='retract')
-        _constant_velocity_move(rtde_c, surface, max_depth_mm, 0.0,
-                                max_depth_mm, ramp_speed_mm_s)
+        _constant_velocity_move(rtde_c, surface, max_depth_mm, 0.0, ramp_speed_mm_s)
 
         # recover at the surface
         set_wf(phase='recover', cmd_depth_mm=0.0)
@@ -587,6 +651,7 @@ def run_ramp(rtde_c, surface_pose, max_depth_mm, n_iter, ramp_speed_mm_s,
             print(f'     rows so far: {_log_count}')
 
     set_wf(phase='idle')
+    return False
 
 
 # ── Simulation doubles (--sim: no robot, no instruments) ───────────────────────
@@ -604,6 +669,8 @@ class _SimController:
     wrench/AI0 along the way — so the background logger captures a real ramp."""
     def __init__(self, surface_z):
         self._sz = surface_z
+        self._stop = None
+        self._thr  = None
     def _apply(self, pose):
         depth = (self._sz - pose[2]) * 1000.0
         F = _sim_force_n(max(0.0, depth)) + _rnd.uniform(-0.03, 0.03)
@@ -611,16 +678,29 @@ class _SimController:
             _state['tcp'] = list(pose)
             _state['ft']  = [0.0, 0.0, -F, 0.0, 0.0, 0.0]
             _state['ai0'] = (F - FUTEK_OFFSET_N) / FUTEK_SLOPE_N_PER_V
-    def moveL(self, pose, vel=0.05, accel=0.0):
+    def _interp(self, pose, vel, stop_evt=None):
         with _state_lock:
             cur = list(_state['tcp'])
         dist = sum((pose[i] - cur[i]) ** 2 for i in range(3)) ** 0.5
         dur  = dist / max(1e-6, vel)
         n    = max(1, int(dur / 0.01))        # ~10 ms interpolation increments
         for k in range(1, n + 1):
+            if stop_evt is not None and stop_evt.is_set():
+                break
             f = k / n
             self._apply([cur[i] + (pose[i] - cur[i]) * f for i in range(6)])
             time.sleep(min(0.01, dur / n))
+    def moveL(self, pose, vel=0.05, accel=0.0, asynchronous=False):
+        if asynchronous:
+            self._stop = threading.Event()
+            self._thr  = threading.Thread(target=self._interp,
+                                          args=(list(pose), vel, self._stop), daemon=True)
+            self._thr.start()
+            return
+        self._interp(list(pose), vel)
+    def stopL(self, decel=2.0):
+        if self._stop is not None:
+            self._stop.set()
     def stopScript(self):
         pass
 
@@ -912,6 +992,10 @@ def parse_args():
     p.add_argument('--recover', type=float, default=None,
                    help='Override ONLY the surface/release hold, to break symmetry '
                         '(default: equal to --hold)')
+    p.add_argument('--max-force', type=float, default=None, dest='max_force',
+                   help=f'Overload safety cutoff in N: abort the press + retract if '
+                        f'|Fz| (XJC or robot) exceeds it (default: ask, '
+                        f'{DEFAULT_MAX_FORCE_N:.0f}; 0 disables the guard)')
     p.add_argument('--rate', type=int, default=1000,
                    help='Logging / sampling rate in Hz (default: 1000 = 1 ms). Note: '
                         'the LCR (~20-100 Hz) and XJC-poll (~200-300 Hz) hardware '
@@ -948,6 +1032,7 @@ def _run_sim(rtde_c, args):
     ramp_speed = args.ramp_speed if args.ramp_speed is not None else 2.0
     hold_s     = args.hold if args.hold is not None else 0.5
     recover_s  = args.recover if args.recover is not None else hold_s   # symmetric
+    max_force  = args.max_force if args.max_force is not None else 0.0  # off in sim unless set
 
     lcr    = None if args.no_lcr else _SimLCR(_SURFACE_Z)
     labels = LCR_FUNCTIONS['ZTD']
@@ -984,7 +1069,8 @@ def _run_sim(rtde_c, args):
 
     start = time.time()
     try:
-        run_ramp(rtde_c, surface_pose, max_depth, n_iter, ramp_speed, hold_s, recover_s)
+        run_ramp(rtde_c, surface_pose, max_depth, n_iter, ramp_speed,
+                 hold_s, recover_s, max_force)
     except KeyboardInterrupt:
         print('\n  Interrupted.')
     finally:
@@ -1106,6 +1192,9 @@ def main():
         # Symmetric by default: the surface/release hold equals the push hold,
         # unless --recover explicitly overrides it.
         recover_s = args.recover if args.recover is not None else hold_s
+        max_force = args.max_force if args.max_force is not None else _ask_float(
+            f'  Max-force safety cutoff (N, 0=off) [{DEFAULT_MAX_FORCE_N:.0f}] > ',
+            DEFAULT_MAX_FORCE_N, 0.0, 200.0)
 
         # ── Summary ──────────────────────────────────────────────────────────────
         cycle_s = 2.0 * (max_depth / ramp_speed) + hold_s + recover_s
@@ -1122,6 +1211,9 @@ def main():
                     if recover_s == hold_s else
                     f'push {hold_s:.1f} s / release {recover_s:.1f} s (asymmetric)')
         print(f'  Holding time  : {hold_txt}')
+        print(f'  Force cutoff  : '
+              + (f'{max_force:.0f} N (abort + retract on overload)' if max_force > 0
+                 else 'OFF — no overload guard'))
         print(f'  Sample rate   : {args.rate} Hz ({1000.0/args.rate:.2f} ms) — logger; '
               f'robot≤500Hz, XJC~200-300Hz, LCR~20-100Hz (slower cols repeat)')
         print(f'  LCR           : {lcr_func}  ({labels[2]} / {labels[3]})')
@@ -1145,6 +1237,7 @@ def main():
             'max_depth_mm': max_depth, 'iterations': n_iter,
             'ramp_speed_mm_s': ramp_speed,
             'hold_s': hold_s, 'recover_s': recover_s, 'rate_hz': args.rate,
+            'max_force_n': max_force,
             'robot_ip': ROBOT_IP,
             'futek_calibration': {'slope_n_per_v': FUTEK_SLOPE_N_PER_V,
                                   'offset_n': FUTEK_OFFSET_N,
@@ -1169,11 +1262,14 @@ def main():
         print(f'[log] Streaming → {csv_path}  ({args.rate} Hz)\n')
 
         start = time.time()
+        aborted = False
         try:
-            run_ramp(rtde_c, surface_pose, max_depth, n_iter, ramp_speed,
-                     hold_s, recover_s)
+            aborted = run_ramp(rtde_c, surface_pose, max_depth, n_iter, ramp_speed,
+                               hold_s, recover_s, max_force)
         except KeyboardInterrupt:
             print('\n  Interrupted — stopping after the current move ...')
+        if aborted:
+            print('  [run] Stopped early by the force-safety cutoff.')
 
         _log_stop.set()
         time.sleep(0.2)

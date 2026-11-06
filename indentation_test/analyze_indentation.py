@@ -7,10 +7,14 @@ indentation_test.py and draws the requested result curves:
   • indentation vs force      (FUTEK load cell, with UR Fz and XJC Fz overlaid)
   • indentation vs impedance  (LCR field0 — |Z| in Z-θ mode, Cp in Cp-Rp mode)
   • indentation vs phase      (LCR field1 — θ in Z-θ mode, Rp in Cp-Rp mode)
+  • cycles over time          (multi-panel time series: indentation / force /
+                               |Z| / phase vs elapsed time, cycle 1,2,3 … in
+                               sequence with iteration boundaries marked)
 
-The x-axis is the ACTUAL indentation (mm), measured from the TCP z relative to
-the surface-contact height. Each ramp iteration is drawn as its own faint trace;
-the press phase (0→max) is emphasised. Figures are saved to plots/.
+The indentation-vs-* x-axis is the ACTUAL indentation (mm) from the TCP z
+relative to the surface-contact height; each ramp iteration is its own trace.
+Figures are saved per sample: plots/<sample-name>/ (the sample/point name from
+the run metadata), so repeats of the same sample collect in one folder.
 
 Usage
 -----
@@ -77,7 +81,13 @@ def plot(csv_path, meta_path=None, show=True):
 
     iters = sorted({int(float(r['iteration'])) for r in rows
                     if r.get('iteration') not in (None, '', '-1')})
-    os.makedirs(PLOT_DIR, exist_ok=True)
+
+    # One output folder per sample/point (from the run metadata), so every run
+    # on the same sample lands together: plots/<sample>/...
+    sample = (meta.get('point', {}) or {}).get('name') or 'sample'
+    sample = ''.join(c if (c.isalnum() or c in '-_') else '_' for c in str(sample))
+    out_dir = os.path.join(PLOT_DIR, sample)
+    os.makedirs(out_dir, exist_ok=True)
     base = os.path.splitext(os.path.basename(csv_path))[0]
 
     # Group rows by iteration, keeping only the press+hold+retract (indentation ≥ ~0).
@@ -110,7 +120,7 @@ def plot(csv_path, meta_path=None, show=True):
     ax1.set_title(f'Indentation vs force   ({base})')
     ax1.grid(alpha=0.3)
     ax1.legend(loc='best', fontsize=8)
-    p1 = os.path.join(PLOT_DIR, f'{base}_force.png')
+    p1 = os.path.join(out_dir, f"{base}_force.png")
     fig1.tight_layout(); fig1.savefig(p1, dpi=130)
     print(f'[plot] {p1}')
 
@@ -141,9 +151,66 @@ def plot(csv_path, meta_path=None, show=True):
             ax.set_ylabel(ylabel)
             ax.set_title(f'Indentation vs {ylabel}   ({base})')
             ax.grid(alpha=0.3); ax.legend(loc='best', fontsize=8)
-            p = os.path.join(PLOT_DIR, f'{base}_{suffix}.png')
+            p = os.path.join(out_dir, f'{base}_{suffix}.png')
             fig.tight_layout(); fig.savefig(p, dpi=130)
             print(f'[plot] {p}'); saved.append(p)
+
+    # ── Figure 4: time series — the cycles one after another ───────────────────
+    # Everything vs elapsed time, so you see cycle 1, 2, 3 … in sequence. The
+    # one-time 'approach'/'idle' rows (tip at the safe height) are dropped so the
+    # panels start at the first press; iteration boundaries are marked.
+    cyc = [r for r in rows if r.get('phase') in ('press', 'hold', 'retract', 'recover')]
+    if cyc:
+        ts = np.array([_f(r, 'timestamp') for r in cyc])
+        if np.isfinite(ts).sum() >= 2 and ts[np.isfinite(ts)][0] > 0:
+            t = ts - np.nanmin(ts)
+        else:
+            t = np.arange(len(cyc), dtype=float)   # fallback: row index
+        it_arr = np.array([int(float(r['iteration'])) if r.get('iteration') not in
+                           (None, '', '-1') else -1 for r in cyc])
+
+        panels = [('indentation_mm', 'indent (mm)', None)]
+        panels.append(('__force__', 'force (N)', None))
+        if lcr_on and n_fin > 0:
+            panels.append(('lcr_primary',   z_label))
+            panels.append(('lcr_secondary', ph_label))
+
+        fig, axes = plt.subplots(len(panels), 1, figsize=(11, 2.1 * len(panels)),
+                                 sharex=True)
+        if len(panels) == 1:
+            axes = [axes]
+        # iteration-boundary markers (start time of each iteration)
+        bounds = []
+        for it in iters:
+            idx = np.where(it_arr == it)[0]
+            if len(idx):
+                bounds.append((t[idx[0]], it))
+
+        for ax, spec in zip(axes, panels):
+            key = spec[0]
+            if key == '__force__':
+                ax.plot(t, [_f(r, 'futek_force_N') for r in cyc], '-', lw=0.8,
+                        color='#1f77b4', label='FUTEK')
+                if has_xjc:
+                    ax.plot(t, [_f(r, 'xjc_Fz') for r in cyc], '-', lw=0.8,
+                            color='#d62728', alpha=0.7, label='XJC Fz')
+                ax.legend(loc='upper right', fontsize=7)
+            else:
+                y = np.array([_f(r, key) for r in cyc])
+                ax.plot(t, y, '-', lw=0.8, color='#2ca02c')
+            ax.set_ylabel(spec[1], fontsize=9)
+            ax.grid(alpha=0.3)
+            for tb, it in bounds:
+                ax.axvline(tb, color='0.6', lw=0.7, ls='--', alpha=0.6)
+        # label the iterations across the top panel
+        for tb, it in bounds:
+            axes[0].text(tb, axes[0].get_ylim()[1], f' c{it + 1}', fontsize=7,
+                         color='0.3', va='top')
+        axes[-1].set_xlabel('time (s)')
+        axes[0].set_title(f'Cycles over time — {len(iters)} cycle(s)   ({base})')
+        pt = os.path.join(out_dir, f'{base}_timeseries.png')
+        fig.tight_layout(); fig.savefig(pt, dpi=130)
+        print(f'[plot] {pt}'); saved.append(pt)
 
     if show:
         plt.show()

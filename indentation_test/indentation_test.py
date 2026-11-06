@@ -69,7 +69,8 @@ PLOT_DIR = os.path.join(_HERE, 'plots')
 sys.path.insert(0, _HERE)       # local xjc_sensor
 sys.path.insert(0, _CAPMEAS)    # shared lcr6100 driver
 
-from xjc_sensor import XjcSensor                     # noqa: E402  local, reconstructed
+from xjc_sensor import (                             # noqa: E402  local, reconstructed
+    XjcSensor, build_request, parse_poll_frame, POLL_REPLY_LEN)
 
 # ── Robot ─────────────────────────────────────────────────────────────────────
 ROBOT_IP   = os.environ.get('UR_ROBOT_IP', '177.22.22.2')
@@ -535,43 +536,194 @@ def run_ramp(rtde_c, surface_pose, max_depth_mm, n_iter, step_mm,
     set_wf(phase='idle')
 
 
+# ── Simulation doubles (--sim: no robot, no instruments) ───────────────────────
+# Synthesize a plausible press so the full collect → CSV → plot pipeline can be
+# exercised with zero hardware. Force grows with depth (F = 2d + 0.3d²); |Z|
+# falls and phase shifts linearly with depth; XJC Fz ≈ 0.98·F.
+import random as _rnd
+
+def _sim_force_n(depth_mm):
+    return 2.0 * depth_mm + 0.3 * depth_mm * depth_mm
+
+class _SimController:
+    """Stand-in for rtde_control: moveL just updates the shared robot state with
+    a synthetic wrench/AI0 derived from the commanded indentation depth."""
+    def __init__(self, surface_z):
+        self._sz = surface_z
+    def moveL(self, pose, vel=0.0, accel=0.0):
+        depth = (self._sz - pose[2]) * 1000.0
+        F = _sim_force_n(max(0.0, depth)) + _rnd.uniform(-0.03, 0.03)
+        ai0 = (F - FUTEK_OFFSET_N) / FUTEK_SLOPE_N_PER_V
+        with _state_lock:
+            _state['tcp'] = list(pose)
+            _state['ft']  = [0.0, 0.0, -F, 0.0, 0.0, 0.0]
+            _state['ai0'] = ai0
+        time.sleep(0.003)   # mimic a short blocking move so the logger samples it
+    def stopScript(self):
+        pass
+
+class _SimLCR:
+    """Stand-in for LCR6100.get_latest(): |Z|/phase from the current depth."""
+    def __init__(self, surface_z):
+        self._sz = surface_z
+    def get_latest(self):
+        with _state_lock:
+            z = _state['tcp'][2]
+        depth = (self._sz - z) * 1000.0
+        return (1000.0 - 120.0 * depth + _rnd.uniform(-2, 2),
+                -5.0 - 2.0 * depth + _rnd.uniform(-0.2, 0.2), True)
+    def start_polling(self):
+        pass
+    def disconnect(self):
+        pass
+
+class _SimXjc:
+    """Stand-in for XjcSensor: poll_once() returns a synthetic 6-axis wrench."""
+    def __init__(self, surface_z):
+        self._sz = surface_z
+        self.offset = [0.0] * 6
+    def poll_once(self):
+        with _state_lock:
+            z = _state['tcp'][2]
+        F = _sim_force_n(max(0.0, (self._sz - z) * 1000.0))
+        return [_rnd.uniform(-0.05, 0.05), _rnd.uniform(-0.05, 0.05),
+                0.98 * F + _rnd.uniform(-0.02, 0.02), 0.0, 0.0, 0.0]
+    def tare(self, n=30):
+        return self.offset
+    def close(self):
+        pass
+
+
 # ── Instrument setup ───────────────────────────────────────────────────────────
-def _select_serial_port(prompt, preselected=None):
-    """List serial ports and let the operator pick one (or type a device path)."""
+def _probe_xjc_port(dev, baud=115200, station=1):
+    """True if `dev` answers a Modbus poll request with a valid XJC frame."""
+    try:
+        import serial
+        with serial.Serial(dev, baud, timeout=0.3) as s:
+            s.reset_input_buffer()
+            s.write(build_request(station))
+            buf = bytearray()
+            deadline = time.perf_counter() + 0.4
+            while len(buf) < POLL_REPLY_LEN and time.perf_counter() < deadline:
+                chunk = s.read(POLL_REPLY_LEN - len(buf))
+                if not chunk:
+                    break
+                buf.extend(chunk)
+            return parse_poll_frame(bytes(buf), station) is not None
+    except Exception:
+        return False
+
+def _probe_lcr_port(dev, baud=115200):
+    """True if `dev` answers FETC? with a well-formed LCR-6100 reply (4 commas)."""
+    try:
+        import serial
+        with serial.Serial(dev, baud, timeout=0.6) as s:
+            s.dtr = False
+            s.rts = False
+            time.sleep(0.2)
+            s.reset_input_buffer()
+            s.write(b'FETC?\r\n')
+            line = s.readline().decode('ascii', errors='ignore').strip()
+            return line.count(',') == 4
+    except Exception:
+        return False
+
+def detect_instruments(args, robot_connected):
+    """Probe every serial port and classify it as the LCR or the XJC; honour
+    --lcr-port/--xjc-port overrides and --no-lcr/--no-xjc skips. Prints a summary
+    and returns {'lcr': dev|None, 'xjc': dev|None, 'unknown': [...], 'ports': [...]}.
+    """
     try:
         from lcr6100 import list_ports
-        ports = list_ports()
+        ports = [dev for dev, _desc in list_ports()]
     except Exception:
         ports = []
-    if preselected:
-        return preselected
+
+    # Both instruments are USB adapters (LCR = USB-serial, XJC = USB-RS485/FTDI),
+    # so by default only probe ttyUSB*/ttyACM* and skip the motherboard's legacy
+    # ttyS* ports (opening each would add a timeout for no reason). --all-ports
+    # forces probing everything.
+    if args.all_ports:
+        probe_ports = list(ports)
+    else:
+        probe_ports = [p for p in ports if ('USB' in p or 'ACM' in p)]
+
+    report = {'lcr': None, 'xjc': None, 'unknown': [], 'ports': probe_ports}
+
+    # Overrides take precedence and are not probed (the device may be busy).
+    taken = set()
+    if not args.no_lcr and args.lcr_port:
+        report['lcr'] = args.lcr_port; taken.add(args.lcr_port)
+    if not args.no_xjc and args.xjc_port:
+        report['xjc'] = args.xjc_port; taken.add(args.xjc_port)
+
+    print('\n' + '=' * 70)
+    print('  INSTRUMENT DETECTION')
+    print('=' * 70)
+    for dev in probe_ports:
+        if dev in taken:
+            continue
+        kind = '?'
+        if report['xjc'] is None and not args.no_xjc and \
+                _probe_xjc_port(dev, args.xjc_baud, args.xjc_station):
+            report['xjc'] = dev; kind = 'XJC F/T'
+        elif report['lcr'] is None and not args.no_lcr and _probe_lcr_port(dev):
+            report['lcr'] = dev; kind = 'LCR-6100'
+        else:
+            report['unknown'].append(dev)
+        print(f'    probed {dev:16s} → {kind}')
+    if not probe_ports:
+        print('    (no USB serial ports found to probe'
+              + ('' if args.all_ports else '; try --all-ports') + ')')
+
+    def _stat(name, dev, skipped):
+        if skipped:
+            return f'  {name:20s}: SKIPPED (flag)'
+        if dev:
+            return f'  {name:20s}: {dev}'
+        return f'  {name:20s}: not found'
+
+    print('  ' + '-' * 66)
+    rip = ROBOT_IP if robot_connected else f'{ROBOT_IP} (NOT connected)'
+    print(f'  {"Robot (UR5 RTDE)":20s}: {"CONNECTED " + rip if robot_connected else rip}')
+    print(f'  {"FUTEK load cell":20s}: '
+          f'{"via robot AI0" if robot_connected else "unavailable (needs robot)"}')
+    print(_stat('LCR-6100', report['lcr'], args.no_lcr))
+    print(_stat('XJC F/T sensor', report['xjc'], args.no_xjc))
+    if report['unknown']:
+        print(f'  {"Unidentified ports":20s}: {", ".join(report["unknown"])}')
+    print('=' * 70)
+    return report
+
+def _select_serial_port(prompt, ports):
+    """Fallback manual picker when auto-detection didn't resolve a port."""
     if not ports:
-        raw = input(f'  {prompt} — no ports auto-found, type device path (blank=skip) > ').strip()
+        raw = input(f'  {prompt} — no ports left, type device path (blank=skip) > ').strip()
         return raw or None
     print(f'\n  {prompt}')
-    for i, (dev, desc) in enumerate(ports):
-        print(f'    [{i}]  {dev}   {desc}')
+    for i, dev in enumerate(ports):
+        print(f'    [{i}]  {dev}')
     while True:
-        raw = input(f'  Select port [0-{len(ports)-1}] or path (blank=skip) > ').strip()
+        raw = input(f'  Select port [0-{len(ports)-1}], a path, or blank to skip > ').strip()
         if raw == '':
             return None
         if raw.isdigit() and 0 <= int(raw) < len(ports):
-            return ports[int(raw)][0]
+            return ports[int(raw)]
         if os.path.exists(raw):
             return raw
         print('  Invalid selection')
 
-def setup_lcr(args):
+def setup_lcr(args, port):
     """Connect the LCR, detect its function and let the operator keep it or
     switch to Z-θ. Returns (lcr_or_None, labels_tuple, function_code)."""
     if args.no_lcr:
         print('[LCR] Skipped (--no-lcr)')
         return None, DEFAULT_LCR_LABELS, 'disabled'
     from lcr6100 import LCR6100
-    port = _select_serial_port('LCR-6100 serial port', args.lcr_port)
     if port is None:
-        print('[LCR] No port — LCR columns will be NaN')
+        print('[LCR] Not detected — LCR columns will be NaN')
         return None, DEFAULT_LCR_LABELS, 'disabled'
+    print(f'[LCR] Using {port}')
     lcr = LCR6100(port)
     lcr.connect()
 
@@ -599,15 +751,15 @@ def setup_lcr(args):
     time.sleep(0.5)
     return lcr, labels, (func or 'unknown')
 
-def setup_xjc(args):
+def setup_xjc(args, port):
     """Open the XJC F/T sensor in poll mode and optionally tare it."""
     if args.no_xjc:
         print('[XJC] Skipped (--no-xjc)')
         return None
-    port = _select_serial_port('XJC F/T sensor serial port (RS485 adapter)', args.xjc_port)
     if port is None:
-        print('[XJC] No port — XJC columns will be 0.0')
+        print('[XJC] Not detected — XJC columns will be 0.0')
         return None
+    print(f'[XJC] Using {port}')
     sensor = XjcSensor(port=port, baud=args.xjc_baud, station=args.xjc_station)
     try:
         sensor.open()
@@ -678,7 +830,78 @@ def parse_args():
     p.add_argument('--no-lcr', action='store_true', help='Do not use the LCR meter')
     p.add_argument('--no-xjc', action='store_true', help='Do not use the XJC sensor')
     p.add_argument('--no-plot', action='store_true', help='Do not plot at the end')
+    p.add_argument('--sim', action='store_true',
+                   help='Hardware-free dry run: no robot/instruments, synthesize a '
+                        'press to exercise the collect → CSV → plot pipeline')
+    p.add_argument('--detect', action='store_true',
+                   help='Only probe which instruments are connected (robot + serial '
+                        'LCR/XJC), print the report and exit — no motion, no logging')
+    p.add_argument('--all-ports', action='store_true',
+                   help='Probe every serial port, including legacy ttyS* (default: '
+                        'only ttyUSB*/ttyACM*, where the USB adapters appear)')
     return p.parse_args()
+
+
+# ── Simulation run (no hardware, no prompts) ───────────────────────────────────
+def _run_sim(rtde_c, args):
+    """Full collect → CSV → plot pipeline against synthetic signals."""
+    surface_pose = list(REFERENCE_POSE)
+    max_depth = args.max_depth if args.max_depth is not None else 3.0
+    n_iter    = args.iterations if args.iterations is not None else 2
+    step_mm   = max(0.01, args.step)
+
+    lcr    = None if args.no_lcr else _SimLCR(_SURFACE_Z)
+    labels = LCR_FUNCTIONS['ZTD']
+    xjc    = None if args.no_xjc else _SimXjc(_SURFACE_Z)
+    if xjc is not None:
+        threading.Thread(target=_xjc_reader, args=(xjc,), daemon=True).start()
+
+    print(f'[sim] max_depth={max_depth} mm  iterations={n_iter}  step={step_mm} mm  '
+          f'rate={args.rate} Hz')
+
+    os.makedirs(LOG_DIR, exist_ok=True)
+    ts        = datetime.now().strftime('%Y%m%d_%H%M%S')
+    csv_path  = os.path.join(LOG_DIR, f'indentation_sim_{ts}.csv')
+    meta_path = os.path.join(LOG_DIR, f'indentation_sim_{ts}_meta.json')
+    meta = {
+        'timestamp': ts, 'csv_file': os.path.basename(csv_path), 'simulated': True,
+        'point': {'name': 'sim', 'source': 'sim', 'reused_point': False},
+        'surface_pose': [round(v, 6) for v in surface_pose],
+        'max_depth_mm': max_depth, 'iterations': n_iter, 'step_mm': step_mm,
+        'hold_s': args.hold, 'recover_s': args.recover, 'rate_hz': args.rate,
+        'lcr': {'function': 'ZTD(sim)', 'enabled': lcr is not None,
+                'primary_col': 'lcr_primary', 'secondary_col': 'lcr_secondary',
+                'primary_name': labels[0], 'secondary_name': labels[1],
+                'primary_label': labels[2], 'secondary_label': labels[3]},
+        'xjc': {'enabled': xjc is not None, 'tare_offset': ([0.0] * 6 if xjc else None)},
+    }
+    with open(meta_path, 'w') as f:
+        json.dump(meta, f, indent=2)
+
+    open_dataset(csv_path)
+    _log_stop.clear()
+    threading.Thread(target=_logger_loop, args=(lcr, args.rate), daemon=True).start()
+    print(f'[sim] Streaming → {csv_path}  ({args.rate} Hz)\n')
+
+    start = time.time()
+    try:
+        run_ramp(rtde_c, surface_pose, max_depth, n_iter, step_mm, args.hold, args.recover)
+    except KeyboardInterrupt:
+        print('\n  Interrupted.')
+    finally:
+        _log_stop.set(); _xjc_stop.set()
+        time.sleep(0.2)
+        n_rows = close_dataset()
+
+    print(f'\n[sim] Completed in {time.time() - start:.1f} s   rows={n_rows}')
+    print(f'[sim] Dataset : {csv_path}')
+    if not args.no_plot and n_rows:
+        try:
+            import analyze_indentation
+            analyze_indentation.plot(csv_path, meta_path, show=False)
+        except Exception as e:
+            print(f'[plot] {e}')
+    print('[sim] done')
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -691,6 +914,31 @@ def main():
     print('=' * 70)
 
     # ── Connect robot (needed for the jog) ─────────────────────────────────────
+    if args.sim:
+        print('\n[sim] Hardware-free dry run — no robot, no instruments.')
+        _SURFACE_Z = REFERENCE_POSE[2]
+        with _state_lock:
+            _state['tcp'] = list(REFERENCE_POSE)
+        rtde_c = _SimController(_SURFACE_Z)
+        return _run_sim(rtde_c, args)
+
+    # ── Detection-only mode: probe everything, report, exit (no motion) ────────
+    if args.detect:
+        robot_ok = False
+        try:
+            r = rtde_receive.RTDEReceiveInterface(ROBOT_IP)
+            r.getActualTCPPose()
+            robot_ok = True
+            try:
+                r.disconnect()
+            except Exception:
+                pass
+        except Exception:
+            robot_ok = False
+        detect_instruments(args, robot_connected=robot_ok)
+        print('\n[detect] Report only — nothing was moved or logged.')
+        return
+
     print(f'\n[robot] Connecting to {ROBOT_IP} ...')
     rtde_r = rtde_c = None
     for attempt in range(3):
@@ -728,9 +976,20 @@ def main():
             '  Iterations (ramp cycles) [3] > ', 3, 1, 1000)
         step_mm = max(0.01, args.step)
 
-        # ── Instruments ─────────────────────────────────────────────────────────
-        lcr, labels, lcr_func = setup_lcr(args)
-        xjc = setup_xjc(args)
+        # ── Instruments: auto-detect which serial devices are connected ─────────
+        report = detect_instruments(args, robot_connected=True)
+        lcr_port, xjc_port = report['lcr'], report['xjc']
+        leftover = list(report['unknown'])
+        # If a sensor wasn't identified but unknown ports remain, offer them.
+        if lcr_port is None and leftover and not args.no_lcr:
+            lcr_port = _select_serial_port('LCR-6100 — pick from unidentified ports', leftover)
+            if lcr_port in leftover:
+                leftover.remove(lcr_port)
+        if xjc_port is None and leftover and not args.no_xjc:
+            xjc_port = _select_serial_port('XJC F/T — pick from unidentified ports', leftover)
+
+        lcr, labels, lcr_func = setup_lcr(args, lcr_port)
+        xjc = setup_xjc(args, xjc_port)
         if xjc is not None:
             xjc_thread = threading.Thread(target=_xjc_reader, args=(xjc,), daemon=True)
             xjc_thread.start()

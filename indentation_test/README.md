@@ -40,6 +40,37 @@ UR_ROBOT_IP=127.0.0.1 python3 indentation_test.py
 Useful flags: `--lcr-port /dev/ttyUSB0 --xjc-port /dev/ttyUSB1 --xjc-station 1 --xjc-baud 115200`,
 `--step 0.05 --hold 1 --recover 1 --rate 60`, `--no-lcr`, `--no-plot`.
 
+## Check what's connected (no motion)
+Every run auto-detects which instruments are present: it pings the robot (RTDE)
+and **probes each USB serial port**, identifying the LCR (answers `FETC?`) and the
+XJC (answers a Modbus poll with a valid CRC frame), then logs each with its
+detected port. To just see the report and exit — nothing moves, nothing is
+logged:
+```bash
+python3 indentation_test.py --detect
+```
+```
+  INSTRUMENT DETECTION
+    probed /dev/ttyACM0     → ?
+    probed /dev/ttyUSB0     → XJC F/T
+    probed /dev/ttyUSB1     → LCR-6100
+  ------------------------------------------------------------------
+  Robot (UR5 RTDE)    : CONNECTED 177.22.22.2
+  FUTEK load cell     : via robot AI0
+  LCR-6100            : /dev/ttyUSB1
+  XJC F/T sensor      : /dev/ttyUSB0
+  Unidentified ports  : /dev/ttyACM0
+```
+Only `ttyUSB*`/`ttyACM*` are probed by default (the USB adapters); add
+`--all-ports` to include legacy `ttyS*`. `--lcr-port`/`--xjc-port` override
+detection; `--no-lcr`/`--no-xjc` skip an instrument entirely. If a sensor isn't
+auto-identified but unknown ports remain, you're offered a manual pick.
+
+## Hardware-free dry run
+```bash
+python3 indentation_test.py --sim              # synthesize a press; writes CSV + plots
+```
+
 ## LCR mode
 At startup the script reads the meter's function (`:FUNC:IMP?`), prints it, and
 offers to switch to **Z-θ** (impedance + phase). The two logged fields and the

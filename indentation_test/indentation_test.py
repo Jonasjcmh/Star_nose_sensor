@@ -1050,10 +1050,11 @@ def parse_args():
                    help=f'Overload safety cutoff in N: abort the press + retract if '
                         f'|Fz| (XJC or robot) exceeds it (default: ask, '
                         f'{DEFAULT_MAX_FORCE_N:.0f}; 0 disables the guard)')
-    p.add_argument('--motion', choices=['speedl', 'movel'], default='speedl',
-                   help='Robot motion command for the ramp: speedl = velocity '
-                        'control (true constant velocity, default), movel = '
-                        'point-to-point moveL')
+    p.add_argument('--motion', choices=['speedl', 'movel'], default='movel',
+                   help='Robot motion command for the ramp: movel = point-to-point '
+                        '(default, robust), speedl = velocity control (true constant '
+                        'velocity but real-time; can trip controller error C271A1 '
+                        '"runtime too much behind" on some setups)')
     p.add_argument('--rate', type=int, default=1000,
                    help='Logging / sampling rate in Hz (default: 1000 = 1 ms). Note: '
                         'the LCR (~20-100 Hz) and XJC-poll (~200-300 Hz) hardware '

@@ -98,9 +98,10 @@ class LiveLCRWindow:
     • ylim set from all finite values, with a minimum visible span.
     """
 
-    def __init__(self, port, baud=None, window_s=LIVE_WINDOW_S):
-        from lcr6100 import LCR6100
-        self._lcr    = LCR6100(port, baud=baud)
+    def __init__(self, port, baud=None, window_s=LIVE_WINDOW_S, args=None):
+        from lcr6100 import LCR6100, lcr_from_args
+        self._lcr    = (lcr_from_args(port, args, baud=baud) if args is not None
+                        else LCR6100(port, baud=baud))
         self._window = window_s
 
         self._ts  = deque(maxlen=LIVE_MAXPTS)
@@ -308,8 +309,8 @@ class LiveLCRWindow:
             print('[live] Disconnected.')
 
 
-def run_live(port, baud=None):
-    win = LiveLCRWindow(port, baud=baud)
+def run_live(port, baud=None, args=None):
+    win = LiveLCRWindow(port, baud=baud, args=args)
     win.run()
 
 
@@ -784,6 +785,8 @@ def parse_args():
                    help='Save plots but do not display them interactively')
     p.add_argument('--window',   type=float, default=LIVE_WINDOW_S,
                    help=f'Live scrolling window (s, default: {LIVE_WINDOW_S})')
+    from lcr6100 import add_lcr_args
+    add_lcr_args(p)
     return p.parse_args()
 
 
@@ -820,7 +823,7 @@ def main():
         # Live-only
         matplotlib.use('TkAgg')
         port = args.port or _pick_port()
-        run_live(port, baud=args.baud)
+        run_live(port, baud=args.baud, args=args)
 
     else:
         # Both: run file analysis first, then live
@@ -829,7 +832,7 @@ def main():
         if args.file:
             run_file(args.file, no_show=args.no_show)
         port = args.port or _pick_port()
-        run_live(port, baud=args.baud)
+        run_live(port, baud=args.baud, args=args)
 
 
 if __name__ == '__main__':

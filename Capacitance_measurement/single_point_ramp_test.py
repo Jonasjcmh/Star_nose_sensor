@@ -54,7 +54,7 @@ from datetime import datetime
 
 import rtde_control
 import rtde_receive
-from lcr6100 import LCR6100, list_ports
+from lcr6100 import LCR6100, list_ports, add_lcr_args, lcr_from_args
 
 # matplotlib is imported lazily inside plotting so --no-plot / headless still run.
 
@@ -677,6 +677,7 @@ def parse_args():
     p.add_argument('--rate',     type=int,   default=100, help='Logging rate Hz (default: 100)')
     p.add_argument('--port',     default=None, help='LCR serial port (default: interactive)')
     p.add_argument('--no-plot',  action='store_true', help='Skip auto-plotting')
+    add_lcr_args(p)
     return p.parse_args()
 
 def main():
@@ -737,7 +738,7 @@ def main():
     # ── LCR ───────────────────────────────────────────────────────────────────
     lcr_port = args.port or _select_lcr_port()
     print('\n[LCR] Connecting ...')
-    lcr = LCR6100(lcr_port)
+    lcr = lcr_from_args(lcr_port, args)
     try:
         lcr.connect()
     except Exception as e:
@@ -770,7 +771,7 @@ def main():
     # ── Wire prompt ───────────────────────────────────────────────────────────
     print(f'\n  ┌─────────────────────────────────────────────────────┐')
     print(f'  │  Wire the LCR-6100 probes to point  P{pt:02d}            │')
-    print(f'  │  Freq: 20 kHz | Mode: Cp-Rp | Volt: 1 V | FAST     │')
+    print(f'  │  {lcr.describe():<48s}│')
     print(f'  └─────────────────────────────────────────────────────┘')
     Cp_now, _, _ = lcr.get_latest()
     print(f'  Current LCR reading: Cp = {Cp_now*1e12:.2f} pF')

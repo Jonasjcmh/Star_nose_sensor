@@ -200,15 +200,19 @@ def interactive_repl(port, baud, default_term=b'\r\n'):
             print('  recv : (no response within timeout)')
         print()
 
+    # Valid LCR-6000 command set (manual ch. 11).  The previous list mixed in
+    # commands that do not exist on this meter (':FUNC:IMP CPRP', ':FREQ',
+    # ':APER', ':VOLT:LEV' ...) and those produced the E01 "Bad command".
+    # Each set-command is followed by its query so you can see it was applied.
     config_cmds = [
-        'FUNC Cp-Rp',
-        ':FUNC:IMP CPRP',
-        'FREQ 20000',
-        ':FREQ 20000',
-        'SPEED FAST',
-        ':APER FAST',
-        'VOLT 1.000',
-        ':VOLT:LEV 1.0',
+        'DISP:PAGE MEAS',      # FREQ/VOLT are refused on LIST/CORRECTION pages
+        'FUNC Cp-Rp', 'FUNC?',
+        'FREQ 20000', 'FREQ?',
+        'VOLT 1.0',   'VOLT?',
+        'APER FAST',  'APER?',
+        'FUNC:RANG:AUTO ON', 'FUNC:RANG:AUTO?',
+        'TRIG:SOUR INT', 'TRIG:SOUR?',
+        'ERR?',
     ]
 
     meas_cmds = ['FETC?', 'FETCH?', 'MEAS?', ':FETC?', ':FETCH?', 'READ?']
@@ -264,10 +268,11 @@ def interactive_repl(port, baud, default_term=b'\r\n'):
             continue
 
         if raw_input_str == '!config':
-            print('  Sending config commands (each with CRLF terminator):')
+            print(f'  Sending config commands (terminator {TERM_NAMES[term]}):')
             for cmd in config_cmds:
-                payload = cmd.encode('ascii') + b'\r\n'
-                resp    = send_read(payload, read_timeout=0.5)
+                payload = cmd.encode('ascii') + term
+                wait    = 0.8 if cmd.startswith('DISP') else 0.5
+                resp    = send_read(payload, read_timeout=wait)
                 print(f'    {cmd!r:30s} → {_hex_ascii(resp) if resp else "(no response)"}')
             continue
 
@@ -303,27 +308,22 @@ def interactive_repl(port, baud, default_term=b'\r\n'):
 
 # ── Step 3: Patch helper ───────────────────────────────────────────────────────
 
-def print_patch(port, baud, term, fetch_cmd, func_cmd=None,
-                freq_cmd=None, speed_cmd=None, volt_cmd=None):
+def print_patch(port, baud, term, fetch_cmd):
+    eol = {b'\n': 'lf', b'\r': 'cr'}.get(term, 'crlf')
     print()
     print('=' * 60)
-    print('  UPDATE lcr6100.py with these values:')
+    print('  Settings to use with lcr6100.py')
     print('=' * 60)
-    term_str = repr(term.decode('ascii'))
     print(f"""
-In the LCR6100 class:
+    lcr = LCR6100({port!r}, baud={baud}, eol={eol!r},
+                  config={{'function': 'Cp-Rp', 'freq_hz': 20000,
+                          'volt_v': 1.0, 'speed': 'FAST'}})
 
-    BAUD    = {baud}
-    _TERM   = {term_str}  # add this attribute and use in _write/_query
+  or on any collector command line:
+    --lcr-eol {eol} --lcr-func Cp-Rp --lcr-freq 20000 --lcr-volt 1 --lcr-speed FAST
 
-    # Replace command class attributes with:
-    _CMD_FUNC  = {func_cmd!r  or "'FUNC Cp-Rp'  # VERIFY this"}
-    _CMD_FREQ  = {freq_cmd!r  or "'FREQ 20000'  # VERIFY this"}
-    _CMD_SPEED = {speed_cmd!r or "'SPEED FAST'  # VERIFY this"}
-    _CMD_VOLT  = {volt_cmd!r  or "'VOLT 1.000'  # VERIFY this"}
-    _CMD_FETCH = {fetch_cmd!r}
-
-In _write() and _query(), change '\\\\r\\\\n' to {term_str}.
+  Every setting is read back after it is sent; a mismatch raises
+  LCRConfigError.  Fetch command confirmed: {fetch_cmd!r}
 """)
 
 

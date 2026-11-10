@@ -62,7 +62,7 @@ from datetime import datetime
 
 import rtde_control
 import rtde_receive
-from lcr6100 import LCR6100, list_ports
+from lcr6100 import LCR6100, list_ports, add_lcr_args, lcr_from_args
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 _HERE        = os.path.dirname(os.path.abspath(__file__))
@@ -487,6 +487,7 @@ def parse_args():
                    help='LCR serial port (default: interactive selection)')
     p.add_argument('--seed',    type=int, default=None,
                    help='Random seed for sampling plan (default: random)')
+    add_lcr_args(p)
     return p.parse_args()
 
 
@@ -570,7 +571,7 @@ def main():
 
     # ── Connect LCR ───────────────────────────────────────────────────────────
     print('\n[LCR] Connecting ...')
-    lcr = LCR6100(lcr_port)
+    lcr = lcr_from_args(lcr_port, args)
     try:
         lcr.connect()
     except Exception as e:
@@ -620,7 +621,7 @@ def main():
             # ── Instruct user to wire the LCR ─────────────────────────────
             print(f'  ┌─────────────────────────────────────────────────────┐')
             print(f'  │  Wire the LCR-6100 probes to point  P{pt:02d}            │')
-            print(f'  │  Freq: 20 kHz | Mode: Cp-Rp | Volt: 1 V | FAST     │')
+            print(f'  │  {lcr.describe():<48s}│')
             print(f'  └─────────────────────────────────────────────────────┘')
             Cp_now, _, _ = lcr.get_latest()
             print(f'  Current LCR reading: Cp = {Cp_now * 1e12:.2f} pF')

@@ -1,0 +1,27 @@
+{
+  "name": "example_actuators",
+  "actuators": {"A1": "out1", "A2": "out2", "A3": "out3", "A4": "out4"},
+  "max_pressure_mbar": 300,
+  "repeat": 1,
+  "steps": [
+    {"label": "baseline", "type": "hold", "pressure": 0, "duration": 5, "valves": []},
+
+    {"label": "A1 inflate ramp", "type": "ramp", "to": 200, "duration": 4, "valves": ["A1"]},
+    {"label": "A1 hold",         "type": "hold", "pressure": 200, "duration": 5},
+    {"label": "A1 deflate ramp", "type": "ramp", "to": 0, "duration": 4},
+    {"label": "rest",            "type": "hold", "pressure": 0, "duration": 3},
+
+    {"label": "A1+A2 cycles", "type": "cycle", "valves": ["A1", "A2"],
+     "low": 0, "high": 250, "ramp_up": 2, "hold_high": 3, "ramp_down": 2, "hold_low": 3,
+     "cycles": 3},
+
+    {"label": "A3 staircase", "type": "staircase", "valves": ["A3"],
+     "levels": [50, 100, 150, 200], "ramp": 1, "hold": 4, "rest": 3},
+
+    {"label": "all four, fast pulses", "type": "cycle", "valves": "A1+A2+A3+A4",
+     "low": 0, "high": 150, "ramp_up": 0, "hold_high": 0.5, "ramp_down": 0, "hold_low": 2,
+     "cycles": 5},
+
+    {"label": "final baseline", "type": "hold", "pressure": 0, "duration": 5, "valves": []}
+  ]
+}

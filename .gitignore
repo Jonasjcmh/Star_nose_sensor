@@ -12,3 +12,7 @@ env/
 *.log
 *.tmp
 ML_model/saved_models/*.pkl
+
+# Fluigent_control: per-user GUI / set-up answers
+Fluigent_control/gui_settings.json
+Fluigent_control/wizard_last.json
